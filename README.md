@@ -1,41 +1,40 @@
-# mmds
+# Multi-modal Data Systems
 
-Minimal `uv`-managed Python app scaffold intended to run inside Docker.
+This repository now includes a first MMDS DSL implementation with:
 
-## Local project files
+- `Input`, `Map`, `Filter`, `Reduce`, and `Unnest`
+- immutable operator-tree construction
+- query parsing from restricted Python source
+- query regeneration back to normalized Python
+- local execution over `Iterable[dict]`
+- `rule_optimizer` and `llm_optimizer` scaffolding
+- `udfs/` discovery for implemented `.py` UDFs and declared-only `.pyi` stubs
 
-- `pyproject.toml`: Python project metadata
-- `src/mmds`: application package and `mmds` console entrypoint
-- `docker-compose.yml`: development container definition
-- `Dockerfile`: Ubuntu-based GPU-capable development image
+## Query shape
 
-## Development workflow
+Queries use straight-line Python assignments:
 
-Build the image:
+```python
+from mmds import Input, Map, Filter, Reduce, Unnest
+from udfs.test_ops import add_bucket, summarize_group
 
-```bash
-docker compose build
+docs = Input("docs")
+mapped = Map(docs, add_bucket)
+filtered = Filter(mapped, "keep large rows")
+expanded = Unnest(filtered, "tags", keep_empty=True)
+output = Reduce(expanded, ["bucket"], summarize_group)
 ```
 
-Start the development container:
+## Runtime model
+
+- Prompt-based operators require an injected prompt executor.
+- Function-based operators must use imported functions from `./udfs`.
+- Inline lambdas are intentionally unsupported.
+
+## Validation
+
+Run the unit suite with:
 
 ```bash
-docker compose up -d
+PYTHONPATH=src:. ./.venv/bin/python -m unittest discover -s tests -t .
 ```
-
-Open a shell in the running container:
-
-```bash
-docker compose exec mmds bash
-```
-
-Run the sample app inside the container:
-
-```bash
-docker compose exec mmds uv run mmds
-```
-
-## Notes
-
-- The development container exposes `codex`, `claude`, and `cursor-agent`.
-- The repo keeps a project-local `.venv`. If you switch between host and container execution, rerun `uv sync` in the environment you want to use because the virtualenv is not portable across both contexts.

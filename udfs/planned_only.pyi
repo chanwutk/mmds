@@ -1,0 +1,3 @@
+def synthesize_summary(rows: list[dict[str, int]]) -> dict[str, int]:
+    """Return a summary row for a group."""
+    ...

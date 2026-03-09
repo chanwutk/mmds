@@ -1,0 +1,145 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from importlib import import_module
+from typing import Any, Callable, Iterator, Literal, TypeAlias
+
+Row: TypeAlias = dict[str, Any]
+OperatorKind: TypeAlias = Literal["input", "map", "filter", "reduce", "unnest"]
+
+
+class MMDSValidationError(ValueError):
+    """Raised when a query or plan violates the supported MMDS subset."""
+
+
+@dataclass(frozen=True)
+class PromptSpec:
+    text: str
+
+
+@dataclass(frozen=True)
+class UdfSpec:
+    module: str
+    name: str
+
+    def load(self) -> Callable[..., Any]:
+        module = import_module(self.module)
+        value = getattr(module, self.name)
+        spec = udf_spec_from_callable(value)
+        if spec != self:
+            raise MMDSValidationError(
+                f"Resolved callable {self.module}.{self.name} no longer matches its UDF spec."
+            )
+        return value
+
+
+SemanticSpec: TypeAlias = PromptSpec | UdfSpec
+
+
+@dataclass(frozen=True)
+class DatasetExpr:
+    kind: OperatorKind
+    source: DatasetExpr | None = None
+    input_name: str | None = None
+    spec: SemanticSpec | None = None
+    group_by: tuple[str, ...] = ()
+    field: str | None = None
+    keep_empty: bool = False
+    name: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.kind == "input":
+            if self.source is not None or self.input_name is None:
+                raise MMDSValidationError("Input nodes require only an input name.")
+            return
+        if self.source is None:
+            raise MMDSValidationError(f"{self.kind} nodes require a source expression.")
+        if self.kind in {"map", "filter", "reduce"} and self.spec is None:
+            raise MMDSValidationError(f"{self.kind} nodes require a semantic spec.")
+        if self.kind == "reduce" and not self.group_by:
+            raise MMDSValidationError("Reduce nodes require one or more grouping keys.")
+        if self.kind == "unnest" and self.field is None:
+            raise MMDSValidationError("Unnest nodes require a field to expand.")
+
+    def children(self) -> tuple[DatasetExpr, ...]:
+        if self.source is None:
+            return ()
+        return (self.source,)
+
+    def walk_postorder(self) -> Iterator[DatasetExpr]:
+        seen: set[DatasetExpr] = set()
+
+        def visit(node: DatasetExpr) -> Iterator[DatasetExpr]:
+            if node in seen:
+                return
+            seen.add(node)
+            if node.source is not None:
+                yield from visit(node.source)
+            yield node
+
+        yield from visit(self)
+
+
+@dataclass(frozen=True)
+class Assignment:
+    target: str
+    expr: DatasetExpr
+
+
+@dataclass(frozen=True)
+class QueryProgram:
+    assignments: tuple[Assignment, ...]
+    output_name: str
+    path: str | None = None
+
+    def __post_init__(self) -> None:
+        if not self.assignments:
+            raise MMDSValidationError("A query program must contain at least one assignment.")
+        if self.output_name not in {assignment.target for assignment in self.assignments}:
+            raise MMDSValidationError(
+                f"Output variable {self.output_name!r} is not defined in the query program."
+            )
+
+    @property
+    def output_expr(self) -> DatasetExpr:
+        for assignment in reversed(self.assignments):
+            if assignment.target == self.output_name:
+                return assignment.expr
+        raise MMDSValidationError(f"Output variable {self.output_name!r} is missing.")
+
+    def input_names(self) -> tuple[str, ...]:
+        names = {assignment.expr.input_name for assignment in self.assignments if assignment.expr.kind == "input"}
+        return tuple(sorted(name for name in names if name is not None))
+
+    def used_udfs(self) -> tuple[UdfSpec, ...]:
+        specs: set[UdfSpec] = set()
+        for assignment in self.assignments:
+            for node in assignment.expr.walk_postorder():
+                if isinstance(node.spec, UdfSpec):
+                    specs.add(node.spec)
+        return tuple(sorted(specs, key=lambda spec: (spec.module, spec.name)))
+
+
+def normalize_group_by(group_by: str | list[str] | tuple[str, ...]) -> tuple[str, ...]:
+    if isinstance(group_by, str):
+        normalized = (group_by,)
+    elif isinstance(group_by, (list, tuple)):
+        normalized = tuple(group_by)
+    else:
+        raise TypeError("group_by must be a string or a sequence of strings.")
+    if not normalized:
+        raise MMDSValidationError("group_by cannot be empty.")
+    if any(not isinstance(field, str) for field in normalized):
+        raise TypeError("group_by fields must all be strings.")
+    return normalized
+
+
+def udf_spec_from_callable(value: Callable[..., Any]) -> UdfSpec:
+    module = getattr(value, "__module__", "")
+    name = getattr(value, "__name__", "")
+    qualname = getattr(value, "__qualname__", name)
+    if not module.startswith("udfs"):
+        raise MMDSValidationError("UDF callables must be imported from the ./udfs package.")
+    if not name or name == "<lambda>" or "<locals>" in qualname:
+        raise MMDSValidationError("Inline lambdas and nested functions are not supported UDFs.")
+    return UdfSpec(module=module, name=name)

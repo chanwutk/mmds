@@ -1,7 +1,7 @@
 [project]
 name = "mmds"
 version = "0.1.0"
-description = "MMDS Docker-first Python scaffold managed with uv"
+description = "Multi-modal Data Systems"
 readme = "README.md"
 authors = [
     { name = "Chanwut (Mick) Kittivorawong", email = "chanwutk@gmail.com" }

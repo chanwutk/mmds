@@ -1,0 +1,343 @@
+ \documentclass[11pt]{article}
+\usepackage{times}
+
+\usepackage{fancyvrb}
+\usepackage{url}
+\usepackage{subcaption}
+\usepackage{fullpage}
+\usepackage{graphicx}
+\usepackage{xspace}
+\usepackage{amsmath}
+\usepackage{amssymb}
+% \usepackage{MnSymbol}
+\usepackage{amsfonts}
+\usepackage{adjustbox}
+\usepackage{bm}
+\usepackage{yfonts}
+\usepackage{color}
+\usepackage{float}
+\usepackage{listings}
+%\usepackage[rflt]{floatflt}
+\usepackage{enumerate}
+\usepackage{multirow}
+\usepackage{hyperref}
+\usepackage{gensymb}
+\usepackage{booktabs}     
+\usepackage[dvipsnames]{xcolor}
+\usepackage{stmaryrd}   
+\usepackage{mdframed}
+
+\usepackage{dsfont}
+\usepackage{enumitem}
+\usepackage{blindtext}
+
+\usepackage{wrapfig}
+
+\usepackage{inconsolata}
+\usepackage{pbox}
+\usepackage{cleveref}
+\crefname{figure}{Fig.}{Figs.}
+\Crefname{figure}{Fig.}{Figs.}
+\crefname{section}{Sec.}{Sec.}
+\Crefname{section}{Sec.}{Sec.}
+\usepackage[]{mdframed}
+
+% 
+%\usepackage[compact]{titlesec}
+%\titlespacing{\section}{0pt}{2pt}{2pt}
+%\titlespacing{\subsection}{0pt}{2pt}{2pt}
+%\titlespacing{\subsubsection}{0pt}{2pt}{2pt}
+
+\usepackage{mdwlist}
+
+\usepackage{wrapfig}
+
+\newcommand{\code}{\small \sf}
+\newcommand{\eg}{{\em e.g.}}
+\newcommand{\ie}{{\em i.e.}}
+\newcommand{\ea}{{\em et al.}}
+\newcommand{\aka}{{\em a.k.a.}}
+
+\linespread{0.99}
+% Uncomment to show papge number
+\pagenumbering{gobble}
+
+
+\newcommand{\eat}[1]{}
+\newcommand{\comment}[1]{{\color{red} [{#1}]}}          % shortcut for visible remark
+% \newcommand{\fixme}[1]{{\color{red} {#1}}}  
+% \newcommand{\alvin}[1]{{\color{blue} Alvin: [{#1}]}}
+% \newcommand{\aditya}[1]{{\color{purple} Aditya: [{\scriptsize #1}]}}
+% \newcommand{\ck}[1]{{\color{brown} Mick: [{#1}]}}
+% \newcommand{\ckq}[1]{{\color{magenta} Mick's Question: [{#1}]}}
+% \newcommand{\sep}[1]{{\color{green} Sep: [{#1}]}}
+
+\newif\ifcomments
+%\commentstrue
+\ifcomments
+    \providecommand{\alvin}[1]{{\protect\color{blue}{\bf [alvin: #1]}}}
+    \newcommand{\aditya}[1]{{\color{purple} Aditya: [{\scriptsize #1}]}}
+    \providecommand{\ck}[1]{{\protect\color{magenta}{\bf [mick: #1]}}}
+    \providecommand{\ckq}[1]{{\protect\color{magenta}{\bf [mick-q: #1]}}}
+    \providecommand{\sep}[1]{{\protect\color{blue}{\bf [sep: #1]}}}
+    \providecommand{\draftnewpage}[0]{{\newpage}}
+\else
+    \providecommand{\alvin}[1]{}
+    \providecommand{\aditya}[1]{}
+    \providecommand{\ck}[1]{}
+    \providecommand{\ckq}[1]{}
+    \providecommand{\sep}[1]{}
+        \providecommand{\draftnewpage}[0]{}
+\fi
+
+
+
+\newcommand{\smalltt}{\tt \small}
+\newcommand{\tinytt}{\tt \scriptsize}
+
+\newcommand{\name}{III: A Declarative Data Management System for\\Semantic Multimodal Workflows
+}
+
+\renewcommand*{\figureautorefname}{Fig.}
+\renewcommand*{\sectionautorefname}{Sec.}
+\renewcommand*{\tableautorefname}{Tab.}
+\renewcommand*{\subsectionautorefname}{Sec.}
+\renewcommand*{\subsubsectionautorefname}{Sec.}
+
+
+\pagestyle{plain}
+
+% NSF REQUIREMENTS ARE
+% The proposal must be clear, readily legible, and conform to the following requirements:
+% a. Use one of the following typefaces identified below:
+%    * Arial10, Courier New, or Palatino Linotype at a font size of 10 points or larger
+%    * Times New Roman at a font size of 11 points or larger
+%    * Computer Modern family of fonts at a font size of 11 points or larger
+%    A font size of less than 10 points may be used for mathematical
+%    formulas or equations, figure, table or diagram captions and when
+%    using a Symbol font to insert Greek letters or special
+%    characters. PIs are cautioned, however, that the text must still
+%    be readable;
+%b. No more than 6 lines of text within a vertical space of 1 inch; and
+%c. Margins, in all directions, must be at least an inch.
+%These requirements apply to all uploaded sections of a proposal, including supplementary documentation.
+
+\oddsidemargin=0in                              % Left margin minus 1 inch.
+\evensidemargin=0in                             % Same for even-numbered pages.
+\textwidth=6.5in                                % Text width (8.5in - margins).
+\topmargin=0in                                  % Top margin minus 1 inch.
+\headheight=0in                                 % Height of page header.
+\headsep=0in                                    % Distance from header to body.
+\textheight=9in                                 % Body height (11in - margins).
+\intextsep=0in
+\belowcaptionskip=-1mm
+
+%%%% aditya added
+\newcommand{\stitle}[1]{
+
+\noindent {\bf #1}
+}
+\newcommand{\emtitle}[1]{\vspace{0.5pt}\noindent \underline{\em #1}}
+\newcommand{\thrust}[1]{\vspace{0.5pt}\noindent \underline{\em Research Thrust #1}}
+%\usepackage[parfill]{parskip}
+\newcommand{\topic}[1]{\smallskip
+\noindent {\bf #1}}
+
+
+%%%%%% Packed environments for itemize, enumerate and description
+\newenvironment{packed_item}{
+\begin{itemize}
+   \setlength{\itemsep}{1pt}
+   \setlength{\parskip}{0pt}
+   \setlength{\parsep}{0pt}
+}
+{\end{itemize}}
+
+\newenvironment{packed_enum}{
+\begin{enumerate}
+   \setlength{\itemsep}{1pt}
+  \setlength{\parskip}{0pt}
+   \setlength{\parsep}{0pt}
+}
+{\end{enumerate}}
+
+
+\newenvironment{packed_grep}{
+\begin{description}
+   \setlength{\itemsep}{1pt}
+   \setlength{\parskip}{0pt}
+   \setlength{\parsep}{0pt}
+}
+{\end{description}}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%              
+
+  
+  \newcommand\myfig[3]{%
+\begin{figure}[t]
+    \centering
+    %\epsfig{file=#2, width==#1}
+    \includegraphics[scale=1, width=#1]{figures/#2.pdf}
+    \caption{\small{\textbf{#3}}}
+
+    \label{#2}%
+\end{figure}
+}
+
+\newcommand\figref[1]{Figure~\ref{#1}}
+
+
+\def\apj{{Astroph. J.}}
+\def\aj{{Astron. J.}}
+\def\mnras{{MNRAS}}
+
+\newenvironment{squishitemize}
+{\begin{list}{\textbullet}{%
+    \setlength{\itemsep}{0pt}%
+    \setlength{\parsep}{0pt}%
+    \setlength{\topsep}{0pt}%
+    \setlength{\parskip}{0pt} %
+    \setlength{\labelwidth}{.5in}%
+    \setlength{\labelsep}{0.05in} %
+    \setlength{\leftmargin}{.15in} %
+    \renewcommand{\labelitemi}{\textbullet}}}
+  {\end{list}}
+
+\newcommand{\sys}{\textsc{Concord}\xspace}
+
+
+\lstset{
+  mathescape,
+  basicstyle=\footnotesize\ttfamily\color{black},
+  commentstyle=\ttfamily\color{ForestGreen},
+  keywordstyle=\ttfamily\color{blue},
+  stringstyle=\color{orange},
+  columns=flexible,
+  escapeinside={~@}{@~}
+}
+\definecolor{javapurple}{rgb}{0.5,0,0.35}
+\definecolor{javagreen}{rgb}{0,0.4,0}
+
+\lstdefinelanguage{customc}
+{
+  morekeywords={for, int, return},
+  morecomment=[l]{//},
+  morecomment=[s]{/*}{*/},
+  morestring=[b]",
+  basicstyle=\small\ttfamily,
+  numbers=left, firstnumber=1, numberstyle=\tiny\color{gray},
+  showstringspaces=false,
+  escapeinside={(*@}{@*)},
+  keywordstyle=\color{javapurple},
+  columns=fullflexible,
+  showlines=true,
+  xleftmargin=0.5cm,
+  moredelim=**[is][\color{NavyBlue}]{!}{!},
+  moredelim=**[is][\color{OliveGreen}]{<_}{_>}
+}
+\lstdefinelanguage{python}{
+  %   morekeywords={if, else, def},
+  %   basicstyle=\small\ttfamily,
+  %   deletendkeywords={map,reduce},
+  %   escapeinside={(&}{&)},
+  %   numbers=left, firstnumber=1, numberstyle=\tiny\color{gray},
+  %   xleftmargin=0.5cm,
+  %   keywordstyle=\color{javagreen},
+  %   showlines=true,
+  % xleftmargin=0.5cm
+  morekeywords={if, else, def, return},
+  morecomment=[l]{//},
+  morecomment=[s]{/*}{*/},
+  morestring=[b]",
+  basicstyle=\small\ttfamily,
+  numbers=left, firstnumber=1, numberstyle=\tiny\color{gray},
+  showstringspaces=false,
+  escapeinside={(*@}{@*)},
+  keywordstyle=\color{javapurple},
+  columns=fullflexible,
+  showlines=true,
+  xleftmargin=0.5cm,
+  moredelim=**[is][\color{NavyBlue}]{!}{!},
+  moredelim=**[is][\color{OliveGreen}]{<_}{_>}
+}
+
+% Set list appearance
+\setlist[itemize]{leftmargin=*, topsep=0.5em}
+\setlist[enumerate]{leftmargin=*, topsep=0.5em}
+
+\lstdefinelanguage{yaml}{
+  sensitive=false,
+  morecomment=[l]{\#},
+  morestring=[b]",
+  morestring=[b]',
+  keywords={true,false,null,yes,no,on,off},
+  morekeywords={workflow,inputs,steps,outputs,constraints,id,op,in,fn,args,with,group_by,predicate,policy,segment_seconds,topk,left,right,on,select,classes,labels,sample_rate,budget_usd,latency_minutes,gap_seconds,table,map,reduce,filter,join,split,temporal_overlap,within_time}
+}
+
+\lstdefinelanguage{json}{
+  sensitive=true,
+  morestring=[b]",
+  keywords={true,false,null}
+}
+
+\lstdefinelanguage{jinja}{
+  sensitive=true,
+  morecomment=[s]{\{\#}{\#\}},
+  morekeywords={if,elif,else,endif,for,in,endfor,set,macro,endmacro,block,endblock,extends,include,import,from,with,endwith,filter,endfilter},
+  moredelim=**[s][\color{NavyBlue}]{\{\{}{\}\}},
+  moredelim=**[s][\color{OliveGreen}]{\{\%}{\%\}}
+}
+
+% --------------------------------------------------
+\begin{document}
+
+\begin{sloppypar}
+\input{section-b.tex}
+
+\pagenumbering{arabic}
+\begin{center}
+  \textbf{\Large \name} \\
+  \smallskip {\large Alvin Cheung and Aditya Parameswaran\\University of California, Berkeley}
+\end{center}
+
+\aditya{target: 2 pages}
+\input{section-d/01-introduction.tex}
+\draftnewpage \aditya{target: 1 page}
+\input{section-d/02-overview.tex}
+\draftnewpage \aditya{target: 0.5 page}
+\input{section-d/02-intellectural-metrit.tex}
+\draftnewpage \aditya{target: 2.5-3 pages}
+\input{section-d/03-thrust1.tex}
+\input{section-d/03-thrust1_new.tex}
+\input{section-d/03-thrust1_compare.tex}
+\draftnewpage \aditya{target: 2.5-3 pages}
+\input{section-d/03-thrust2.tex}
+\draftnewpage \aditya{target: 2.5-3 pages}
+\input{section-d/03-thrust3.tex}
+\draftnewpage \aditya{target: 1 page}
+\input{section-d/03-benchmark.tex}
+\draftnewpage \aditya{target: 1 page}
+\input{section-d/04-broader-impact.tex}
+\input{section-d/05-prior-nsf.tex}
+
+\pagenumbering{gobble}
+% \setcounter{page}{0}
+% \input{other-doc/bpc}
+
+\setcounter{page}{0}
+\input{other-doc/data-management-plan.tex}
+\input{other-doc/mentoring.tex}
+\input{other-doc/facilities-equipment-resources.tex}
+\input{other-doc/personnel}
+\input{other-doc/collaboration-plan}
+
+\end{sloppypar}
+
+\newpage
+\pagestyle{empty}
+
+\bibliographystyle{abbrv}
+
+\bibliography{alvin,temp,aditya-papers}
+
+
+\end{document}
