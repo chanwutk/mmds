@@ -68,11 +68,13 @@ This repository implements a Python DSL for multimodal data workflows. Before ma
 
 - The query language is a restricted Python subset: imports plus top-level assignments only.
 - Supported operators are `Input`, `Map`, `Filter`, `Reduce`, and `Unnest`.
-- Semantic specs are only prompt strings or imported UDF functions from `udfs.*`.
+- Prompt-backed operators support strings and structured prompt lists using `Record[...]` and `ForEach([...])`.
+- Prompt-backed `Map` and `Reduce` require `schema=...`.
 - Inline lambdas and nested functions are not supported.
 - Plans are represented by immutable `DatasetExpr` nodes.
 - Query regeneration targets normalized Python, not source-exact reproduction.
 - `.pyi` files define planned UDF contracts only; they are not executable implementations.
+- Media types should stay DSL-agnostic. Provider-specific translation belongs in executors, not in query syntax.
 
 ## Implementation Notes
 

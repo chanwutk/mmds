@@ -1,20 +1,26 @@
 # MMDS Design
 
-`DESIGN.md` is a living document. Any change that affects the DSL surface, logical plan model, execution semantics, optimizer behavior, or UDF contract must update this file in the same change.
+`DESIGN.md` is a living document. Any change that affects the DSL surface, logical plan model, execution semantics, optimizer behavior, executor integrations, or UDF contract must update this file in the same change.
 
 ## Overview
 
 MMDS is a Python-first DSL for semantic data workflows. A query is written as ordinary Python assignments:
 
 ```python
-from mmds import Input, Map, Filter, Reduce, Unnest
-from udfs.test_ops import add_bucket, summarize_group
+from mmds import Input, Map, Reduce, Record, ForEach
 
 docs = Input("docs")
-mapped = Map(docs, add_bucket)
-filtered = Filter(mapped, "keep rows with useful content")
-expanded = Unnest(filtered, "tags", keep_empty=True)
-output = Reduce(expanded, ["bucket"], summarize_group)
+mapped = Map(
+    docs,
+    ["Summarize ", Record["title"], " from ", Record["video"]],
+    schema={"type": "object", "properties": {"summary": {"type": "string"}}, "required": ["summary"]},
+)
+output = Reduce(
+    mapped,
+    "_all",
+    ["Summaries:\n", ForEach(["- ", Record["summary"], "\n"])],
+    schema={"type": "object", "properties": {"report": {"type": "string"}}, "required": ["report"]},
+)
 ```
 
 The system currently supports three representations of the same query:
@@ -35,10 +41,16 @@ The design goal is to keep those representations close enough that:
 The current implementation supports:
 
 - operators: `Input`, `Map`, `Filter`, `Reduce`, `Unnest`
-- semantic specs as either prompt strings or imported UDF functions from `udfs.*`
+- prompt-backed semantics as either:
+  - a plain string
+  - a structured prompt list made of strings, `Record[...]`, and Reduce-level `ForEach([...])`
+- function-backed semantics as imported UDFs from `udfs.*`
+- prompt-backed `Map` and `Reduce` with explicit JSON-schema output contracts
+- prompt-backed `Filter` returning a bare JSON boolean
 - source parsing for straight-line top-level assignments only
 - plan rendering back to normalized Python code
 - local execution with an injected prompt executor
+- Gemini-backed prompt execution with executor-side video translation
 - UDF discovery from `.py` and `.pyi`
 - a conservative rule optimizer and a validation-heavy LLM optimizer scaffold
 
@@ -49,7 +61,8 @@ The current implementation intentionally does not support:
 - loops, conditionals, comprehensions, classes, or arbitrary Python control flow in query files
 - joins, sorts, projections, or cost-based optimization
 - automatic `.py` implementation synthesis from `.pyi`
-- provider-specific LLM integration
+- nested `ForEach(...)`
+- provider-specific media syntax in the DSL
 
 ## Architecture
 
@@ -58,11 +71,14 @@ The current implementation intentionally does not support:
 The main entrypoints are exported from [src/mmds/__init__.py](/Users/chanwutk/Documents/mmds/src/mmds/__init__.py):
 
 - `Input(name)`
-- `Map(data, spec, *, name=None)`
+- `Map(data, spec, *, schema=None, name=None)`
 - `Filter(data, spec, *, name=None)`
-- `Reduce(data, group_by, reducer, *, name=None)`
+- `Reduce(data, group_by, reducer, *, schema=None, name=None)`
 - `Unnest(data, field, *, keep_empty=False, name=None)`
+- `Record[...]`
+- `ForEach([...])`
 - `execute(plan_or_query, inputs, prompt_executor=None)`
+- `GeminiPromptExecutor(...)`
 - `load_query(source)` / `parse_query(source)`
 - `render_query(plan_or_query)`
 - `optimize(plan)` / `canonicalize(plan)`
@@ -72,7 +88,10 @@ The main entrypoints are exported from [src/mmds/__init__.py](/Users/chanwutk/Do
 The core model lives in [src/mmds/model.py](/Users/chanwutk/Documents/mmds/src/mmds/model.py).
 
 - `DatasetExpr` is the immutable logical operator node.
-- `PromptSpec` stores prompt-backed semantics.
+- `PromptSpec` stores prompt-backed semantics as prompt parts plus optional output schema.
+- `RecordPath` represents `Record["field"]...` references.
+- `ForEachPrompt` represents repeated prompt expansion over grouped records.
+- `ResolvedPrompt` is the execution-time prompt after all `Record[...]` references are resolved against data.
 - `UdfSpec` stores a stable import path for a UDF.
 - `Assignment` and `QueryProgram` represent a parsed query file.
 - `MMDSValidationError` is the shared validation failure type.
@@ -83,6 +102,25 @@ The core model lives in [src/mmds/model.py](/Users/chanwutk/Documents/mmds/src/m
 - `Map`, `Filter`, `Reduce`, and `Unnest` each have one `source`.
 
 That shape is sufficient for the first operator set and keeps rendering and execution simple. If future operators introduce multiple inputs, `DatasetExpr` will need a general child list instead of a single `source`.
+
+### Prompt Expression Model
+
+Prompt expressions are now structured.
+
+Allowed prompt parts:
+
+- string literals
+- `Record["field"]` and nested references like `Record["video"]["uri"]`
+- `ForEach([...])`, but only at the top level of a `Reduce` prompt
+
+Semantics:
+
+- In `Map` and `Filter`, `Record[...]` refers to the current input row.
+- In `Reduce`, row-level field access must be inside `ForEach([...])`.
+- `ForEach([...])` expands its body once per grouped row in order.
+- Nested `ForEach(...)` is not supported.
+
+This model makes prompt construction explicit and gives executors enough structure to preserve non-text field values, including media.
 
 ### Parser
 
@@ -98,11 +136,17 @@ It accepts only:
 Parser rules:
 
 - sources must reference a previously assigned variable
-- semantic specs must be a string literal or an imported UDF name
+- semantic specs must be:
+  - a prompt string
+  - a prompt-part list
+  - an imported UDF name
 - UDF import aliasing is rejected
 - only absolute imports are allowed
 - `Reduce.group_by` must be a string or list/tuple of strings
 - `Unnest.keep_empty` must be a literal boolean
+- `Map` and `Reduce` prompt specs must include `schema={...}`
+- `Filter` does not accept `schema=`
+- `Reduce` prompt lists may only use `Record[...]` inside `ForEach([...])`
 
 The canonical output variable is the last assignment in the file.
 
@@ -117,9 +161,11 @@ It has two jobs:
 
 Normalization behavior:
 
-- always emits `from mmds import Input, Map, Filter, Reduce, Unnest`
+- always emits `from mmds import Input, Map, Filter, Reduce, Unnest, Record, ForEach`
 - emits grouped `from udfs... import ...` lines for referenced UDFs
 - uses double-quoted string literals
+- renders structured prompt lists explicitly
+- renders schemas as normalized Python literals
 - assigns synthesized names like `source_docs`, `step_1`, `output` when rendering from a bare plan
 
 This is semantic round-tripping, not source-fidelity round-tripping. Comments, whitespace, and original local variable names are not preserved unless they naturally match the normalized output.
@@ -141,9 +187,56 @@ Operator semantics:
 - `Reduce`: groups rows by the configured fields, calls the reducer once per group, and merges returned aggregate fields with the group key fields
 - `Unnest`: expands one field; lists and tuples explode into multiple rows, scalars pass through unchanged, and missing/empty values produce no row unless `keep_empty=True`
 
-Prompt execution is delegated through `PromptExecutor.execute(op_type, spec_text, payload, context)`.
+Prompt execution flow:
+
+1. Resolve `Record[...]` references against the current row or grouped rows.
+2. Expand `ForEach([...])` over grouped rows for `Reduce`.
+3. Produce a `ResolvedPrompt`.
+4. Delegate to `PromptExecutor.execute(op_type, prompt_spec, resolved_prompt, payload, context)`.
 
 `StaticPromptExecutor` exists for deterministic tests and local development.
+
+### Media Handling And Gemini Execution
+
+Gemini execution lives in [src/mmds/gemini_executor.py](/Users/chanwutk/Documents/mmds/src/mmds/gemini_executor.py).
+
+Design rule:
+
+- the DSL does not introduce a `Video(...)` wrapper
+- media stays in row fields as regular data values
+- provider-specific translation happens inside executors
+
+Current video detection rule:
+
+- any resolved prompt value shaped like `{"type": "Video", ...}` is treated as video input
+
+Supported video payload forms:
+
+- `{"type": "Video", "uri": "..."}`
+- `{"type": "Video", "path": "/local/file.mp4"}`
+- `{"type": "Video", "bytes": b"...", "mime_type": "video/mp4"}`
+
+Optional metadata keys:
+
+- `start_offset`
+- `end_offset`
+- `fps`
+
+Gemini executor behavior:
+
+- uploads local files through Gemini’s Files API when needed
+- waits for uploaded files to become active
+- converts structured prompts into Gemini content parts
+- preserves video fields as video parts instead of stringifying them
+- requests JSON output using Gemini structured output config
+- uses a bare boolean schema for `Filter`
+- uses the operator-provided schema for `Map` and `Reduce`
+
+This design follows Gemini’s official support for video inputs and structured JSON output. Sources used to align the design and implementation:
+
+- [Gemini video understanding](https://ai.google.dev/gemini-api/docs/video-understanding)
+- [Gemini structured output](https://ai.google.dev/gemini-api/docs/structured-output)
+- [Gemini SDK downloads](https://ai.google.dev/gemini-api/docs/downloads)
 
 ### UDF Contract
 
@@ -201,12 +294,15 @@ The following invariants are part of the current design and should not change si
 
 - the supported query language is a strict Python subset
 - prompts and UDFs are the only valid semantic specs
+- prompt specs are structured data, not opaque runtime callables
 - UDFs must come from `udfs.*`
 - operator trees are immutable
 - the last assignment is the output unless a future explicit sink is added
 - rendered queries are normalized, not source-exact
 - prompt-backed execution always requires an injected executor
 - `.pyi` discovery does not imply executability
+- provider-specific media handling belongs in executors, not DSL syntax
+- `Reduce` row access must go through `ForEach([...])`
 
 ## Validation and Tests
 
@@ -214,12 +310,14 @@ Tests live in [tests/test_mmds.py](/Users/chanwutk/Documents/mmds/tests/test_mmd
 
 The current suite covers:
 
-- parse/render/parse equivalence
+- parse/render/parse equivalence for structured prompts
 - rendering from runtime-built plans
 - execution for UDF-backed and prompt-backed queries
+- `Record[...]` resolution and `ForEach([...])` expansion
 - `Unnest` behavior on scalar, empty, and missing values
-- parser validation for unsupported Python and non-UDF callables
+- parser validation for unsupported Python and invalid prompt forms
 - optimizer result preservation and LLM rewrite validation
+- Gemini prompt compilation for video URI and uploaded local file inputs
 - UDF catalog discovery for `.py` and `.pyi`
 
 Primary verification command:
@@ -233,10 +331,10 @@ PYTHONPATH=src:. ./.venv/bin/python -m unittest discover -s tests -t .
 Likely next areas of change:
 
 - more operators beyond the current unary set
-- richer multimodal value types instead of plain dict rows
-- explicit query sinks or named outputs
+- explicit group-key prompt helpers for `Reduce`
+- richer multimodal field translation beyond video
 - more aggressive rule rewrites once semantic safety rules exist
 - `.pyi`-driven UDF synthesis
-- provider-backed prompt execution and LLM optimization
+- provider-backed prompt execution and LLM optimization beyond Gemini
 
 Any of those changes should update this document alongside the code.

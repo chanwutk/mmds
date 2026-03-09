@@ -5,6 +5,8 @@ from importlib import import_module
 from typing import Any, Callable, Iterator, Literal, TypeAlias
 
 Row: TypeAlias = dict[str, Any]
+JsonScalar: TypeAlias = str | int | float | bool | None
+JsonValue: TypeAlias = JsonScalar | dict[str, "JsonValue"] | list["JsonValue"]
 OperatorKind: TypeAlias = Literal["input", "map", "filter", "reduce", "unnest"]
 
 
@@ -13,8 +15,46 @@ class MMDSValidationError(ValueError):
 
 
 @dataclass(frozen=True)
+class RecordPath:
+    path: tuple[str, ...] = ()
+
+    def __getitem__(self, field_name: str) -> RecordPath:
+        if not isinstance(field_name, str) or not field_name:
+            raise TypeError("Record field references must use non-empty string keys.")
+        return RecordPath(self.path + (field_name,))
+
+    def is_root(self) -> bool:
+        return not self.path
+
+
+Record = RecordPath()
+
+@dataclass(frozen=True)
+class ForEachPrompt:
+    parts: tuple[Any, ...]
+
+
+PromptPart: TypeAlias = str | RecordPath | ForEachPrompt
+
+
+@dataclass(frozen=True)
 class PromptSpec:
-    text: str
+    parts: tuple[PromptPart, ...]
+    output_schema: JsonValue | None = None
+
+    def cache_key(self) -> str | tuple[Any, ...]:
+        if len(self.parts) == 1 and isinstance(self.parts[0], str):
+            return self.parts[0]
+        return tuple(_prompt_part_cache_key(part) for part in self.parts)
+
+    def __hash__(self) -> int:
+        return hash((self.parts, _freeze_json_value(self.output_schema)))
+
+
+@dataclass(frozen=True)
+class ResolvedPrompt:
+    parts: tuple[Any, ...]
+    output_schema: JsonValue | None = None
 
 
 @dataclass(frozen=True)
@@ -143,3 +183,35 @@ def udf_spec_from_callable(value: Callable[..., Any]) -> UdfSpec:
     if not name or name == "<lambda>" or "<locals>" in qualname:
         raise MMDSValidationError("Inline lambdas and nested functions are not supported UDFs.")
     return UdfSpec(module=module, name=name)
+
+
+def prompt_uses_record_helpers(spec: PromptSpec) -> bool:
+    return any(_prompt_part_uses_helpers(part) for part in spec.parts)
+
+
+def _prompt_part_cache_key(part: PromptPart) -> Any:
+    if isinstance(part, str):
+        return part
+    if isinstance(part, RecordPath):
+        return ("record", part.path)
+    if isinstance(part, ForEachPrompt):
+        return ("foreach", tuple(_prompt_part_cache_key(child) for child in part.parts))
+    raise TypeError(f"Unsupported prompt part {part!r}.")
+
+
+def _prompt_part_uses_helpers(part: PromptPart) -> bool:
+    if isinstance(part, str):
+        return False
+    if isinstance(part, RecordPath):
+        return True
+    if isinstance(part, ForEachPrompt):
+        return True
+    raise TypeError(f"Unsupported prompt part {part!r}.")
+
+
+def _freeze_json_value(value: JsonValue | None) -> Any:
+    if isinstance(value, dict):
+        return tuple(sorted((str(key), _freeze_json_value(item)) for key, item in value.items()))
+    if isinstance(value, list):
+        return tuple(_freeze_json_value(item) for item in value)
+    return value

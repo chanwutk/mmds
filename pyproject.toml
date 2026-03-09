@@ -7,7 +7,9 @@ authors = [
     { name = "Chanwut (Mick) Kittivorawong", email = "chanwutk@gmail.com" }
 ]
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "google-genai",
+]
 
 [project.scripts]
 mmds = "mmds:main"
