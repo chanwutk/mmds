@@ -1,343 +1,194 @@
- \documentclass[11pt]{article}
-\usepackage{times}
-
-\usepackage{fancyvrb}
-\usepackage{url}
-\usepackage{subcaption}
-\usepackage{fullpage}
-\usepackage{graphicx}
-\usepackage{xspace}
-\usepackage{amsmath}
-\usepackage{amssymb}
-% \usepackage{MnSymbol}
-\usepackage{amsfonts}
-\usepackage{adjustbox}
-\usepackage{bm}
-\usepackage{yfonts}
-\usepackage{color}
-\usepackage{float}
+\documentclass[sigconf,nonacm,screen]{acmart}
 \usepackage{listings}
-%\usepackage[rflt]{floatflt}
-\usepackage{enumerate}
-\usepackage{multirow}
-\usepackage{hyperref}
-\usepackage{gensymb}
-\usepackage{booktabs}     
-\usepackage[dvipsnames]{xcolor}
-\usepackage{stmaryrd}   
-\usepackage{mdframed}
 
-\usepackage{dsfont}
-\usepackage{enumitem}
-\usepackage{blindtext}
-
-\usepackage{wrapfig}
-
-\usepackage{inconsolata}
-\usepackage{pbox}
-\usepackage{cleveref}
-\crefname{figure}{Fig.}{Figs.}
-\Crefname{figure}{Fig.}{Figs.}
-\crefname{section}{Sec.}{Sec.}
-\Crefname{section}{Sec.}{Sec.}
-\usepackage[]{mdframed}
-
-% 
-%\usepackage[compact]{titlesec}
-%\titlespacing{\section}{0pt}{2pt}{2pt}
-%\titlespacing{\subsection}{0pt}{2pt}{2pt}
-%\titlespacing{\subsubsection}{0pt}{2pt}{2pt}
-
-\usepackage{mdwlist}
-
-\usepackage{wrapfig}
-
-\newcommand{\code}{\small \sf}
-\newcommand{\eg}{{\em e.g.}}
-\newcommand{\ie}{{\em i.e.}}
-\newcommand{\ea}{{\em et al.}}
-\newcommand{\aka}{{\em a.k.a.}}
-
-\linespread{0.99}
-% Uncomment to show papge number
-\pagenumbering{gobble}
-
-
-\newcommand{\eat}[1]{}
-\newcommand{\comment}[1]{{\color{red} [{#1}]}}          % shortcut for visible remark
-% \newcommand{\fixme}[1]{{\color{red} {#1}}}  
-% \newcommand{\alvin}[1]{{\color{blue} Alvin: [{#1}]}}
-% \newcommand{\aditya}[1]{{\color{purple} Aditya: [{\scriptsize #1}]}}
-% \newcommand{\ck}[1]{{\color{brown} Mick: [{#1}]}}
-% \newcommand{\ckq}[1]{{\color{magenta} Mick's Question: [{#1}]}}
-% \newcommand{\sep}[1]{{\color{green} Sep: [{#1}]}}
-
-\newif\ifcomments
-%\commentstrue
-\ifcomments
-    \providecommand{\alvin}[1]{{\protect\color{blue}{\bf [alvin: #1]}}}
-    \newcommand{\aditya}[1]{{\color{purple} Aditya: [{\scriptsize #1}]}}
-    \providecommand{\ck}[1]{{\protect\color{magenta}{\bf [mick: #1]}}}
-    \providecommand{\ckq}[1]{{\protect\color{magenta}{\bf [mick-q: #1]}}}
-    \providecommand{\sep}[1]{{\protect\color{blue}{\bf [sep: #1]}}}
-    \providecommand{\draftnewpage}[0]{{\newpage}}
-\else
-    \providecommand{\alvin}[1]{}
-    \providecommand{\aditya}[1]{}
-    \providecommand{\ck}[1]{}
-    \providecommand{\ckq}[1]{}
-    \providecommand{\sep}[1]{}
-        \providecommand{\draftnewpage}[0]{}
-\fi
-
-
-
-\newcommand{\smalltt}{\tt \small}
-\newcommand{\tinytt}{\tt \scriptsize}
-
-\newcommand{\name}{III: A Declarative Data Management System for\\Semantic Multimodal Workflows
-}
-
-\renewcommand*{\figureautorefname}{Fig.}
-\renewcommand*{\sectionautorefname}{Sec.}
-\renewcommand*{\tableautorefname}{Tab.}
-\renewcommand*{\subsectionautorefname}{Sec.}
-\renewcommand*{\subsubsectionautorefname}{Sec.}
-
-
-\pagestyle{plain}
-
-% NSF REQUIREMENTS ARE
-% The proposal must be clear, readily legible, and conform to the following requirements:
-% a. Use one of the following typefaces identified below:
-%    * Arial10, Courier New, or Palatino Linotype at a font size of 10 points or larger
-%    * Times New Roman at a font size of 11 points or larger
-%    * Computer Modern family of fonts at a font size of 11 points or larger
-%    A font size of less than 10 points may be used for mathematical
-%    formulas or equations, figure, table or diagram captions and when
-%    using a Symbol font to insert Greek letters or special
-%    characters. PIs are cautioned, however, that the text must still
-%    be readable;
-%b. No more than 6 lines of text within a vertical space of 1 inch; and
-%c. Margins, in all directions, must be at least an inch.
-%These requirements apply to all uploaded sections of a proposal, including supplementary documentation.
-
-\oddsidemargin=0in                              % Left margin minus 1 inch.
-\evensidemargin=0in                             % Same for even-numbered pages.
-\textwidth=6.5in                                % Text width (8.5in - margins).
-\topmargin=0in                                  % Top margin minus 1 inch.
-\headheight=0in                                 % Height of page header.
-\headsep=0in                                    % Distance from header to body.
-\textheight=9in                                 % Body height (11in - margins).
-\intextsep=0in
-\belowcaptionskip=-1mm
-
-%%%% aditya added
-\newcommand{\stitle}[1]{
-
-\noindent {\bf #1}
-}
-\newcommand{\emtitle}[1]{\vspace{0.5pt}\noindent \underline{\em #1}}
-\newcommand{\thrust}[1]{\vspace{0.5pt}\noindent \underline{\em Research Thrust #1}}
-%\usepackage[parfill]{parskip}
-\newcommand{\topic}[1]{\smallskip
-\noindent {\bf #1}}
-
-
-%%%%%% Packed environments for itemize, enumerate and description
-\newenvironment{packed_item}{
-\begin{itemize}
-   \setlength{\itemsep}{1pt}
-   \setlength{\parskip}{0pt}
-   \setlength{\parsep}{0pt}
-}
-{\end{itemize}}
-
-\newenvironment{packed_enum}{
-\begin{enumerate}
-   \setlength{\itemsep}{1pt}
-  \setlength{\parskip}{0pt}
-   \setlength{\parsep}{0pt}
-}
-{\end{enumerate}}
-
-
-\newenvironment{packed_grep}{
-\begin{description}
-   \setlength{\itemsep}{1pt}
-   \setlength{\parskip}{0pt}
-   \setlength{\parsep}{0pt}
-}
-{\end{description}}
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%              
-
-  
-  \newcommand\myfig[3]{%
-\begin{figure}[t]
-    \centering
-    %\epsfig{file=#2, width==#1}
-    \includegraphics[scale=1, width=#1]{figures/#2.pdf}
-    \caption{\small{\textbf{#3}}}
-
-    \label{#2}%
-\end{figure}
-}
-
-\newcommand\figref[1]{Figure~\ref{#1}}
-
-
-\def\apj{{Astroph. J.}}
-\def\aj{{Astron. J.}}
-\def\mnras{{MNRAS}}
-
-\newenvironment{squishitemize}
-{\begin{list}{\textbullet}{%
-    \setlength{\itemsep}{0pt}%
-    \setlength{\parsep}{0pt}%
-    \setlength{\topsep}{0pt}%
-    \setlength{\parskip}{0pt} %
-    \setlength{\labelwidth}{.5in}%
-    \setlength{\labelsep}{0.05in} %
-    \setlength{\leftmargin}{.15in} %
-    \renewcommand{\labelitemi}{\textbullet}}}
-  {\end{list}}
-
-\newcommand{\sys}{\textsc{Concord}\xspace}
-
-
-\lstset{
-  mathescape,
-  basicstyle=\footnotesize\ttfamily\color{black},
-  commentstyle=\ttfamily\color{ForestGreen},
-  keywordstyle=\ttfamily\color{blue},
-  stringstyle=\color{orange},
-  columns=flexible,
-  escapeinside={~@}{@~}
-}
-\definecolor{javapurple}{rgb}{0.5,0,0.35}
-\definecolor{javagreen}{rgb}{0,0.4,0}
-
-\lstdefinelanguage{customc}
-{
-  morekeywords={for, int, return},
-  morecomment=[l]{//},
-  morecomment=[s]{/*}{*/},
-  morestring=[b]",
-  basicstyle=\small\ttfamily,
-  numbers=left, firstnumber=1, numberstyle=\tiny\color{gray},
-  showstringspaces=false,
-  escapeinside={(*@}{@*)},
-  keywordstyle=\color{javapurple},
-  columns=fullflexible,
-  showlines=true,
-  xleftmargin=0.5cm,
-  moredelim=**[is][\color{NavyBlue}]{!}{!},
-  moredelim=**[is][\color{OliveGreen}]{<_}{_>}
-}
-\lstdefinelanguage{python}{
-  %   morekeywords={if, else, def},
-  %   basicstyle=\small\ttfamily,
-  %   deletendkeywords={map,reduce},
-  %   escapeinside={(&}{&)},
-  %   numbers=left, firstnumber=1, numberstyle=\tiny\color{gray},
-  %   xleftmargin=0.5cm,
-  %   keywordstyle=\color{javagreen},
-  %   showlines=true,
-  % xleftmargin=0.5cm
-  morekeywords={if, else, def, return},
-  morecomment=[l]{//},
-  morecomment=[s]{/*}{*/},
-  morestring=[b]",
-  basicstyle=\small\ttfamily,
-  numbers=left, firstnumber=1, numberstyle=\tiny\color{gray},
-  showstringspaces=false,
-  escapeinside={(*@}{@*)},
-  keywordstyle=\color{javapurple},
-  columns=fullflexible,
-  showlines=true,
-  xleftmargin=0.5cm,
-  moredelim=**[is][\color{NavyBlue}]{!}{!},
-  moredelim=**[is][\color{OliveGreen}]{<_}{_>}
-}
-
-% Set list appearance
-\setlist[itemize]{leftmargin=*, topsep=0.5em}
-\setlist[enumerate]{leftmargin=*, topsep=0.5em}
-
-\lstdefinelanguage{yaml}{
+\lstdefinelanguage{JavaScript}{
+  morekeywords={typeof, new, true, false, catch, function, return, null, catch, switch, var, if, in, while, do, else, case, break},
+  morendkeywords={class, export, boolean, throw, implements, import, this},
+  keywordstyle=\color{blue}\bfseries,
+  ndkeywordstyle=\color{darkgray}\bfseries,
+  identifierstyle=\color{black},
   sensitive=false,
-  morecomment=[l]{\#},
-  morestring=[b]",
+  comment=[l]{//},
+  morecomment=[s]{/*}{*/},
+  commentstyle=\color{gray}\ttfamily,
+  stringstyle=\color{teal}\ttfamily,
   morestring=[b]',
-  keywords={true,false,null,yes,no,on,off},
-  morekeywords={workflow,inputs,steps,outputs,constraints,id,op,in,fn,args,with,group_by,predicate,policy,segment_seconds,topk,left,right,on,select,classes,labels,sample_rate,budget_usd,latency_minutes,gap_seconds,table,map,reduce,filter,join,split,temporal_overlap,within_time}
+  morestring=[b]"
 }
 
-\lstdefinelanguage{json}{
-  sensitive=true,
-  morestring=[b]",
-  keywords={true,false,null}
-}
+\settopmatter{printacmref=false}
+\setcopyright{none}
 
-\lstdefinelanguage{jinja}{
-  sensitive=true,
-  morecomment=[s]{\{\#}{\#\}},
-  morekeywords={if,elif,else,endif,for,in,endfor,set,macro,endmacro,block,endblock,extends,include,import,from,with,endwith,filter,endfilter},
-  moredelim=**[s][\color{NavyBlue}]{\{\{}{\}\}},
-  moredelim=**[s][\color{OliveGreen}]{\{\%}{\%\}}
-}
-
-% --------------------------------------------------
 \begin{document}
 
-\begin{sloppypar}
-\input{section-b.tex}
+\title{Query Rewrite for Multi-modal Data Systems}
+\author{Chanwut Kittivorawong}
+\renewcommand{\shortauthors}{Chanwut Kittivorawong}
 
-\pagenumbering{arabic}
-\begin{center}
-  \textbf{\Large \name} \\
-  \smallskip {\large Alvin Cheung and Aditya Parameswaran\\University of California, Berkeley}
-\end{center}
+% Hide the author block on the title page but keep running headers.
+\makeatletter
+\renewcommand{\@mkauthors}{}
+\makeatother
 
-\aditya{target: 2 pages}
-\input{section-d/01-introduction.tex}
-\draftnewpage \aditya{target: 1 page}
-\input{section-d/02-overview.tex}
-\draftnewpage \aditya{target: 0.5 page}
-\input{section-d/02-intellectural-metrit.tex}
-\draftnewpage \aditya{target: 2.5-3 pages}
-\input{section-d/03-thrust1.tex}
-\input{section-d/03-thrust1_new.tex}
-\input{section-d/03-thrust1_compare.tex}
-\draftnewpage \aditya{target: 2.5-3 pages}
-\input{section-d/03-thrust2.tex}
-\draftnewpage \aditya{target: 2.5-3 pages}
-\input{section-d/03-thrust3.tex}
-\draftnewpage \aditya{target: 1 page}
-\input{section-d/03-benchmark.tex}
-\draftnewpage \aditya{target: 1 page}
-\input{section-d/04-broader-impact.tex}
-\input{section-d/05-prior-nsf.tex}
+\maketitle
 
-\pagenumbering{gobble}
-% \setcounter{page}{0}
-% \input{other-doc/bpc}
+\section{Introduction \& Motivation}
+Much of today's newly generated data is unstructured, including text, images, and video. 
+Extracting insights increasingly requires combining these modalities. 
+For example, in investigative journalism, analysts cross-check claims from police reports against body-camera footage. 
+This process is human time-consuming: they manually watch the videos and compare
+them against the reports, because there has not been any tool to automate such process.
 
-\setcounter{page}{0}
-\input{other-doc/data-management-plan.tex}
-\input{other-doc/mentoring.tex}
-\input{other-doc/facilities-equipment-resources.tex}
-\input{other-doc/personnel}
-\input{other-doc/collaboration-plan}
+Today, Large Multimodal Models (LMMs) become capable of automatically processing these modalities.
+However, the cost of using LMMs is still prohibitive for many use cases.
+Moreover, authoring these LMMs is still ad-hoc and the results are not always reliable.
 
-\end{sloppypar}
+The grand vision of this project is to build a system that can automatically process
+these modalities and answer queries with better accuracy and efficiency than the manual process.
+For this class, I will to focus on exploring new query rewrite opportunities that were not possible with uni-modal systems.
+For this, I propose a new class of query rewrite: {\em semantic rewrite}, where the
+query is rewritten to change the semantics of the query while preserving the intent of the original query.
+This query rewrite will be performed via either a rule-based system or LLM agents.
+As an example, a query on video data that has text data associated with it can
+be rewritten to entirely switch the modality of the query from video to text.
+This query rewrite completely changes the semantics of the query,
+but the intent of the original query is preserved.
 
-\newpage
-\pagestyle{empty}
+With this goal, I raise 2 research questions:
+(1) What types of semantic rewrites are possible to improve accuracy, efficiency, or both?
+(2) What rewrite clues can we provide to direct the LLM agents to perform the query rewrite?
 
-\bibliographystyle{abbrv}
+To evaluate the effectiveness of this query rewrite,
+I will compare our rewritten query against 3 baselines:
+(1) the original query,
+(2) pure LMM calls,
+and (3) coding agents.
 
-\bibliography{alvin,temp,aditya-papers}
+\section{Unified Data Model \& DSL}
 
+To facilitate the query rewrite research, I propose a unified data model and DSL
+that allows users to express their queries on videos and text data together.
+The data model and the DSL should be high-level enough for LLM agents to capture the intent of the original query,
+while providing enough tooling to express all necessary transformations and joining of videos and text data.
+With such intent, I will extend DocETL's data model to additionally support multi-modal data,
+as DocETL's language to express text-document queries has proven to be a well-positioned abstraction level
+for agentic rewriting shown in~\cite{shankar2025docetl,wei2026moar}.
+
+To extend DocETL's data model, I propose 3 data types: {\tt Video}, {\tt VideoView}, and {\tt EntityView}.
+\begin{itemize}
+    \item \textbf{Video}: An object that represents a video. It has one property: {\tt source} of type {\tt str} that is the path to the video file.
+    \item \textbf{VideoView}: A logical time span view over a video. It has 3 properties: {\tt source}, {\tt start}, and {\tt end}. For instance, a {\tt VideoView} represents a video ``xx.mp4'' from minute 10 to minute 20.
+    \item \textbf{EntityView}: A logical crop-over-time view of an entity on a video. It has 4 properties: {\tt source}, {\tt entity\_windows}, where {\tt entity\_windows} is a list of bounding boxes of the entity over time. For example, a {\tt EntityView} represents a crops of a vehicle in the video ``xx.mp4''.
+\end{itemize}
+
+I will explore how the new data types interact with each existing DocETL data types through existing operators.
+For example, a {\tt Video} with a {\tt split} operator may output a list of {\tt VideoView} by a prompt,
+where each {\tt VideoView} capture semantically meaningful events in the video instead of a fixed chunk size.
+{\tt join} allows connecting two modalities, which opens up new opportunities for semantic rewrites.
+
+Below is a table of example usage of the new data types in JSON records:
+\begin{lstlisting}[language=JavaScript, basicstyle=\footnotesize\ttfamily, showstringspaces=false, breaklines=true, columns=fullflexible, keepspaces=true, frame=single]
+// Records of videos:
+[ {"content": {"type": "Video", "source": "file:///x/xx.mp4"}},
+  {"content": {"type": "Video", "source": "https://yt.com/yyy"}},
+  ...  ]
+
+// Records of video views:
+[ {"content": {"type": "VideoView", "source": "file:///x/xx.mp4",
+               "start": 10, "end": 20}},
+  {"content": {"type": "VideoView", "source": "https://yt.com/yyy",
+               "start": 10, "end": 20}}, ...  ]
+
+// Records of entity views:
+[ {"content": {"type": "EntityView", "source": "file:///x/xx.mp4",
+               "entity_windows": [
+                    {"x": 1, "y": 2, "w": 5, "h": 4, "t": 10},
+                    {"x": 3, "y": 4, "w": 5, "h": 4, "t": 11}, ... ]
+              }},
+  {"content": {"type": "EntityView", "source": "https://yt.com/yyy",
+               "entity_windows": [
+                    {"x": 5, "y": 6, "w": 5, "h": 4, "t": 10},
+                    {"x": 7, "y": 8, "w": 5, "h": 4, "t": 11}, ... ]
+              }}, ...  ]
+\end{lstlisting}
+
+\section{Query Rewrite Framework}
+Multimodality introduce a new class of query rewrite, semantic rewrite, in addition to the existing logical and physical rewrites.
+
+\paragraph{Semantic Rewrite (Preserve Intent)}
+This exploits multi-modality to change the semantic of the query while preserving the intent of the original query.
+By inferring the intended goal of the original query, the rewriter can perform \textit{modality switching}. 
+For example, if evaluating a claim on video is expensive but a transcript is available, 
+the query is rewritten to perform early filtering on the cheaper text modality before resorting to video verification.
+% This class of query rewrite is unique to multi-modal data systems; therefore,
+
+\paragraph{Logical Rewrite (Preserve Semantics)}
+Once the semantics of the query is determined, the system applies logical transformations to the query.
+Beyond traditional database rewrites like predicate pushdown, 
+it incorporates video-specific logical rules. 
+For example, for a query that extracts event timestamps from a video,
+the system can rewrite the query to split the video into small segments,
+call an LMM to extract events from each segment,
+and then join the events back together, where the timestamp results from each segment are offsetted by the start time of the segment.
+
+\paragraph{Physical Rewrite (Preserve Logic)}
+Physical rewrites dictate the physical implementation of each query.
+For example, an LMM call to extract vehicle tracks from a video may be rewritten to use a cheaper CNN object tracker,
+or a prompt-based {\tt join} may be swapped for vector similarity joins when semantically equivalent.
+
+Shown here are the figures of example rewrites (\autoref{fig:q1}, \autoref{fig:q2}, and \autoref{fig:q3}).
+The queries are organized in the following way.
+Black writings are operators.
+Red writings are data.
+The query runs from top to bottom, as indicated by red arrows.
+The left most query is the original query.
+Progressing toward the right is the rewritten queries.
+The yellow highlights indicate operators that stays the same during the rewrite.
+The blue highlights indicates an operator being rewritten into one or multiple operators in the rewritten version in the immediate right.
+The red highlights indicates an operator being removed as a result of rewriting.
+The green highlights (in rectangle) indicates an operator being added as a result of rewriting.
+
+\begin{figure*}
+    \centering
+    \includegraphics[width=\textwidth]{q1.png}
+    \caption{Crash statistics in traffic videos.
+    Query Description: Given traffic videos, find what time/day/month cars crash often the most.}
+    \Description{}
+    \label{fig:q1}
+\end{figure*}
+
+\begin{figure*}
+    \centering
+    \includegraphics[width=\textwidth]{q2.png}
+    \caption{Identifying specific vehicle 
+    Query Description: Track cars with license plate ABC123 and find the duration it appears.  }
+    \Description{}
+    \label{fig:q2}
+\end{figure*}
+
+\begin{figure*}
+    \centering
+    \includegraphics[width=\textwidth]{q3.png}
+    \caption{Police written report and video evidence discrepancy.
+    Query Description: Given a text document of police case report and related video footage. We want to answer whether the scenario described in the document can be supported by the evidence from the video footage.}
+    \Description{}
+    \label{fig:q3}
+\end{figure*}
+
+\section{Prior Work \& Evaluation Plan}
+Existing works have tackled aspects of video data but remain fundamentally unimodal. 
+
+Rekall \cite{fu2019rekall} processes video events using a spatiotemporal DSL but mainly focuses on unimodal temporal queries. 
+VOCAL \cite{zhang2025vocal} performs video querying using a frame-level model to compute scene graphs; however, 
+it lacks a high-level abstraction, obscuring semantic intent, and does not join with external text data.
+
+
+\textbf{Evaluation Plan.} We will build a prototype system incorporating the DSL and optimizer, 
+evaluating on real-world multi-modal datasets. 
+I will benchmark against original naive query, single LMM call, and coding agents across three dimensions: end-to-end \textit{query latency}, 
+\textit{monetary cost} of model inferences, and \textit{accuracy}.
+
+\bibliographystyle{ACM-Reference-Format}
+\bibliography{refs}
 
 \end{document}
