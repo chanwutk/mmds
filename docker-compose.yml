@@ -1,0 +1,26 @@
+services:
+  mmds:
+    build:
+      context: .
+    container_name: mmds
+    working_dir: /workspace/mmds
+    network_mode: host
+    gpus: all
+    stdin_open: true
+    tty: true
+    environment:
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      HOME: /root
+      PATH: /root/.local/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin
+      UV_LINK_MODE: copy
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: all
+    volumes:
+      - .:/workspace/mmds
+      - /work/cwkt/data/mmds:/data
+      - /home/eecs/chanwutk/.codex:/root/.codex
+      - /home/eecs/chanwutk/.claude:/root/.claude
+      - /home/eecs/chanwutk/.claude.json:/root/.claude.json
+      - /home/eecs/chanwutk/.cursor:/root/.cursor
+      - /home/eecs/chanwutk/.config/cursor:/root/.config/cursor
+      - /home/eecs/chanwutk/.config/Cursor:/root/.config/Cursor
