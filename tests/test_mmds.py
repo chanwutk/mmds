@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -41,7 +43,7 @@ class QueryRoundTripTests(unittest.TestCase):
         query = """
 from mmds import Input, Map, Reduce, Record, ForEach
 
-docs = Input("docs")
+docs = Input("docs.jsonl")
 mapped = Map(
     docs,
     ["Summarize ", Record["title"], " from ", Record["video"]],
@@ -58,13 +60,13 @@ output = Reduce(
         rendered = render_query(program)
         reparsed = load_query(rendered)
 
-        self.assertEqual(program.input_names(), ("docs",))
+        self.assertEqual(program.input_paths(), ("docs.jsonl",))
         self.assertEqual(rendered, render_query(reparsed))
         self.assertIn("Record", rendered)
         self.assertIn("ForEach", rendered)
 
     def test_program_from_runtime_plan_renders_normalized_python(self) -> None:
-        plan = Filter(Map(Input("docs"), annotate), ["Keep label ", Record["label"]])
+        plan = Filter(Map(Input("data/docs.jsonl"), annotate), ["Keep label ", Record["label"]])
         program = program_from_plan(plan)
         rendered = render_query(program)
 
@@ -79,13 +81,14 @@ class ExecutionTests(unittest.TestCase):
             {"value": 2, "tags": ["c"]},
             {"value": 4, "tags": []},
         ]
+        input_path = _write_jsonl_rows(rows)
         plan = Reduce(
-            Unnest(Filter(Map(Input("docs"), add_bucket), keep_large), "tags", keep_empty=True),
+            Unnest(Filter(Map(Input(input_path), add_bucket), keep_large), "tags", keep_empty=True),
             ["bucket"],
             summarize_group,
         )
 
-        result = execute(plan, {"docs": rows})
+        result = execute(plan)
         self.assertEqual(
             sorted(result, key=lambda row: row["bucket"]),
             [
@@ -99,8 +102,9 @@ class ExecutionTests(unittest.TestCase):
             {"title": "Clip A", "video": {"type": "Video", "uri": "https://youtube.com/watch?v=1"}},
             {"title": "Clip B", "video": {"type": "Video", "uri": "https://youtube.com/watch?v=2"}},
         ]
+        input_path = _write_jsonl_rows(rows)
         map_plan = Map(
-            Input("docs"),
+            Input(input_path),
             ["Summarize ", Record["title"], " from ", Record["video"]],
             schema={"type": "object", "properties": {"summary": {"type": "string"}}, "required": ["summary"]},
         )
@@ -124,7 +128,7 @@ class ExecutionTests(unittest.TestCase):
             }
         )
 
-        result = execute(reduce_plan, {"docs": rows}, prompt_executor=executor)
+        result = execute(reduce_plan, prompt_executor=executor)
         self.assertEqual(
             result,
             [
@@ -140,8 +144,9 @@ class ExecutionTests(unittest.TestCase):
             {"value": 2, "tags": []},
             {"value": 3},
         ]
-        plan = Unnest(Input("docs"), "tags", keep_empty=True)
-        result = execute(plan, {"docs": rows})
+        input_path = _write_json_rows(rows)
+        plan = Unnest(Input(input_path), "tags", keep_empty=True)
+        result = execute(plan)
 
         self.assertEqual(
             result,
@@ -152,17 +157,35 @@ class ExecutionTests(unittest.TestCase):
             ],
         )
 
+    def test_execute_query_program_resolves_relative_input_paths_from_query_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            data_path = root / "clips.jsonl"
+            data_path.write_text('{"tags": ["a", "b"]}\n{"tags": []}\n', encoding="utf-8")
+            query_path = root / "query.py"
+            query_path.write_text(
+                'from mmds import Input, Unnest\n\n'
+                'docs = Input("clips.jsonl")\n'
+                'output = Unnest(docs, "tags", keep_empty=True)\n',
+                encoding="utf-8",
+            )
+
+            program = load_query(query_path)
+            result = execute(program)
+
+        self.assertEqual(result, [{"tags": "a"}, {"tags": "b"}, {"tags": None}])
+
 
 class ValidationTests(unittest.TestCase):
     def test_lambda_specs_are_rejected(self) -> None:
         with self.assertRaises(MMDSValidationError):
-            Map(Input("docs"), lambda row: row)
+            Map(Input("docs.jsonl"), lambda row: row)
 
     def test_parser_rejects_unsupported_python(self) -> None:
         query = """
 from mmds import Input, Map
 
-docs = Input("docs")
+docs = Input("docs.jsonl")
 for row in []:
     docs = Map(docs, "noop", schema={"type": "object"})
 """
@@ -174,7 +197,7 @@ for row in []:
 from mmds import Input, Map
 from math import ceil
 
-docs = Input("docs")
+docs = Input("docs.jsonl")
 output = Map(docs, ceil)
 """
         with self.assertRaises(MMDSValidationError):
@@ -184,7 +207,7 @@ output = Map(docs, ceil)
         query = """
 from mmds import Input, Reduce, Record
 
-docs = Input("docs")
+docs = Input("docs.jsonl")
 output = Reduce(
     docs,
     "_all",
@@ -198,19 +221,23 @@ output = Reduce(
     def test_foreach_is_rejected_outside_reduce(self) -> None:
         with self.assertRaises(MMDSValidationError):
             Map(
-                Input("docs"),
+                Input("docs.jsonl"),
                 [ForEach(["- ", Record["title"]])],
                 schema={"type": "object", "properties": {"summary": {"type": "string"}}, "required": ["summary"]},
             )
 
+    def test_input_rejects_non_json_paths(self) -> None:
+        with self.assertRaises(TypeError):
+            Input("docs.csv")
+
 
 class OptimizerTests(unittest.TestCase):
     def test_rule_optimizer_preserves_results(self) -> None:
-        rows = [{"value": 2}, {"value": 4}]
-        plan = Map(Input("docs"), annotate)
+        input_path = _write_json_rows([{"value": 2}, {"value": 4}])
+        plan = Map(Input(input_path), annotate)
 
-        original = execute(plan, {"docs": rows})
-        optimized = execute(optimize(plan), {"docs": rows})
+        original = execute(plan)
+        optimized = execute(optimize(plan))
 
         self.assertEqual(original, optimized)
 
@@ -219,7 +246,7 @@ class OptimizerTests(unittest.TestCase):
 from mmds import Input, Map, Filter, Record
 from udfs.test_ops import annotate
 
-docs = Input("docs")
+docs = Input("docs.jsonl")
 tagged = Map(docs, annotate)
 output = Filter(tagged, ["keep ", Record["label"]])
 """
@@ -229,7 +256,7 @@ output = Filter(tagged, ["keep ", Record["label"]])
 from mmds import Input, Map, Filter, Record
 from udfs.test_ops import annotate
 
-docs = Input("docs")
+docs = Input("docs.jsonl")
 mapped = Map(docs, annotate)
 output = Filter(mapped, ["keep ", Record["label"]])
 ```
@@ -239,13 +266,14 @@ output = Filter(mapped, ["keep ", Record["label"]])
         rewritten = rewrite(query, client, objective="latency")
         self.assertIn('output = Filter(mapped, ["keep ", Record["label"]])', rewritten)
         self.assertIn("Record, and ForEach", build_rewrite_prompt(query, objective="latency"))
+        self.assertIn("Preserve the same Input(...) file paths.", build_rewrite_prompt(query))
 
     def test_llm_optimizer_rejects_changed_inputs(self) -> None:
         query = """
 from mmds import Input, Map
 from udfs.test_ops import annotate
 
-docs = Input("docs")
+docs = Input("docs.jsonl")
 output = Map(docs, annotate)
 """
         client = StaticLLMClient(
@@ -253,12 +281,26 @@ output = Map(docs, annotate)
 from mmds import Input, Map
 from udfs.test_ops import annotate
 
-other = Input("other")
+other = Input("other.jsonl")
 output = Map(other, annotate)
 """
         )
         with self.assertRaises(MMDSValidationError):
             rewrite(query, client)
+
+    def test_llm_optimizer_logs_rewrite_prompt(self) -> None:
+        query = """
+from mmds import Input, Map
+from udfs.test_ops import annotate
+
+docs = Input("docs.jsonl")
+output = Map(docs, annotate)
+"""
+        client = StaticLLMClient(query)
+        with self.assertLogs("mmds.llm_optimizer", level="DEBUG") as captured:
+            rewrite(query, client)
+        self.assertTrue(any("Sending rewrite prompt to LLM" in line for line in captured.output))
+        self.assertTrue(any('docs = Input("docs.jsonl")' in line for line in captured.output))
 
 
 class GeminiExecutorTests(unittest.TestCase):
@@ -295,6 +337,30 @@ class GeminiExecutorTests(unittest.TestCase):
         self.assertEqual(fake_client.files.upload_calls, ["/tmp/demo.mp4"])
         content = fake_client.models.calls[0]["contents"]
         self.assertEqual(content.parts[1].file_data.file_uri, "uploaded://video")
+
+    def test_gemini_executor_logs_built_parts(self) -> None:
+        fake_client = _FakeClient('{"summary": "done"}')
+        executor = GeminiPromptExecutor(client=fake_client, types_module=_FakeTypes, poll_interval_seconds=0.0)
+        prompt = PromptSpec(
+            parts=("Watch ", Record["video"]),
+            output_schema={"type": "object", "properties": {"summary": {"type": "string"}}, "required": ["summary"]},
+        )
+        resolved = ResolvedPrompt(
+            parts=("Watch ", {"type": "Video", "uri": "https://youtube.com/watch?v=demo"}),
+            output_schema=prompt.output_schema,
+        )
+
+        with self.assertLogs("mmds.gemini_executor", level="DEBUG") as captured:
+            executor.execute("map", prompt, resolved, payload={}, context={})
+
+        self.assertTrue(any("Sending Gemini prompt for map" in line for line in captured.output))
+        self.assertTrue(any("Part 1: text='Watch '" in line for line in captured.output))
+        self.assertTrue(
+            any(
+                "Part 2: file_data(file_uri='https://youtube.com/watch?v=demo'" in line
+                for line in captured.output
+            )
+        )
 
 
 class UdfCatalogTests(unittest.TestCase):
@@ -382,6 +448,26 @@ class _FakeClient:
     def __init__(self, text):
         self.models = _FakeModels(text)
         self.files = _FakeFiles()
+
+
+def _write_json_rows(rows: list[dict]) -> str:
+    handle = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8")
+    try:
+        json.dump(rows, handle)
+        return handle.name
+    finally:
+        handle.close()
+
+
+def _write_jsonl_rows(rows: list[dict]) -> str:
+    handle = tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False, encoding="utf-8")
+    try:
+        for row in rows:
+            handle.write(json.dumps(row))
+            handle.write("\n")
+        return handle.name
+    finally:
+        handle.close()
 
 
 if __name__ == "__main__":

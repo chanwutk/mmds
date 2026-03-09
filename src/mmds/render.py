@@ -49,7 +49,7 @@ def program_from_plan(plan: DatasetExpr) -> QueryProgram:
         if node is plan:
             target = "output"
         elif node.kind == "input":
-            target = _make_unique_name(used_names, f"source_{_sanitize_identifier(node.input_name or 'input')}")
+            target = _make_unique_name(used_names, f"source_{_sanitize_identifier(_input_label(node.input_path))}")
         else:
             target = _make_unique_name(used_names, f"step_{step_index}")
             step_index += 1
@@ -62,7 +62,7 @@ def program_from_plan(plan: DatasetExpr) -> QueryProgram:
 
 def _render_expr(expr: DatasetExpr, node_names: dict[DatasetExpr, str]) -> str:
     if expr.kind == "input":
-        return f"Input({_quote(expr.input_name)})"
+        return f"Input({_quote(expr.input_path)})"
 
     source_name = node_names[expr.source]
     name_suffix = _render_name_suffix(expr.name)
@@ -161,6 +161,17 @@ def _sanitize_identifier(value: str) -> str:
     if keyword.iskeyword(sanitized):
         sanitized = f"{sanitized}_value"
     return sanitized
+
+
+def _input_label(path: str | None) -> str:
+    if path is None:
+        return "input"
+    leaf = path.rsplit("/", 1)[-1]
+    if leaf.endswith(".jsonl"):
+        return leaf[:-6]
+    if leaf.endswith(".json"):
+        return leaf[:-5]
+    return leaf
 
 
 def _make_unique_name(used_names: set[str], base: str) -> str:

@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
 from .model import MMDSValidationError, PromptSpec, ResolvedPrompt
+
+logger = logging.getLogger(__name__)
 
 
 class GeminiPromptExecutor:
@@ -15,7 +18,7 @@ class GeminiPromptExecutor:
     def __init__(
         self,
         *,
-        model: str = "gemini-2.5-flash",
+        model: str = "gemini-3.1-pro-preview",
         api_key: str | None = None,
         client: Any | None = None,
         types_module: Any | None = None,
@@ -40,8 +43,14 @@ class GeminiPromptExecutor:
     ) -> Any:
         client = self._get_client()
         types = self._get_types()
-        contents = types.Content(parts=self._build_parts(resolved_prompt.parts, client, types))
+        parts = self._build_parts(resolved_prompt.parts, client, types)
+        contents = types.Content(parts=parts)
         config = self._build_config(op_type, prompt)
+        logger.debug(
+            "Sending Gemini prompt for %s:\n%s",
+            op_type,
+            _format_debug_parts(parts),
+        )
         response = client.models.generate_content(model=self.model, contents=contents, config=config)
         text = getattr(response, "text", None)
         if not text:
@@ -181,3 +190,48 @@ def _stringify_prompt_value(value: Any) -> str:
     if isinstance(value, Mapping) or isinstance(value, list):
         return json.dumps(value, sort_keys=True)
     return str(value)
+
+
+def _format_debug_parts(parts: list[Any]) -> str:
+    lines: list[str] = []
+    for index, part in enumerate(parts, start=1):
+        lines.append(f"Part {index}: {_format_debug_part(part)}")
+    return "\n".join(lines)
+
+
+def _format_debug_part(part: Any) -> str:
+    text = getattr(part, "text", None)
+    if text is not None:
+        return f"text={text!r}"
+
+    file_data = getattr(part, "file_data", None)
+    if file_data is not None:
+        file_uri = getattr(file_data, "file_uri", None)
+        mime_type = getattr(file_data, "mime_type", None)
+        metadata = _format_video_metadata(getattr(part, "video_metadata", None))
+        return f"file_data(file_uri={file_uri!r}, mime_type={mime_type!r}{metadata})"
+
+    inline_data = getattr(part, "inline_data", None)
+    if inline_data is not None:
+        mime_type = getattr(inline_data, "mime_type", None)
+        data = getattr(inline_data, "data", b"")
+        size = len(data) if isinstance(data, (bytes, bytearray)) else "unknown"
+        metadata = _format_video_metadata(getattr(part, "video_metadata", None))
+        return f"inline_data(mime_type={mime_type!r}, bytes={size}{metadata})"
+
+    return repr(part)
+
+
+def _format_video_metadata(metadata: Any) -> str:
+    if metadata is None:
+        return ""
+    values = []
+    for key in ("start_offset", "end_offset", "fps"):
+        value = getattr(metadata, key, None)
+        if value is not None:
+            values.append(f"{key}={value!r}")
+    if not values and hasattr(metadata, "kwargs"):
+        values = [f"{key}={value!r}" for key, value in metadata.kwargs.items()]
+    if not values:
+        return ""
+    return ", video_metadata={" + ", ".join(values) + "}"

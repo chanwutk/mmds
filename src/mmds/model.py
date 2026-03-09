@@ -80,7 +80,7 @@ SemanticSpec: TypeAlias = PromptSpec | UdfSpec
 class DatasetExpr:
     kind: OperatorKind
     source: DatasetExpr | None = None
-    input_name: str | None = None
+    input_path: str | None = None
     spec: SemanticSpec | None = None
     group_by: tuple[str, ...] = ()
     field: str | None = None
@@ -89,8 +89,8 @@ class DatasetExpr:
 
     def __post_init__(self) -> None:
         if self.kind == "input":
-            if self.source is not None or self.input_name is None:
-                raise MMDSValidationError("Input nodes require only an input name.")
+            if self.source is not None or self.input_path is None:
+                raise MMDSValidationError("Input nodes require only an input file path.")
             return
         if self.source is None:
             raise MMDSValidationError(f"{self.kind} nodes require a source expression.")
@@ -147,9 +147,9 @@ class QueryProgram:
                 return assignment.expr
         raise MMDSValidationError(f"Output variable {self.output_name!r} is missing.")
 
-    def input_names(self) -> tuple[str, ...]:
-        names = {assignment.expr.input_name for assignment in self.assignments if assignment.expr.kind == "input"}
-        return tuple(sorted(name for name in names if name is not None))
+    def input_paths(self) -> tuple[str, ...]:
+        paths = {assignment.expr.input_path for assignment in self.assignments if assignment.expr.kind == "input"}
+        return tuple(sorted(path for path in paths if path is not None))
 
     def used_udfs(self) -> tuple[UdfSpec, ...]:
         specs: set[UdfSpec] = set()

@@ -23,8 +23,9 @@ PromptInput: TypeAlias = str | Sequence[PromptInputPart]
 
 def Input(name: str) -> DatasetExpr:
     if not isinstance(name, str) or not name:
-        raise TypeError("Input names must be non-empty strings.")
-    return DatasetExpr(kind="input", input_name=name)
+        raise TypeError("Input paths must be non-empty strings.")
+    _validate_input_path(name)
+    return DatasetExpr(kind="input", input_path=name)
 
 
 def Map(
@@ -100,6 +101,11 @@ def _normalize_source(data: DatasetExpr) -> DatasetExpr:
     if not isinstance(data, DatasetExpr):
         raise TypeError("Operator sources must be DatasetExpr instances created by the MMDS DSL.")
     return data
+
+
+def _validate_input_path(path: str) -> None:
+    if not (path.endswith(".json") or path.endswith(".jsonl")):
+        raise TypeError("Input paths must point to .json or .jsonl files.")
 
 
 def _normalize_spec(

@@ -68,6 +68,7 @@ This repository implements a Python DSL for multimodal data workflows. Before ma
 
 - The query language is a restricted Python subset: imports plus top-level assignments only.
 - Supported operators are `Input`, `Map`, `Filter`, `Reduce`, and `Unnest`.
+- `Input(...)` takes a `.json` or `.jsonl` file path directly; do not reintroduce a catalog abstraction unless explicitly requested.
 - Prompt-backed operators support strings and structured prompt lists using `Record[...]` and `ForEach([...])`.
 - Prompt-backed `Map` and `Reduce` require `schema=...`.
 - Inline lambdas and nested functions are not supported.

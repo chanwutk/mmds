@@ -120,7 +120,9 @@ def _parse_call(
 
     if operator == "Input":
         _expect_args(operator, node.args, 1, keywords, allowed_keywords=set())
-        return DatasetExpr(kind="input", input_name=_parse_string(node.args[0], "Input name"))
+        input_path = _parse_string(node.args[0], "Input path")
+        _validate_input_path(input_path)
+        return DatasetExpr(kind="input", input_path=input_path)
 
     if operator == "Map":
         _expect_args(operator, node.args, 2, keywords, allowed_keywords={"name", "schema"})
@@ -271,6 +273,11 @@ def _parse_schema(node: ast.AST | None) -> JsonValue | None:
     if not isinstance(value, dict):
         raise MMDSValidationError("schema= must be a dictionary literal.")
     return value
+
+
+def _validate_input_path(path: str) -> None:
+    if not (path.endswith(".json") or path.endswith(".jsonl")):
+        raise MMDSValidationError("Input paths must point to .json or .jsonl files.")
 
 
 def _parse_string(node: ast.AST, label: str) -> str:

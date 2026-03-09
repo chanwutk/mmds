@@ -9,7 +9,7 @@ MMDS is a Python-first DSL for semantic data workflows. A query is written as or
 ```python
 from mmds import Input, Map, Reduce, Record, ForEach
 
-docs = Input("docs")
+docs = Input("data/docs.jsonl")
 mapped = Map(
     docs,
     ["Summarize ", Record["title"], " from ", Record["video"]],
@@ -41,6 +41,7 @@ The design goal is to keep those representations close enough that:
 The current implementation supports:
 
 - operators: `Input`, `Map`, `Filter`, `Reduce`, `Unnest`
+- file-backed `Input(...)` roots over `.json` and `.jsonl`
 - prompt-backed semantics as either:
   - a plain string
   - a structured prompt list made of strings, `Record[...]`, and Reduce-level `ForEach([...])`
@@ -63,6 +64,7 @@ The current implementation intentionally does not support:
 - automatic `.py` implementation synthesis from `.pyi`
 - nested `ForEach(...)`
 - provider-specific media syntax in the DSL
+- data catalogs or named dataset registries
 
 ## Architecture
 
@@ -70,14 +72,14 @@ The current implementation intentionally does not support:
 
 The main entrypoints are exported from [src/mmds/__init__.py](/Users/chanwutk/Documents/mmds/src/mmds/__init__.py):
 
-- `Input(name)`
+- `Input(path)`
 - `Map(data, spec, *, schema=None, name=None)`
 - `Filter(data, spec, *, name=None)`
 - `Reduce(data, group_by, reducer, *, schema=None, name=None)`
 - `Unnest(data, field, *, keep_empty=False, name=None)`
 - `Record[...]`
 - `ForEach([...])`
-- `execute(plan_or_query, inputs, prompt_executor=None)`
+- `execute(plan_or_query, prompt_executor=None)`
 - `GeminiPromptExecutor(...)`
 - `load_query(source)` / `parse_query(source)`
 - `render_query(plan_or_query)`
@@ -142,6 +144,7 @@ Parser rules:
   - an imported UDF name
 - UDF import aliasing is rejected
 - only absolute imports are allowed
+- `Input(...)` must be a string literal ending in `.json` or `.jsonl`
 - `Reduce.group_by` must be a string or list/tuple of strings
 - `Unnest.keep_empty` must be a literal boolean
 - `Map` and `Reduce` prompt specs must include `schema={...}`
@@ -176,12 +179,14 @@ Local execution lives in [src/mmds/execution.py](/Users/chanwutk/Documents/mmds/
 
 Execution input model:
 
-- each dataset is provided as `Mapping[str, Iterable[Mapping[str, Any]]]`
-- each row is copied into a mutable `dict`
+- each `Input(...)` points directly to a `.json` or `.jsonl` file
+- `.json` inputs must contain a top-level list of row objects
+- `.jsonl` inputs must contain one JSON object per non-empty line
+- each loaded row is copied into a mutable `dict`
 
 Operator semantics:
 
-- `Input(name)`: reads `inputs[name]`
+- `Input(path)`: reads rows from the referenced `.json` or `.jsonl` file
 - `Map`: applies prompt/UDF to one row and merges returned fields into that row
 - `Filter`: applies prompt/UDF to one row and keeps rows whose result is truthy
 - `Reduce`: groups rows by the configured fields, calls the reducer once per group, and merges returned aggregate fields with the group key fields
@@ -195,6 +200,11 @@ Prompt execution flow:
 4. Delegate to `PromptExecutor.execute(op_type, prompt_spec, resolved_prompt, payload, context)`.
 
 `StaticPromptExecutor` exists for deterministic tests and local development.
+
+Relative path handling:
+
+- when executing a parsed query file, relative `Input(...)` paths resolve from that query file’s directory
+- when executing a runtime-built plan, relative `Input(...)` paths resolve from the current working directory
 
 ### Media Handling And Gemini Execution
 
@@ -283,7 +293,7 @@ Flow:
 3. Ask an `LLMClient` for rewritten code.
 4. Extract Python from a fenced or raw response.
 5. Parse the rewritten code.
-6. Reject rewrites that change `Input(...)` roots.
+6. Reject rewrites that change `Input(...)` file paths.
 7. Return normalized rendered Python.
 
 The LLM optimizer is currently a controlled interface, not a production optimizer. It is designed to make later provider integration safe by validating every rewrite against the same parser used elsewhere.
@@ -298,6 +308,7 @@ The following invariants are part of the current design and should not change si
 - UDFs must come from `udfs.*`
 - operator trees are immutable
 - the last assignment is the output unless a future explicit sink is added
+- input roots are direct file paths, not catalog identifiers
 - rendered queries are normalized, not source-exact
 - prompt-backed execution always requires an injected executor
 - `.pyi` discovery does not imply executability
@@ -311,6 +322,7 @@ Tests live in [tests/test_mmds.py](/Users/chanwutk/Documents/mmds/tests/test_mmd
 The current suite covers:
 
 - parse/render/parse equivalence for structured prompts
+- file-backed execution for `.json` and `.jsonl`
 - rendering from runtime-built plans
 - execution for UDF-backed and prompt-backed queries
 - `Record[...]` resolution and `ForEach([...])` expansion
