@@ -7,6 +7,8 @@ from typing import Any, Callable, Iterator, Literal, TypeAlias
 Row: TypeAlias = dict[str, Any]
 JsonScalar: TypeAlias = str | int | float | bool | None
 JsonValue: TypeAlias = JsonScalar | dict[str, "JsonValue"] | list["JsonValue"]
+FieldSchemaValue: TypeAlias = str | dict[str, JsonValue]
+RecordSchema: TypeAlias = dict[str, FieldSchemaValue]
 OperatorKind: TypeAlias = Literal["input", "map", "filter", "reduce", "unnest"]
 
 
@@ -40,7 +42,10 @@ PromptPart: TypeAlias = str | RecordPath | ForEachPrompt
 @dataclass(frozen=True)
 class PromptSpec:
     parts: tuple[PromptPart, ...]
-    output_schema: JsonValue | None = None
+    output_schema: RecordSchema | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "output_schema", normalize_output_schema(self.output_schema))
 
     def cache_key(self) -> str | tuple[Any, ...]:
         if len(self.parts) == 1 and isinstance(self.parts[0], str):
@@ -54,7 +59,10 @@ class PromptSpec:
 @dataclass(frozen=True)
 class ResolvedPrompt:
     parts: tuple[Any, ...]
-    output_schema: JsonValue | None = None
+    output_schema: RecordSchema | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "output_schema", normalize_output_schema(self.output_schema))
 
 
 @dataclass(frozen=True)
@@ -189,6 +197,29 @@ def prompt_uses_record_helpers(spec: PromptSpec) -> bool:
     return any(_prompt_part_uses_helpers(part) for part in spec.parts)
 
 
+def normalize_output_schema(value: JsonValue | None) -> RecordSchema | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise TypeError("schema= must be a dictionary mapping output field names to schema fragments.")
+    if _looks_like_legacy_object_schema(value):
+        return _normalize_legacy_object_schema(value)
+    return _normalize_record_schema(value)
+
+
+def expand_output_schema(schema: RecordSchema | None) -> dict[str, JsonValue] | None:
+    if schema is None:
+        return None
+    properties: dict[str, JsonValue] = {}
+    for field_name, field_schema in sorted(schema.items()):
+        properties[field_name] = _expand_field_schema(field_schema)
+    return {
+        "type": "object",
+        "properties": properties,
+        "required": sorted(properties),
+    }
+
+
 def _prompt_part_cache_key(part: PromptPart) -> Any:
     if isinstance(part, str):
         return part
@@ -214,4 +245,82 @@ def _freeze_json_value(value: JsonValue | None) -> Any:
         return tuple(sorted((str(key), _freeze_json_value(item)) for key, item in value.items()))
     if isinstance(value, list):
         return tuple(_freeze_json_value(item) for item in value)
+    return value
+
+
+def _looks_like_legacy_object_schema(value: dict[str, JsonValue]) -> bool:
+    return "properties" in value or "required" in value or value.get("type") == "object"
+
+
+def _normalize_legacy_object_schema(value: dict[str, JsonValue]) -> RecordSchema:
+    allowed_keys = {"type", "properties", "required"}
+    unexpected = sorted(str(key) for key in value if key not in allowed_keys)
+    if unexpected:
+        raise TypeError(
+            "Full JSON-schema objects are only supported in the legacy object form with "
+            "'type', 'properties', and 'required' keys."
+        )
+    if value.get("type") != "object":
+        raise TypeError("schema= object wrappers must use {'type': 'object', ...}.")
+
+    properties = value.get("properties")
+    if not isinstance(properties, dict):
+        raise TypeError("schema= object wrappers must include a dictionary 'properties' entry.")
+
+    required = value.get("required")
+    if not isinstance(required, list) or any(not isinstance(item, str) for item in required):
+        raise TypeError("schema= object wrappers must include a string-list 'required' entry.")
+    property_names = sorted(str(key) for key in properties)
+    if sorted(required) != property_names:
+        raise TypeError("schema= object wrappers must mark every output field as required.")
+
+    return _normalize_record_schema(properties)
+
+
+def _normalize_record_schema(value: dict[str, JsonValue]) -> RecordSchema:
+    schema: RecordSchema = {}
+    for key, item in value.items():
+        if not isinstance(key, str) or not key:
+            raise TypeError("schema= field names must be non-empty strings.")
+        schema[key] = _normalize_field_schema(item)
+    return schema
+
+
+def _normalize_field_schema(value: JsonValue) -> FieldSchemaValue:
+    if isinstance(value, str):
+        if not value:
+            raise TypeError("schema= field type shorthands must be non-empty strings.")
+        return value
+    if isinstance(value, dict):
+        normalized = _normalize_json_object(value)
+        if set(normalized) == {"type"} and isinstance(normalized["type"], str):
+            return normalized["type"]
+        return normalized
+    raise TypeError(
+        "schema= field schemas must be string type shorthands or JSON-schema fragment dictionaries."
+    )
+
+
+def _normalize_json_object(value: dict[str, JsonValue]) -> dict[str, JsonValue]:
+    normalized: dict[str, JsonValue] = {}
+    for key, item in value.items():
+        if not isinstance(key, str):
+            raise TypeError("schema= JSON-schema fragment keys must be strings.")
+        normalized[key] = _normalize_json_value(item)
+    return normalized
+
+
+def _normalize_json_value(value: JsonValue) -> JsonValue:
+    if isinstance(value, dict):
+        return _normalize_json_object(value)
+    if isinstance(value, list):
+        return [_normalize_json_value(item) for item in value]
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    raise TypeError("schema= values must be JSON-compatible literals.")
+
+
+def _expand_field_schema(value: FieldSchemaValue) -> JsonValue:
+    if isinstance(value, str):
+        return {"type": value}
     return value

@@ -13,6 +13,7 @@ from .model import (
     Record,
     RecordPath,
     SemanticSpec,
+    normalize_output_schema,
     normalize_group_by,
     udf_spec_from_callable,
 )
@@ -124,7 +125,7 @@ def _normalize_spec(
     parts = _normalize_prompt_spec(spec, allow_foreach=allow_foreach, allow_record=allow_record)
     if op_kind in {"map", "reduce"} and schema is None:
         raise TypeError(f"Prompt-backed {op_kind} operations require schema=...")
-    return PromptSpec(parts=parts, output_schema=schema)
+    return PromptSpec(parts=parts, output_schema=normalize_output_schema(schema))
 
 
 def _normalize_prompt_spec(

@@ -13,13 +13,13 @@ docs = Input("data/docs.jsonl")
 mapped = Map(
     docs,
     ["Summarize ", Record["title"], " from ", Record["video"]],
-    schema={"type": "object", "properties": {"summary": {"type": "string"}}, "required": ["summary"]},
+    schema={"summary": "string"},
 )
 output = Reduce(
     mapped,
     "_all",
     ["Summaries:\n", ForEach(["- ", Record["summary"], "\n"])],
-    schema={"type": "object", "properties": {"report": {"type": "string"}}, "required": ["report"]},
+    schema={"report": "string"},
 )
 ```
 
@@ -46,7 +46,7 @@ The current implementation supports:
   - a plain string
   - a structured prompt list made of strings, `Record[...]`, and Reduce-level `ForEach([...])`
 - function-backed semantics as imported UDFs from `udfs.*`
-- prompt-backed `Map` and `Reduce` with explicit JSON-schema output contracts
+- prompt-backed `Map` and `Reduce` with concise output field schemas
 - prompt-backed `Filter` returning a bare JSON boolean
 - source parsing for straight-line top-level assignments only
 - plan rendering back to normalized Python code
@@ -124,6 +124,24 @@ Semantics:
 
 This model makes prompt construction explicit and gives executors enough structure to preserve non-text field values, including media.
 
+### Output Schema Model
+
+Prompt-backed `Map` and `Reduce` use a concise record-schema form:
+
+- `schema={"summary": "string"}`
+- `schema={"summary": "string", "contains_dog": "boolean"}`
+- `schema={"items": {"type": "array", "items": {"type": "string"}}}`
+
+Design rules:
+
+- the output row shape is always an object
+- every declared output field is always required
+- string values are shorthand for `{"type": ...}`
+- field values may also be full JSON-schema fragments when needed
+
+The executor expands this concise field map into a full object-shaped JSON Schema before sending it to an LLM provider.
+The parser still accepts the old verbose object wrapper form for compatibility, but it normalizes and renders it back in the concise form.
+
 ### Parser
 
 The parser lives in [src/mmds/parser.py](/Users/chanwutk/Documents/mmds/src/mmds/parser.py).
@@ -147,7 +165,7 @@ Parser rules:
 - `Input(...)` must be a string literal ending in `.json` or `.jsonl`
 - `Reduce.group_by` must be a string or list/tuple of strings
 - `Unnest.keep_empty` must be a literal boolean
-- `Map` and `Reduce` prompt specs must include `schema={...}`
+- `Map` and `Reduce` prompt specs must include `schema={...}` as an output field map
 - `Filter` does not accept `schema=`
 - `Reduce` prompt lists may only use `Record[...]` inside `ForEach([...])`
 
@@ -240,9 +258,9 @@ Gemini executor behavior:
 - waits for uploaded files to become active
 - converts structured prompts into Gemini content parts
 - preserves video fields as video parts instead of stringifying them
-- requests JSON output using Gemini structured output config
+- expands concise MMDS output schemas into object-shaped JSON Schema and requests JSON output using Gemini structured output config
 - uses a bare boolean schema for `Filter`
-- uses the operator-provided schema for `Map` and `Reduce`
+- uses the operator-provided output field schema for `Map` and `Reduce`
 
 This design follows Gemini’s official support for video inputs and structured JSON output. Sources used to align the design and implementation:
 

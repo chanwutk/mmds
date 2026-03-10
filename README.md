@@ -27,7 +27,7 @@ output = Reduce(
     expanded,
     ["bucket"],
     ["summaries:\n", ForEach(["- ", Record["summary"], "\n"])],
-    schema={"type": "object", "properties": {"report": {"type": "string"}}, "required": ["report"]},
+    schema={"report": "string"},
 )
 ```
 
@@ -36,7 +36,8 @@ output = Reduce(
 ## Runtime model
 
 - Prompt-based operators require an injected prompt executor.
-- Prompt-based `Map` and `Reduce` require `schema=...` so the executor can request structured JSON output.
+- Prompt-based `Map` and `Reduce` require `schema=...`, written as a concise output field map such as `{"summary": "string", "score": "number"}`.
+- The executor expands that concise schema into the full object-shaped JSON Schema expected by the model provider.
 - `Filter` prompt execution expects a bare JSON boolean.
 - Prompt lists can contain strings, `Record[...]` field references, and top-level `ForEach([...])` in `Reduce`.
 - Function-based operators must use imported functions from `./udfs`.

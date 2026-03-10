@@ -25,14 +25,7 @@ mapped = Map(
         Record["video"],
         "\nReturn a short summary and whether a dog is clearly visible.",
     ],
-    schema={
-        "type": "object",
-        "properties": {
-            "summary": {"type": "string"},
-            "contains_dog": {"type": "boolean"},
-        },
-        "required": ["summary", "contains_dog"],
-    },
+    schema={"summary": "string", "contains_dog": "boolean"},
 )
 
 output = Filter(

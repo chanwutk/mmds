@@ -15,6 +15,7 @@ from .model import (
     Record,
     RecordPath,
     UdfSpec,
+    normalize_output_schema,
     normalize_group_by,
 )
 
@@ -269,10 +270,13 @@ def _parse_schema(node: ast.AST | None) -> JsonValue | None:
     try:
         value = ast.literal_eval(node)
     except (TypeError, ValueError, SyntaxError) as exc:
-        raise MMDSValidationError("schema= must be a Python literal JSON-schema structure.") from exc
-    if not isinstance(value, dict):
-        raise MMDSValidationError("schema= must be a dictionary literal.")
-    return value
+        raise MMDSValidationError(
+            "schema= must be a Python literal dictionary of output fields or a legacy object schema."
+        ) from exc
+    try:
+        return normalize_output_schema(value)
+    except TypeError as exc:
+        raise MMDSValidationError(str(exc)) from exc
 
 
 def _validate_input_path(path: str) -> None:

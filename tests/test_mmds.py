@@ -47,13 +47,13 @@ docs = Input("docs.jsonl")
 mapped = Map(
     docs,
     ["Summarize ", Record["title"], " from ", Record["video"]],
-    schema={"type": "object", "properties": {"summary": {"type": "string"}}, "required": ["summary"]},
+    schema={"summary": "string"},
 )
 output = Reduce(
     mapped,
     "_all",
     ["Summaries:\\n", ForEach(["- ", Record["summary"], "\\n"])],
-    schema={"type": "object", "properties": {"report": {"type": "string"}}, "required": ["report"]},
+    schema={"report": "string"},
 )
 """
         program = load_query(query)
@@ -106,13 +106,13 @@ class ExecutionTests(unittest.TestCase):
         map_plan = Map(
             Input(input_path),
             ["Summarize ", Record["title"], " from ", Record["video"]],
-            schema={"type": "object", "properties": {"summary": {"type": "string"}}, "required": ["summary"]},
+            schema={"summary": "string"},
         )
         reduce_plan = Reduce(
             map_plan,
             "_all",
             ["Bullets:\n", ForEach(["- ", Record["summary"], "\n"])],
-            schema={"type": "object", "properties": {"report": {"type": "string"}}, "required": ["report"]},
+            schema={"report": "string"},
         )
 
         map_key = map_plan.spec.cache_key()
@@ -187,7 +187,7 @@ from mmds import Input, Map
 
 docs = Input("docs.jsonl")
 for row in []:
-    docs = Map(docs, "noop", schema={"type": "object"})
+    docs = Map(docs, "noop", schema={"summary": "string"})
 """
         with self.assertRaises(MMDSValidationError):
             load_query(query)
@@ -212,7 +212,7 @@ output = Reduce(
     docs,
     "_all",
     ["Summary for ", Record["title"]],
-    schema={"type": "object", "properties": {"report": {"type": "string"}}, "required": ["report"]},
+    schema={"report": "string"},
 )
 """
         with self.assertRaises(MMDSValidationError):
@@ -223,12 +223,41 @@ output = Reduce(
             Map(
                 Input("docs.jsonl"),
                 [ForEach(["- ", Record["title"]])],
-                schema={"type": "object", "properties": {"summary": {"type": "string"}}, "required": ["summary"]},
+                schema={"summary": "string"},
             )
 
     def test_input_rejects_non_json_paths(self) -> None:
         with self.assertRaises(TypeError):
             Input("docs.csv")
+
+    def test_legacy_object_schema_normalizes_to_concise_form(self) -> None:
+        program = load_query(
+            """
+from mmds import Input, Map
+
+docs = Input("docs.jsonl")
+output = Map(
+    docs,
+    "annotate",
+    schema={"type": "object", "properties": {"summary": {"type": "string"}}, "required": ["summary"]},
+)
+"""
+        )
+
+        rendered = render_query(program)
+        self.assertIn('schema={"summary": "string"}', rendered)
+
+    def test_prompt_spec_normalizes_legacy_object_schema(self) -> None:
+        spec = PromptSpec(
+            parts=("annotate",),
+            output_schema={
+                "type": "object",
+                "properties": {"summary": {"type": "string"}},
+                "required": ["summary"],
+            },
+        )
+
+        self.assertEqual(spec.output_schema, {"summary": "string"})
 
 
 class OptimizerTests(unittest.TestCase):
@@ -309,7 +338,7 @@ class GeminiExecutorTests(unittest.TestCase):
         executor = GeminiPromptExecutor(client=fake_client, types_module=_FakeTypes, poll_interval_seconds=0.0)
         prompt = PromptSpec(
             parts=("Summarize ", Record["video"]),
-            output_schema={"type": "object", "properties": {"summary": {"type": "string"}}, "required": ["summary"]},
+            output_schema={"summary": "string"},
         )
         resolved = ResolvedPrompt(parts=("Summarize ", {"type": "video", "uri": "https://youtube.com/watch?v=demo"}), output_schema=prompt.output_schema)
 
@@ -318,7 +347,7 @@ class GeminiExecutorTests(unittest.TestCase):
         self.assertEqual(fake_client.models.calls[0]["config"]["response_mime_type"], "application/json")
         self.assertEqual(
             fake_client.models.calls[0]["config"]["response_json_schema"],
-            prompt.output_schema,
+            {"type": "object", "properties": {"summary": {"type": "string"}}, "required": ["summary"]},
         )
         content = fake_client.models.calls[0]["contents"]
         self.assertEqual(content.parts[0].text, "Summarize ")
@@ -329,7 +358,7 @@ class GeminiExecutorTests(unittest.TestCase):
         executor = GeminiPromptExecutor(client=fake_client, types_module=_FakeTypes, poll_interval_seconds=0.0)
         prompt = PromptSpec(
             parts=("Watch ", Record["video"]),
-            output_schema={"type": "object", "properties": {"summary": {"type": "string"}}, "required": ["summary"]},
+            output_schema={"summary": "string"},
         )
         resolved = ResolvedPrompt(parts=("Watch ", {"type": "Video", "path": "/tmp/demo.mp4"}), output_schema=prompt.output_schema)
 
@@ -343,7 +372,7 @@ class GeminiExecutorTests(unittest.TestCase):
         executor = GeminiPromptExecutor(client=fake_client, types_module=_FakeTypes, poll_interval_seconds=0.0)
         prompt = PromptSpec(
             parts=("Watch ", Record["video"]),
-            output_schema={"type": "object", "properties": {"summary": {"type": "string"}}, "required": ["summary"]},
+            output_schema={"summary": "string"},
         )
         resolved = ResolvedPrompt(
             parts=("Watch ", {"type": "Video", "source": "https://youtube.com/watch?v=demo"}),
@@ -359,7 +388,7 @@ class GeminiExecutorTests(unittest.TestCase):
         executor = GeminiPromptExecutor(client=fake_client, types_module=_FakeTypes, poll_interval_seconds=0.0)
         prompt = PromptSpec(
             parts=("Watch ", Record["video"]),
-            output_schema={"type": "object", "properties": {"summary": {"type": "string"}}, "required": ["summary"]},
+            output_schema={"summary": "string"},
         )
         resolved = ResolvedPrompt(
             parts=("Watch ", {"type": "Video", "uri": "https://youtube.com/watch?v=demo"}),

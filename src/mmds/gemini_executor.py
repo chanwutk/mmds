@@ -9,7 +9,7 @@ from typing import Any
 from urllib.parse import urlparse
 from urllib.request import url2pathname
 
-from .model import MMDSValidationError, PromptSpec, ResolvedPrompt
+from .model import MMDSValidationError, PromptSpec, ResolvedPrompt, expand_output_schema
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +68,9 @@ class GeminiPromptExecutor:
         else:
             if prompt.output_schema is None:
                 raise MMDSValidationError(f"Prompt-backed {op_type} operations require an output schema.")
-            schema = prompt.output_schema
+            schema = expand_output_schema(prompt.output_schema)
+            if schema is None:
+                raise MMDSValidationError(f"Prompt-backed {op_type} operations require an output schema.")
         return {
             "response_mime_type": "application/json",
             "response_json_schema": schema,
@@ -198,7 +200,10 @@ class GeminiPromptExecutor:
 
 
 def _is_video_payload(value: Any) -> bool:
-    return isinstance(value, Mapping) and value.get("type") == "Video"
+    if not isinstance(value, Mapping):
+        return False
+    media_type = value.get("type")
+    return isinstance(media_type, str) and media_type.casefold() == "video"
 
 
 def _stringify_prompt_value(value: Any) -> str:

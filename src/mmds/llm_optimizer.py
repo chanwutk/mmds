@@ -46,7 +46,7 @@ def build_rewrite_prompt(query_text: str, objective: str | None = None) -> str:
         "- Stay within the straight-line MMDS DSL subset.\n"
         "- Preserve the same Input(...) file paths.\n"
         "- Use only Input, Map, Filter, Reduce, Unnest, Record, and ForEach.\n"
-        "- Prompt-backed Map/Reduce operators must include schema=...\n\n"
+        '- Prompt-backed Map/Reduce operators must include schema=... using the concise field-map form, for example schema={"summary": "string"}.\n\n'
         f"{query_text.strip()}\n"
     )
 
