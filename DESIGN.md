@@ -218,12 +218,14 @@ Design rule:
 
 Current video detection rule:
 
-- any resolved prompt value shaped like `{"type": "Video", ...}` is treated as video input
+- any resolved prompt value whose `type` is case-insensitively equal to `"video"` is treated as video input
+- the canonical documented form is still `{"type": "Video", ...}`, but the executor also accepts lowercase `{"type": "video", ...}` because external data may not preserve that capitalization
 
 Supported video payload forms:
 
 - `{"type": "Video", "uri": "..."}`
 - `{"type": "Video", "path": "/local/file.mp4"}`
+- `{"type": "Video", "source": "https://..."}` or `{"type": "Video", "source": "file:///local/file.mp4"}`
 - `{"type": "Video", "bytes": b"...", "mime_type": "video/mp4"}`
 
 Optional metadata keys:

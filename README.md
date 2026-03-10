@@ -41,7 +41,7 @@ output = Reduce(
 - Prompt lists can contain strings, `Record[...]` field references, and top-level `ForEach([...])` in `Reduce`.
 - Function-based operators must use imported functions from `./udfs`.
 - Inline lambdas are intentionally unsupported.
-- Video fields are normal row fields. The Gemini executor treats any prompt value shaped like `{"type": "Video", ...}` as video input.
+- Video fields are normal row fields. The Gemini executor treats any prompt value whose `type` is case-insensitively equal to `"video"` as video input. The canonical shape is still `{"type": "Video", ...}`.
 - `Input(...)` loads rows directly from `.json` or `.jsonl` files, so no data catalog is required.
 
 ## Validation

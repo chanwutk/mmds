@@ -6,6 +6,8 @@ import time
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
+from urllib.request import url2pathname
 
 from .model import MMDSValidationError, PromptSpec, ResolvedPrompt
 
@@ -18,7 +20,7 @@ class GeminiPromptExecutor:
     def __init__(
         self,
         *,
-        model: str = "gemini-3.1-pro-preview",
+        model: str = "gemini-3.1-flash-lite-preview",
         api_key: str | None = None,
         client: Any | None = None,
         types_module: Any | None = None,
@@ -113,9 +115,11 @@ class GeminiPromptExecutor:
             file_uri, mime_type = self._upload_video_file(value["path"], client)
         elif "uri" in value:
             file_uri = value["uri"]
+        elif "source" in value:
+            file_uri, mime_type = self._resolve_source_video(value["source"], mime_type, client)
         else:
             raise MMDSValidationError(
-                "Video prompt values must include one of 'path', 'uri', or 'bytes'."
+                "Video prompt values must include one of 'path', 'uri', 'source', or 'bytes'."
             )
 
         file_data_kwargs = {"file_uri": file_uri}
@@ -149,6 +153,23 @@ class GeminiPromptExecutor:
             raise MMDSValidationError(f"Gemini upload for {path!r} did not return a file URI.")
         self._uploaded_files[path] = (file_uri, mime_type)
         return self._uploaded_files[path]
+
+    def _resolve_source_video(
+        self,
+        source_value: Any,
+        mime_type: str | None,
+        client: Any,
+    ) -> tuple[str, str | None]:
+        if not isinstance(source_value, str) or not source_value:
+            raise MMDSValidationError("Video 'source' values must be non-empty strings.")
+
+        parsed = urlparse(source_value)
+        if parsed.scheme == "file":
+            local_path = url2pathname(parsed.path)
+            return self._upload_video_file(local_path, client)
+        if parsed.scheme:
+            return source_value, mime_type
+        return self._upload_video_file(source_value, client)
 
     def _get_client(self) -> Any:
         if self._client is not None:
@@ -195,43 +216,5 @@ def _stringify_prompt_value(value: Any) -> str:
 def _format_debug_parts(parts: list[Any]) -> str:
     lines: list[str] = []
     for index, part in enumerate(parts, start=1):
-        lines.append(f"Part {index}: {_format_debug_part(part)}")
+        lines.append(f"Part {index}: {part!r}")
     return "\n".join(lines)
-
-
-def _format_debug_part(part: Any) -> str:
-    text = getattr(part, "text", None)
-    if text is not None:
-        return f"text={text!r}"
-
-    file_data = getattr(part, "file_data", None)
-    if file_data is not None:
-        file_uri = getattr(file_data, "file_uri", None)
-        mime_type = getattr(file_data, "mime_type", None)
-        metadata = _format_video_metadata(getattr(part, "video_metadata", None))
-        return f"file_data(file_uri={file_uri!r}, mime_type={mime_type!r}{metadata})"
-
-    inline_data = getattr(part, "inline_data", None)
-    if inline_data is not None:
-        mime_type = getattr(inline_data, "mime_type", None)
-        data = getattr(inline_data, "data", b"")
-        size = len(data) if isinstance(data, (bytes, bytearray)) else "unknown"
-        metadata = _format_video_metadata(getattr(part, "video_metadata", None))
-        return f"inline_data(mime_type={mime_type!r}, bytes={size}{metadata})"
-
-    return repr(part)
-
-
-def _format_video_metadata(metadata: Any) -> str:
-    if metadata is None:
-        return ""
-    values = []
-    for key in ("start_offset", "end_offset", "fps"):
-        value = getattr(metadata, key, None)
-        if value is not None:
-            values.append(f"{key}={value!r}")
-    if not values and hasattr(metadata, "kwargs"):
-        values = [f"{key}={value!r}" for key, value in metadata.kwargs.items()]
-    if not values:
-        return ""
-    return ", video_metadata={" + ", ".join(values) + "}"

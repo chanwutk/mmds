@@ -311,7 +311,7 @@ class GeminiExecutorTests(unittest.TestCase):
             parts=("Summarize ", Record["video"]),
             output_schema={"type": "object", "properties": {"summary": {"type": "string"}}, "required": ["summary"]},
         )
-        resolved = ResolvedPrompt(parts=("Summarize ", {"type": "Video", "uri": "https://youtube.com/watch?v=demo"}), output_schema=prompt.output_schema)
+        resolved = ResolvedPrompt(parts=("Summarize ", {"type": "video", "uri": "https://youtube.com/watch?v=demo"}), output_schema=prompt.output_schema)
 
         result = executor.execute("map", prompt, resolved, payload={}, context={})
         self.assertEqual(result, {"summary": "done"})
@@ -338,6 +338,22 @@ class GeminiExecutorTests(unittest.TestCase):
         content = fake_client.models.calls[0]["contents"]
         self.assertEqual(content.parts[1].file_data.file_uri, "uploaded://video")
 
+    def test_gemini_executor_accepts_source_video_uri(self) -> None:
+        fake_client = _FakeClient('{"summary": "done"}')
+        executor = GeminiPromptExecutor(client=fake_client, types_module=_FakeTypes, poll_interval_seconds=0.0)
+        prompt = PromptSpec(
+            parts=("Watch ", Record["video"]),
+            output_schema={"type": "object", "properties": {"summary": {"type": "string"}}, "required": ["summary"]},
+        )
+        resolved = ResolvedPrompt(
+            parts=("Watch ", {"type": "Video", "source": "https://youtube.com/watch?v=demo"}),
+            output_schema=prompt.output_schema,
+        )
+
+        executor.execute("map", prompt, resolved, payload={}, context={})
+        content = fake_client.models.calls[0]["contents"]
+        self.assertEqual(content.parts[1].file_data.file_uri, "https://youtube.com/watch?v=demo")
+
     def test_gemini_executor_logs_built_parts(self) -> None:
         fake_client = _FakeClient('{"summary": "done"}')
         executor = GeminiPromptExecutor(client=fake_client, types_module=_FakeTypes, poll_interval_seconds=0.0)
@@ -354,10 +370,10 @@ class GeminiExecutorTests(unittest.TestCase):
             executor.execute("map", prompt, resolved, payload={}, context={})
 
         self.assertTrue(any("Sending Gemini prompt for map" in line for line in captured.output))
-        self.assertTrue(any("Part 1: text='Watch '" in line for line in captured.output))
+        self.assertTrue(any("Part 1: _FakePart(text='Watch '" in line for line in captured.output))
         self.assertTrue(
             any(
-                "Part 2: file_data(file_uri='https://youtube.com/watch?v=demo'" in line
+                "Part 2: _FakePart(text=None, inline_data=None, file_data=_FakeFileData(file_uri='https://youtube.com/watch?v=demo'" in line
                 for line in captured.output
             )
         )
@@ -388,11 +404,24 @@ class _FakePart:
         self.file_data = file_data
         self.video_metadata = video_metadata
 
+    def __repr__(self):
+        return (
+            "_FakePart("
+            f"text={self.text!r}, "
+            f"inline_data={self.inline_data!r}, "
+            f"file_data={self.file_data!r}, "
+            f"video_metadata={self.video_metadata!r})"
+        )
+
 
 class _FakeBlob:
     def __init__(self, data, mime_type):
         self.data = data
         self.mime_type = mime_type
+
+    def __repr__(self):
+        size = len(self.data) if isinstance(self.data, (bytes, bytearray)) else "unknown"
+        return f"_FakeBlob(mime_type={self.mime_type!r}, bytes={size!r})"
 
 
 class _FakeFileData:
@@ -400,10 +429,16 @@ class _FakeFileData:
         self.file_uri = file_uri
         self.mime_type = mime_type
 
+    def __repr__(self):
+        return f"_FakeFileData(file_uri={self.file_uri!r}, mime_type={self.mime_type!r})"
+
 
 class _FakeVideoMetadata:
     def __init__(self, **kwargs):
         self.kwargs = kwargs
+
+    def __repr__(self):
+        return f"_FakeVideoMetadata({self.kwargs!r})"
 
 
 class _FakeTypes:

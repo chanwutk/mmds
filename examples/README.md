@@ -4,6 +4,6 @@ This directory contains MMDS query examples.
 
 - `video_map_then_filter.py`: map over video rows with a structured prompt, then filter the mapped rows with a second prompt.
 
-Video fields are regular record fields. The Gemini executor treats values shaped like `{"type": "Video", ...}` as video parts.
+Video fields are regular record fields. The Gemini executor treats values whose `type` is case-insensitively equal to `"video"` as video parts. The canonical shape is still `{"type": "Video", ...}`.
 
 `Input(...)` takes a `.json` or `.jsonl` file path directly, so queries do not need a separate data catalog.
