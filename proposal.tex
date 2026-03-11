@@ -77,7 +77,7 @@ for agentic rewriting shown in~\cite{shankar2025docetl,wei2026moar}.
 To extend DocETL's data model, I propose 3 data types: {\tt Video}, {\tt VideoView}, and {\tt EntityView}.
 \begin{itemize}
     \item \textbf{Video}: An object that represents a video. It has one property: {\tt source} of type {\tt str} that is the path to the video file.
-    \item \textbf{VideoView}: A logical time span view over a video. It has 3 properties: {\tt source}, {\tt start}, and {\tt end}. For instance, a {\tt VideoView} represents a video ``xx.mp4'' from minute 10 to minute 20.
+    \item \textbf{VideoView}: A logical time span view over a video. It has 4 properties: {\tt source}, {\tt start}, {\tt end}, and {\tt fps}. For instance, a {\tt VideoView} represents a video ``xx.mp4'' from minute 10 to minute 20, optionally with a requested sampling rate.
     \item \textbf{EntityView}: A logical crop-over-time view of an entity on a video. It has 4 properties: {\tt source}, {\tt entity\_windows}, where {\tt entity\_windows} is a list of bounding boxes of the entity over time. For example, a {\tt EntityView} represents a crops of a vehicle in the video ``xx.mp4''.
 \end{itemize}
 
@@ -95,9 +95,9 @@ Below is a table of example usage of the new data types in JSON records:
 
 // Records of video views:
 [ {"content": {"type": "VideoView", "source": "file:///x/xx.mp4",
-               "start": 10, "end": 20}},
+               "start": 10, "end": 20, "fps": 1}},
   {"content": {"type": "VideoView", "source": "https://yt.com/yyy",
-               "start": 10, "end": 20}}, ...  ]
+               "start": 10, "end": 20, "fps": 1}}, ...  ]
 
 // Records of entity views:
 [ {"content": {"type": "EntityView", "source": "file:///x/xx.mp4",

@@ -236,8 +236,8 @@ Design rule:
 
 Current video detection rule:
 
-- any resolved prompt value whose `type` is case-insensitively equal to `"video"` is treated as video input
-- the canonical documented form is still `{"type": "Video", ...}`, but the executor also accepts lowercase `{"type": "video", ...}` because external data may not preserve that capitalization
+- any resolved prompt value whose `type` is case-insensitively equal to `"video"` or `"videoview"` is treated as video input
+- the canonical documented forms are `{"type": "Video", ...}` and `{"type": "VideoView", ...}`, but the executor also accepts lowercase variants because external data may not preserve that capitalization
 
 Supported video payload forms:
 
@@ -245,6 +245,8 @@ Supported video payload forms:
 - `{"type": "Video", "path": "/local/file.mp4"}`
 - `{"type": "Video", "source": "https://..."}` or `{"type": "Video", "source": "file:///local/file.mp4"}`
 - `{"type": "Video", "bytes": b"...", "mime_type": "video/mp4"}`
+- `{"type": "VideoView", "source": "...", "start": 10, "end": 20}`
+- `{"type": "VideoView", "source": "...", "start": 10, "end": 20, "fps": 1.0}`
 
 Optional metadata keys:
 
@@ -252,12 +254,18 @@ Optional metadata keys:
 - `end_offset`
 - `fps`
 
+`VideoView` translation rule:
+
+- `start` and `end` are numeric seconds and are translated to Gemini `VideoMetadata.start_offset` and `VideoMetadata.end_offset` by appending `"s"`
+- `fps` is passed directly to Gemini `VideoMetadata.fps`
+- a payload may use either `start`/`end` or `start_offset`/`end_offset`, but not both for the same boundary
+
 Gemini executor behavior:
 
 - uploads local files through Gemini’s Files API when needed
 - waits for uploaded files to become active
 - converts structured prompts into Gemini content parts
-- preserves video fields as video parts instead of stringifying them
+- preserves `Video` and `VideoView` fields as video parts instead of stringifying them
 - expands concise MMDS output schemas into object-shaped JSON Schema and requests JSON output using Gemini structured output config
 - uses a bare boolean schema for `Filter`
 - uses the operator-provided output field schema for `Map` and `Reduce`

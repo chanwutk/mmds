@@ -1,4 +1,4 @@
-# Multi-modal Data Systems
+# MMDS2
 
 This repository now includes a first MMDS DSL implementation with:
 
@@ -42,7 +42,7 @@ output = Reduce(
 - Prompt lists can contain strings, `Record[...]` field references, and top-level `ForEach([...])` in `Reduce`.
 - Function-based operators must use imported functions from `./udfs`.
 - Inline lambdas are intentionally unsupported.
-- Video fields are normal row fields. The Gemini executor treats any prompt value whose `type` is case-insensitively equal to `"video"` as video input. The canonical shape is still `{"type": "Video", ...}`.
+- Video fields are normal row fields. The Gemini executor treats any prompt value whose `type` is case-insensitively equal to `"video"` or `"videoview"` as video input. `VideoView.start` and `VideoView.end` are interpreted as seconds and translated to Gemini video offsets like `"10s"`, and `VideoView.fps` is passed through to Gemini video metadata.
 - `Input(...)` loads rows directly from `.json` or `.jsonl` files, so no data catalog is required.
 
 ## Validation

@@ -4,6 +4,7 @@ import json
 import logging
 import time
 from collections.abc import Mapping
+from numbers import Real
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -12,6 +13,7 @@ from urllib.request import url2pathname
 from .model import MMDSValidationError, PromptSpec, ResolvedPrompt, expand_output_schema
 
 logger = logging.getLogger(__name__)
+_VIDEO_TYPES = {"video", "videoview"}
 
 
 class GeminiPromptExecutor:
@@ -96,11 +98,7 @@ class GeminiPromptExecutor:
         return parts
 
     def _build_video_part(self, value: Mapping[str, Any], client: Any, types: Any) -> Any:
-        metadata_kwargs = {}
-        for key in ("start_offset", "end_offset", "fps"):
-            if key in value:
-                metadata_kwargs[key] = value[key]
-        metadata = types.VideoMetadata(**metadata_kwargs) if metadata_kwargs else None
+        metadata = _build_video_metadata(value, types)
 
         if "bytes" in value:
             mime_type = value.get("mime_type")
@@ -203,7 +201,57 @@ def _is_video_payload(value: Any) -> bool:
     if not isinstance(value, Mapping):
         return False
     media_type = value.get("type")
-    return isinstance(media_type, str) and media_type.casefold() == "video"
+    return isinstance(media_type, str) and media_type.casefold() in _VIDEO_TYPES
+
+
+def _build_video_metadata(value: Mapping[str, Any], types: Any) -> Any:
+    _reject_duplicate_video_offset_keys(value, "start", "start_offset")
+    _reject_duplicate_video_offset_keys(value, "end", "end_offset")
+
+    metadata_kwargs: dict[str, Any] = {}
+    if "start_offset" in value:
+        metadata_kwargs["start_offset"] = _validate_video_offset_string(value["start_offset"], "start_offset")
+    elif "start" in value:
+        metadata_kwargs["start_offset"] = _format_video_offset_seconds(value["start"], "start")
+
+    if "end_offset" in value:
+        metadata_kwargs["end_offset"] = _validate_video_offset_string(value["end_offset"], "end_offset")
+    elif "end" in value:
+        metadata_kwargs["end_offset"] = _format_video_offset_seconds(value["end"], "end")
+
+    if "fps" in value:
+        metadata_kwargs["fps"] = _validate_fps(value["fps"])
+
+    return types.VideoMetadata(**metadata_kwargs) if metadata_kwargs else None
+
+
+def _reject_duplicate_video_offset_keys(
+    value: Mapping[str, Any],
+    logical_key: str,
+    metadata_key: str,
+) -> None:
+    if logical_key in value and metadata_key in value:
+        raise MMDSValidationError(
+            f"Video prompt values cannot include both {logical_key!r} and {metadata_key!r}."
+        )
+
+
+def _format_video_offset_seconds(value: Any, field_name: str) -> str:
+    if not isinstance(value, Real) or isinstance(value, bool):
+        raise MMDSValidationError(f"VideoView {field_name!r} values must be numeric seconds.")
+    return f"{value}s"
+
+
+def _validate_video_offset_string(value: Any, field_name: str) -> str:
+    if not isinstance(value, str) or not value:
+        raise MMDSValidationError(f"Video {field_name!r} values must be non-empty duration strings.")
+    return value
+
+
+def _validate_fps(value: Any) -> float:
+    if not isinstance(value, Real) or isinstance(value, bool):
+        raise MMDSValidationError("Video 'fps' values must be numeric.")
+    return float(value)
 
 
 def _stringify_prompt_value(value: Any) -> str:
