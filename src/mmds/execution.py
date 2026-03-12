@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable, Iterator
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Mapping, Protocol
 
@@ -64,7 +66,7 @@ def execute(
         plan = plan_or_query
     else:
         raise TypeError("execute() expects a DatasetExpr or QueryProgram.")
-    return _execute_node(plan, prompt_executor, base_path=base_path)
+    return list(_execute_node(plan, prompt_executor, base_path=base_path))
 
 
 def _execute_node(
@@ -72,20 +74,26 @@ def _execute_node(
     prompt_executor: PromptExecutor | None,
     *,
     base_path: Path | None,
-) -> list[Row]:
+) -> Iterator[Row]:
     if node.kind == "input":
-        return _load_input_rows(node.input_path, base_path=base_path)
+        yield from _load_input_rows(node.input_path, base_path=base_path)
+        return
 
-    source_rows = _execute_node(node.source, prompt_executor, base_path=base_path)
+    source = _execute_node(node.source, prompt_executor, base_path=base_path)
     if node.kind == "map":
-        return [_apply_map(node, row, prompt_executor) for row in source_rows]
-    if node.kind == "filter":
-        return [row for row in source_rows if _apply_filter(node, row, prompt_executor)]
-    if node.kind == "reduce":
-        return _apply_reduce(node, source_rows, prompt_executor)
-    if node.kind == "unnest":
-        return _apply_unnest(node, source_rows)
-    raise MMDSValidationError(f"Unsupported operator kind {node.kind!r}.")
+        with ThreadPoolExecutor() as ex:
+            yield from ex.map(lambda row: _apply_map(node, row, prompt_executor), source)
+    elif node.kind == "filter":
+        with ThreadPoolExecutor() as ex:
+            for row, keep in ex.map(lambda r: (r, _apply_filter(node, r, prompt_executor)), source):
+                if keep:
+                    yield row
+    elif node.kind == "reduce":
+        yield from _apply_reduce(node, list(source), prompt_executor)
+    elif node.kind == "unnest":
+        yield from _apply_unnest(node, source)
+    else:
+        raise MMDSValidationError(f"Unsupported operator kind {node.kind!r}.")
 
 
 def _load_input_rows(input_path: str | None, *, base_path: Path | None) -> list[Row]:
@@ -152,7 +160,7 @@ def _apply_reduce(
     node: DatasetExpr,
     rows: list[Row],
     prompt_executor: PromptExecutor | None,
-) -> list[Row]:
+) -> Iterator[Row]:
     groups: dict[tuple[Any, ...], list[Row]] = {}
     if node.group_by == ("_all",):
         groups[()] = [dict(row) for row in rows]
@@ -161,8 +169,8 @@ def _apply_reduce(
             key = tuple(row.get(field) for field in node.group_by)
             groups.setdefault(key, []).append(dict(row))
 
-    outputs: list[Row] = []
-    for key, group_rows in groups.items():
+    def process_group(item: tuple[tuple[Any, ...], list[Row]]) -> Row:
+        key, group_rows = item
         aggregate = _execute_spec(node, group_rows, prompt_executor)
         if not isinstance(aggregate, Mapping):
             raise MMDSValidationError("Reduce operations must return mapping-like aggregate rows.")
@@ -170,12 +178,13 @@ def _apply_reduce(
         if node.group_by != ("_all",):
             output.update(dict(zip(node.group_by, key, strict=True)))
         output.update(dict(aggregate))
-        outputs.append(output)
-    return outputs
+        return output
+
+    with ThreadPoolExecutor() as ex:
+        yield from ex.map(process_group, groups.items())
 
 
-def _apply_unnest(node: DatasetExpr, rows: list[Row]) -> list[Row]:
-    outputs: list[Row] = []
+def _apply_unnest(node: DatasetExpr, rows: Iterable[Row]) -> Iterator[Row]:
     field = node.field
     if field is None:
         raise MMDSValidationError("Unnest nodes require a field.")
@@ -186,7 +195,7 @@ def _apply_unnest(node: DatasetExpr, rows: list[Row]) -> list[Row]:
             if node.keep_empty:
                 empty_row = dict(row)
                 empty_row[field] = None
-                outputs.append(empty_row)
+                yield empty_row
             continue
 
         if isinstance(value, (list, tuple)):
@@ -194,17 +203,15 @@ def _apply_unnest(node: DatasetExpr, rows: list[Row]) -> list[Row]:
                 if node.keep_empty:
                     empty_row = dict(row)
                     empty_row[field] = None
-                    outputs.append(empty_row)
+                    yield empty_row
                 continue
             for item in value:
                 expanded = dict(row)
                 expanded[field] = item
-                outputs.append(expanded)
+                yield expanded
             continue
 
-        outputs.append(dict(row))
-
-    return outputs
+        yield dict(row)
 
 
 def _execute_spec(
