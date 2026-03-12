@@ -10,7 +10,7 @@ from typing import Any
 from urllib.parse import urlparse
 from urllib.request import url2pathname
 
-from .model import MMDSValidationError, PromptSpec, ResolvedPrompt, expand_output_schema
+from ...model import MMDSValidationError, PromptSpec, ResolvedPrompt, expand_output_schema
 
 logger = logging.getLogger(__name__)
 _VIDEO_TYPES = {"video", "videoview"}

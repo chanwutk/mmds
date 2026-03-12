@@ -1,6 +1,6 @@
 from .dsl import Filter, ForEach, Input, Map, Reduce, Unnest
 from .execution import PromptExecutor, StaticPromptExecutor, execute
-from .gemini_executor import GeminiPromptExecutor
+from .execution.llm.gemini import GeminiPromptExecutor
 from .llm_optimizer import LLMClient, StaticLLMClient
 from .model import (
     Assignment,
