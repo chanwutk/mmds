@@ -1,10 +1,11 @@
-from .dsl import Filter, ForEach, Input, Map, Reduce, Unnest
+from .dsl import Detect, Filter, ForEach, Input, Map, Reduce, Unnest
 from .execution import PromptExecutor, StaticPromptExecutor, execute
 from .execution.llm.gemini import GeminiPromptExecutor
 from .optimizers.rewriter.agent import LLMClient, StaticLLMClient
 from .model import (
     Assignment,
     DatasetExpr,
+    DetectSpec,
     ForEachPrompt,
     JsonValue,
     MMDSValidationError,
@@ -20,10 +21,13 @@ from .parser import load_query, parse_query
 from .render import program_from_plan, render_query
 from .optimizers.rewriter.rule import canonicalize, optimize
 from .udf_catalog import UdfCatalog, UdfEntry, discover_udfs
+from .utilities.video import VideoView
 
 __all__ = [
     "Assignment",
     "DatasetExpr",
+    "Detect",
+    "DetectSpec",
     "Filter",
     "ForEach",
     "ForEachPrompt",
@@ -47,6 +51,7 @@ __all__ = [
     "UdfEntry",
     "UdfSpec",
     "Unnest",
+    "VideoView",
     "canonicalize",
     "discover_udfs",
     "execute",
@@ -59,4 +64,6 @@ __all__ = [
 
 
 def main() -> None:
-    print("MMDS exposes a Python DSL. Import Input, Map, Filter, Reduce, Unnest, Record, and ForEach from mmds.")
+    print(
+        "MMDS exposes a Python DSL. Import Input, Map, Filter, Reduce, Unnest, Record, and ForEach from mmds."
+    )

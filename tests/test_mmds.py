@@ -471,7 +471,7 @@ class GeminiExecutorTests(unittest.TestCase):
             output_schema=prompt.output_schema,
         )
 
-        with self.assertLogs("mmds.gemini_executor", level="DEBUG") as captured:
+        with self.assertLogs("mmds.execution.llm.gemini", level="DEBUG") as captured:
             executor.execute("map", prompt, resolved, payload={}, context={})
 
         self.assertTrue(any("Sending Gemini prompt for map" in line for line in captured.output))

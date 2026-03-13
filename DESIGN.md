@@ -40,7 +40,8 @@ The design goal is to keep those representations close enough that:
 
 The current implementation supports:
 
-- operators: `Input`, `Map`, `Filter`, `Reduce`, `Unnest`
+- operators: `Input`, `Map`, `Filter`, `Reduce`, `Unnest`, `Detect`
+- public video utility: `VideoView(video, start, end)` for seek-based clip-range iteration
 - file-backed `Input(...)` roots over `.json` and `.jsonl`
 - prompt-backed semantics as either:
   - a plain string
@@ -54,6 +55,7 @@ The current implementation supports:
 - Gemini-backed prompt execution with executor-side video translation
 - UDF discovery from `.py` and `.pyi`
 - a conservative rule optimizer and a validation-heavy LLM optimizer scaffold
+- `Detect` operator for frame-level YOLOE object detection on video fields
 
 The current implementation intentionally does not support:
 
@@ -77,6 +79,8 @@ The main entrypoints are exported from [src/mmds/__init__.py](/Users/chanwutk/Do
 - `Filter(data, spec, *, name=None)`
 - `Reduce(data, group_by, reducer, *, schema=None, name=None)`
 - `Unnest(data, field, *, keep_empty=False, name=None)`
+- `Detect(data, video_field, classes, *, model="yoloe-11s-seg.pt", output_field="detections", name=None)`
+- `VideoView(video, start, end)`
 - `Record[...]`
 - `ForEach([...])`
 - `execute(plan_or_query, prompt_executor=None)`
@@ -95,13 +99,14 @@ The core model lives in [src/mmds/model.py](/Users/chanwutk/Documents/mmds/src/m
 - `ForEachPrompt` represents repeated prompt expansion over grouped records.
 - `ResolvedPrompt` is the execution-time prompt after all `Record[...]` references are resolved against data.
 - `UdfSpec` stores a stable import path for a UDF.
+- `DetectSpec` stores the parameters for a `Detect` node: `video_field`, `classes`, `model`, `output_field`.
 - `Assignment` and `QueryProgram` represent a parsed query file.
 - `MMDSValidationError` is the shared validation failure type.
 
 `DatasetExpr` uses a unary tree shape today:
 
 - `Input` has no source.
-- `Map`, `Filter`, `Reduce`, and `Unnest` each have one `source`.
+- `Map`, `Filter`, `Reduce`, `Unnest`, and `Detect` each have one `source`.
 
 That shape is sufficient for the first operator set and keeps rendering and execution simple. If future operators introduce multiple inputs, `DatasetExpr` will need a general child list instead of a single `source`.
 
@@ -209,6 +214,7 @@ Operator semantics:
 - `Filter`: applies prompt/UDF to one row and keeps rows whose result is truthy
 - `Reduce`: groups rows by the configured fields, calls the reducer once per group, and merges returned aggregate fields with the group key fields
 - `Unnest`: expands one field; lists and tuples explode into multiple rows, scalars pass through unchanged, and missing/empty values produce no row unless `keep_empty=True`
+- `Detect`: reads the video pointed to by `video_field`; if the value is a `VideoView`-shaped dict with `start`/`end`, wraps the source in a `VideoView`, runs YOLOE detection on the selected frames, and merges a detection list with absolute source-video `frame_idx` values into `output_field`
 
 Prompt execution flow:
 
@@ -275,6 +281,31 @@ This design follows Gemini’s official support for video inputs and structured 
 - [Gemini video understanding](https://ai.google.dev/gemini-api/docs/video-understanding)
 - [Gemini structured output](https://ai.google.dev/gemini-api/docs/structured-output)
 - [Gemini SDK downloads](https://ai.google.dev/gemini-api/docs/downloads)
+
+### Detect Operator
+
+The `Detect` operator lives in [src/mmds/execution/ops/detect.py](src/mmds/execution/ops/detect.py) and uses `mmds.utilities.video.open_video` plus `VideoView` to read frames.
+
+Design rules:
+
+- `Detect` carries a `DetectSpec` (not a `PromptSpec`); it does not use a `PromptExecutor`
+- the `video_field` value in a row may be a plain string (path or URL) or a `{"source"|"path"|"uri": ...}` dict — the same dict forms used by Gemini video payloads
+- when the dict contains `"start"` and `"end"` fields (seconds), the operator creates a `VideoView` that restricts processing to that clip range using `cv2` frame seeking — this avoids iterating the entire video for `VideoView` payloads
+- `VideoView` is a general-purpose class in `mmds.utilities.video` that wraps a `Video` and uses `CAP_PROP_POS_FRAMES` to seek directly to the start frame; both `Video` and `VideoView` share the same iterable interface
+- detection records store absolute `frame_idx` values from the underlying source video, even when the operator is iterating a `VideoView`
+- `open_video` handles local paths, `file://` URLs, and `http/https` downloads with a disk cache under `~/.cache/mmds/videos/`; platform URLs (e.g. YouTube) are downloaded via `yt-dlp`
+- the runtime probes whether CUDA is genuinely usable for YOLOE inference and falls back to CPU when the installed PyTorch/CUDA stack cannot execute the required kernels
+- YOLOE model instances are cached by name in a module-level dict; a `threading.Lock` serialises `set_classes` + `predict` calls so the operator is safe to run from a thread pool
+- the `output_field` (default `"detections"`) is merged into the row, containing a list of per-class detection records:
+
+```json
+[
+  {"type": "dog", "bboxes": [{"frame_idx": 0, "bbox": [x1, y1, x2, y2], "confidence": 0.9}]},
+  ...
+]
+```
+
+- `Detect` is **not** parsed from or rendered back to DSL text (it is for internal/programmatic use only)
 
 ### UDF Contract
 
@@ -345,7 +376,7 @@ The following invariants are part of the current design and should not change si
 
 ## Validation and Tests
 
-Tests live in [tests/test_mmds.py](/Users/chanwutk/Documents/mmds/tests/test_mmds.py).
+Tests live under [tests/](/Users/chanwutk/Documents/mmds/tests/).
 
 The current suite covers:
 
@@ -355,6 +386,8 @@ The current suite covers:
 - execution for UDF-backed and prompt-backed queries
 - `Record[...]` resolution and `ForEach([...])` expansion
 - `Unnest` behavior on scalar, empty, and missing values
+- `Detect` behavior, including `VideoView` clip slicing and absolute-frame detection indices
+- video utility behavior for direct downloads, platform downloads via `yt-dlp`, and `VideoView` iteration
 - parser validation for unsupported Python and invalid prompt forms
 - optimizer result preservation and LLM rewrite validation
 - Gemini prompt compilation for video URI and uploaded local file inputs

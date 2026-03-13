@@ -20,7 +20,7 @@ class Detect:
     def __init__(self) -> None:
         from ultralytics import YOLOE
 
-        self._model = YOLOE("yoloe-11x.pt")
+        self._model = YOLOE("yoloe-11s-seg.pt")
 
     def __call__(self, row: dict[str, Any]) -> dict[str, Any]:
         image = row["image"]

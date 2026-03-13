@@ -13,6 +13,7 @@ from ..model import (
     Row,
 )
 from ._spec import PromptExecutor, StaticPromptExecutor
+from .ops.detect import _apply_detect
 from .ops.filter import _apply_filter
 from .ops.map import _apply_map
 from .ops.reduce import _apply_reduce
@@ -58,6 +59,9 @@ def _execute_node(
         yield from _apply_reduce(node, list(source), prompt_executor)
     elif node.kind == "unnest":
         yield from _apply_unnest(node, source)
+    elif node.kind == "detect":
+        for row in source:
+            yield _apply_detect(node, row)
     else:
         raise MMDSValidationError(f"Unsupported operator kind {node.kind!r}.")
 

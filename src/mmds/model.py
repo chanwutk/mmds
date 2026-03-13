@@ -9,7 +9,9 @@ JsonScalar: TypeAlias = str | int | float | bool | None
 JsonValue: TypeAlias = JsonScalar | dict[str, "JsonValue"] | list["JsonValue"]
 FieldSchemaValue: TypeAlias = str | dict[str, JsonValue]
 RecordSchema: TypeAlias = dict[str, FieldSchemaValue]
-OperatorKind: TypeAlias = Literal["input", "map", "filter", "reduce", "unnest"]
+OperatorKind: TypeAlias = Literal[
+    "input", "map", "filter", "reduce", "unnest", "detect"
+]
 
 
 class MMDSValidationError(ValueError):
@@ -31,6 +33,7 @@ class RecordPath:
 
 Record = RecordPath()
 
+
 @dataclass(frozen=True)
 class ForEachPrompt:
     parts: tuple[Any, ...]
@@ -45,7 +48,9 @@ class PromptSpec:
     output_schema: RecordSchema | None = None
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "output_schema", normalize_output_schema(self.output_schema))
+        object.__setattr__(
+            self, "output_schema", normalize_output_schema(self.output_schema)
+        )
 
     def cache_key(self) -> str | tuple[Any, ...]:
         if len(self.parts) == 1 and isinstance(self.parts[0], str):
@@ -62,7 +67,9 @@ class ResolvedPrompt:
     output_schema: RecordSchema | None = None
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "output_schema", normalize_output_schema(self.output_schema))
+        object.__setattr__(
+            self, "output_schema", normalize_output_schema(self.output_schema)
+        )
 
 
 @dataclass(frozen=True)
@@ -81,7 +88,35 @@ class UdfSpec:
         return value
 
 
-SemanticSpec: TypeAlias = PromptSpec | UdfSpec
+@dataclass(frozen=True)
+class DetectSpec:
+    """Spec for the Detect operator: runs YOLOE on every frame of a video field."""
+
+    video_field: str
+    classes: tuple[str, ...]
+    model: str = "yoloe-11s-seg.pt"
+    output_field: str = "detections"
+
+    def __post_init__(self) -> None:
+        if not self.video_field:
+            raise MMDSValidationError(
+                "DetectSpec video_field must be a non-empty string."
+            )
+        if not self.classes:
+            raise MMDSValidationError("DetectSpec classes must be non-empty.")
+        if any(not isinstance(c, str) or not c for c in self.classes):
+            raise MMDSValidationError(
+                "DetectSpec classes must all be non-empty strings."
+            )
+        if not self.model:
+            raise MMDSValidationError("DetectSpec model must be a non-empty string.")
+        if not self.output_field:
+            raise MMDSValidationError(
+                "DetectSpec output_field must be a non-empty string."
+            )
+
+
+SemanticSpec: TypeAlias = PromptSpec | UdfSpec | DetectSpec
 
 
 @dataclass(frozen=True)
@@ -98,7 +133,9 @@ class DatasetExpr:
     def __post_init__(self) -> None:
         if self.kind == "input":
             if self.source is not None or self.input_path is None:
-                raise MMDSValidationError("Input nodes require only an input file path.")
+                raise MMDSValidationError(
+                    "Input nodes require only an input file path."
+                )
             return
         if self.source is None:
             raise MMDSValidationError(f"{self.kind} nodes require a source expression.")
@@ -108,6 +145,8 @@ class DatasetExpr:
             raise MMDSValidationError("Reduce nodes require one or more grouping keys.")
         if self.kind == "unnest" and self.field is None:
             raise MMDSValidationError("Unnest nodes require a field to expand.")
+        if self.kind == "detect" and not isinstance(self.spec, DetectSpec):
+            raise MMDSValidationError("detect nodes require a DetectSpec.")
 
     def children(self) -> tuple[DatasetExpr, ...]:
         if self.source is None:
@@ -142,8 +181,12 @@ class QueryProgram:
 
     def __post_init__(self) -> None:
         if not self.assignments:
-            raise MMDSValidationError("A query program must contain at least one assignment.")
-        if self.output_name not in {assignment.target for assignment in self.assignments}:
+            raise MMDSValidationError(
+                "A query program must contain at least one assignment."
+            )
+        if self.output_name not in {
+            assignment.target for assignment in self.assignments
+        }:
             raise MMDSValidationError(
                 f"Output variable {self.output_name!r} is not defined in the query program."
             )
@@ -156,7 +199,11 @@ class QueryProgram:
         raise MMDSValidationError(f"Output variable {self.output_name!r} is missing.")
 
     def input_paths(self) -> tuple[str, ...]:
-        paths = {assignment.expr.input_path for assignment in self.assignments if assignment.expr.kind == "input"}
+        paths = {
+            assignment.expr.input_path
+            for assignment in self.assignments
+            if assignment.expr.kind == "input"
+        }
         return tuple(sorted(path for path in paths if path is not None))
 
     def used_udfs(self) -> tuple[UdfSpec, ...]:
@@ -187,9 +234,13 @@ def udf_spec_from_callable(value: Callable[..., Any]) -> UdfSpec:
     name = getattr(value, "__name__", "")
     qualname = getattr(value, "__qualname__", name)
     if not module.startswith("udfs"):
-        raise MMDSValidationError("UDF callables must be imported from the ./udfs package.")
+        raise MMDSValidationError(
+            "UDF callables must be imported from the ./udfs package."
+        )
     if not name or name == "<lambda>" or "<locals>" in qualname:
-        raise MMDSValidationError("Inline lambdas and nested functions are not supported UDFs.")
+        raise MMDSValidationError(
+            "Inline lambdas and nested functions are not supported UDFs."
+        )
     return UdfSpec(module=module, name=name)
 
 
@@ -201,7 +252,9 @@ def normalize_output_schema(value: JsonValue | None) -> RecordSchema | None:
     if value is None:
         return None
     if not isinstance(value, dict):
-        raise TypeError("schema= must be a dictionary mapping output field names to schema fragments.")
+        raise TypeError(
+            "schema= must be a dictionary mapping output field names to schema fragments."
+        )
     if _looks_like_legacy_object_schema(value):
         return _normalize_legacy_object_schema(value)
     return _normalize_record_schema(value)
@@ -242,7 +295,9 @@ def _prompt_part_uses_helpers(part: PromptPart) -> bool:
 
 def _freeze_json_value(value: JsonValue | None) -> Any:
     if isinstance(value, dict):
-        return tuple(sorted((str(key), _freeze_json_value(item)) for key, item in value.items()))
+        return tuple(
+            sorted((str(key), _freeze_json_value(item)) for key, item in value.items())
+        )
     if isinstance(value, list):
         return tuple(_freeze_json_value(item) for item in value)
     return value
@@ -265,14 +320,22 @@ def _normalize_legacy_object_schema(value: dict[str, JsonValue]) -> RecordSchema
 
     properties = value.get("properties")
     if not isinstance(properties, dict):
-        raise TypeError("schema= object wrappers must include a dictionary 'properties' entry.")
+        raise TypeError(
+            "schema= object wrappers must include a dictionary 'properties' entry."
+        )
 
     required = value.get("required")
-    if not isinstance(required, list) or any(not isinstance(item, str) for item in required):
-        raise TypeError("schema= object wrappers must include a string-list 'required' entry.")
+    if not isinstance(required, list) or any(
+        not isinstance(item, str) for item in required
+    ):
+        raise TypeError(
+            "schema= object wrappers must include a string-list 'required' entry."
+        )
     property_names = sorted(str(key) for key in properties)
     if sorted(required) != property_names:
-        raise TypeError("schema= object wrappers must mark every output field as required.")
+        raise TypeError(
+            "schema= object wrappers must mark every output field as required."
+        )
 
     return _normalize_record_schema(properties)
 

@@ -9,6 +9,8 @@ authors = [
 requires-python = ">=3.12"
 dependencies = [
     "google-genai",
+    "ultralytics",
+    "yt-dlp>=2026.3.3",
 ]
 
 [project.scripts]
