@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from .model import DatasetExpr
+from ...model import DatasetExpr
 
 
 def optimize(plan: DatasetExpr) -> DatasetExpr:

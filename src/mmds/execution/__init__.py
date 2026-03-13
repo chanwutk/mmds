@@ -12,7 +12,7 @@ from ..model import (
     QueryProgram,
     Row,
 )
-from ._spec import PromptExecutor
+from ._spec import PromptExecutor, StaticPromptExecutor
 from .ops.filter import _apply_filter
 from .ops.map import _apply_map
 from .ops.reduce import _apply_reduce
@@ -107,3 +107,10 @@ def _coerce_row(value: Mapping[str, Any]) -> Row:
     if not isinstance(value, Mapping):
         raise TypeError("Input files must contain mapping-like row objects.")
     return dict(value)
+
+
+__all__ = [
+    "execute",
+    "PromptExecutor",
+    "StaticPromptExecutor",
+]

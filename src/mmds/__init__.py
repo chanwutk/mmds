@@ -1,7 +1,7 @@
 from .dsl import Filter, ForEach, Input, Map, Reduce, Unnest
 from .execution import PromptExecutor, StaticPromptExecutor, execute
 from .execution.llm.gemini import GeminiPromptExecutor
-from .llm_optimizer import LLMClient, StaticLLMClient
+from .optimizers.rewriter.agent import LLMClient, StaticLLMClient
 from .model import (
     Assignment,
     DatasetExpr,
@@ -18,7 +18,7 @@ from .model import (
 )
 from .parser import load_query, parse_query
 from .render import program_from_plan, render_query
-from .rule_optimizer import canonicalize, optimize
+from .optimizers.rewriter.rule import canonicalize, optimize
 from .udf_catalog import UdfCatalog, UdfEntry, discover_udfs
 
 __all__ = [

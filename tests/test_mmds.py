@@ -34,7 +34,7 @@ from mmds import (  # noqa: E402
     program_from_plan,
     render_query,
 )
-from mmds.llm_optimizer import build_rewrite_prompt, rewrite  # noqa: E402
+from mmds.optimizers.rewriter.agent import build_rewrite_prompt, rewrite  # noqa: E402
 from udfs.test_ops import add_bucket, annotate, keep_large, summarize_group  # noqa: E402
 
 
@@ -326,7 +326,7 @@ docs = Input("docs.jsonl")
 output = Map(docs, annotate)
 """
         client = StaticLLMClient(query)
-        with self.assertLogs("mmds.llm_optimizer", level="DEBUG") as captured:
+        with self.assertLogs("mmds.optimizers.rewriter.agent", level="DEBUG") as captured:
             rewrite(query, client)
         self.assertTrue(any("Sending rewrite prompt to LLM" in line for line in captured.output))
         self.assertTrue(any('docs = Input("docs.jsonl")' in line for line in captured.output))

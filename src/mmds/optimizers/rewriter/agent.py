@@ -5,9 +5,9 @@ import re
 from dataclasses import dataclass
 from typing import Protocol
 
-from .model import MMDSValidationError
-from .parser import parse_query
-from .render import render_query
+from ...model import MMDSValidationError
+from ...parser import parse_query
+from ...render import render_query
 
 logger = logging.getLogger(__name__)
 
