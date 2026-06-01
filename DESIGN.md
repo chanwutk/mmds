@@ -198,7 +198,7 @@ This is semantic round-tripping, not source-fidelity round-tripping. Comments, w
 
 ### Execution
 
-Local execution lives in [src/mmds/execution.py](/Users/chanwutk/Documents/mmds/src/mmds/execution.py).
+Local execution lives in the [src/mmds/execution/](/Users/chanwutk/Documents/mmds/src/mmds/execution/) package (entrypoint in [execution/__init__.py](/Users/chanwutk/Documents/mmds/src/mmds/execution/__init__.py); per-operator logic under [execution/ops/](/Users/chanwutk/Documents/mmds/src/mmds/execution/ops/)).
 
 Execution input model:
 
@@ -232,7 +232,7 @@ Relative path handling:
 
 ### Media Handling And Gemini Execution
 
-Gemini execution lives in [src/mmds/gemini_executor.py](/Users/chanwutk/Documents/mmds/src/mmds/gemini_executor.py).
+Gemini execution lives in [src/mmds/execution/llm/gemini.py](/Users/chanwutk/Documents/mmds/src/mmds/execution/llm/gemini.py).
 
 Design rule:
 
@@ -332,7 +332,7 @@ The current system does not generate `.py` from `.pyi`; it only records the cont
 
 #### Rule Optimizer
 
-The rule optimizer lives in [src/mmds/rule_optimizer.py](/Users/chanwutk/Documents/mmds/src/mmds/rule_optimizer.py).
+The rule optimizer lives in [src/mmds/optimizers/rewriter/rule.py](/Users/chanwutk/Documents/mmds/src/mmds/optimizers/rewriter/rule.py).
 
 Current behavior is intentionally conservative:
 
@@ -343,7 +343,7 @@ It does not yet reorder operators, fold operators, infer safety, or reason about
 
 #### LLM Optimizer
 
-The LLM rewrite scaffold lives in [src/mmds/llm_optimizer.py](/Users/chanwutk/Documents/mmds/src/mmds/llm_optimizer.py).
+The LLM rewrite scaffold lives in [src/mmds/optimizers/rewriter/agent.py](/Users/chanwutk/Documents/mmds/src/mmds/optimizers/rewriter/agent.py).
 
 Flow:
 
