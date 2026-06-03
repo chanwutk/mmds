@@ -13,11 +13,15 @@ from ..model import (
     Row,
 )
 from ._spec import PromptExecutor, StaticPromptExecutor
-from .ops.detect import _apply_detect
 from .ops.filter import _apply_filter
 from .ops.map import _apply_map
 from .ops.reduce import _apply_reduce
 from .ops.unnest import _apply_unnest
+
+# NOTE: `.ops.detect` is intentionally NOT imported here. It pulls in the
+# OpenCV/NumPy (and, at run time, torch/ultralytics) stack via
+# `mmds.utilities.video`. Importing it lazily inside the "detect" branch keeps
+# `import mmds` usable without the heavy CV dependencies installed.
 
 
 def execute(
@@ -60,6 +64,8 @@ def _execute_node(
     elif node.kind == "unnest":
         yield from _apply_unnest(node, source)
     elif node.kind == "detect":
+        from .ops.detect import _apply_detect  # lazy: pulls OpenCV/NumPy only when used
+
         for row in source:
             yield _apply_detect(node, row)
     else:

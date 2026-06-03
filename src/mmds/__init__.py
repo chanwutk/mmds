@@ -1,3 +1,5 @@
+from typing import TYPE_CHECKING
+
 from .dsl import Detect, Filter, ForEach, Input, Map, Reduce, Unnest
 from .execution import PromptExecutor, StaticPromptExecutor, execute
 from .execution.llm.gemini import GeminiPromptExecutor
@@ -21,7 +23,12 @@ from .parser import load_query, parse_query
 from .render import program_from_plan, render_query
 from .optimizers.rewriter.rule import canonicalize, optimize
 from .udf_catalog import UdfCatalog, UdfEntry, discover_udfs
-from .utilities.video import VideoView
+
+if TYPE_CHECKING:
+    # Importing the video utility pulls in OpenCV/NumPy. Keep it out of the
+    # eager import path so `import mmds` works without the heavy CV stack;
+    # `VideoView` is loaded lazily via __getattr__ below.
+    from .utilities.video import VideoView
 
 __all__ = [
     "Assignment",
@@ -61,6 +68,16 @@ __all__ = [
     "program_from_plan",
     "render_query",
 ]
+
+
+def __getattr__(name: str):
+    # Lazy public exports that would otherwise force heavy optional imports
+    # (OpenCV/NumPy) at `import mmds` time. See PEP 562.
+    if name == "VideoView":
+        from .utilities.video import VideoView
+
+        return VideoView
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def main() -> None:

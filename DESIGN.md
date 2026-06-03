@@ -305,6 +305,7 @@ Design rules:
 ]
 ```
 
+- the OpenCV/NumPy stack (and, at run time, `torch`/`ultralytics`) is imported **lazily**: `mmds.execution` imports `.ops.detect` only when a `detect` node actually executes, and `mmds.VideoView` is a lazy export via module `__getattr__`. This keeps `import mmds` and the prompt/UDF execution paths usable without the heavy CV/ML dependencies installed.
 - `Detect` is **not** parsed from or rendered back to DSL text (it is for internal/programmatic use only)
 
 ### UDF Contract
@@ -373,6 +374,7 @@ The following invariants are part of the current design and should not change si
 - `.pyi` discovery does not imply executability
 - provider-specific media handling belongs in executors, not DSL syntax
 - `Reduce` row access must go through `ForEach([...])`
+- importing `mmds` must not require the optional computer-vision stack (OpenCV/NumPy/`torch`/`ultralytics`); `Detect` and `VideoView` load those dependencies lazily on use
 
 ## Validation and Tests
 

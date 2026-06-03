@@ -155,27 +155,21 @@ path instead downloads videos via `yt-dlp` and caches them under `~/.cache/mmds/
 
 The central idea: **one query, three equivalent forms**, with clean converters between them.
 
-```
-        write / edit
-   ┌──────────────────────┐
-   │   Python DSL text     │   restricted Python: imports + top-level assignments
-   └──────────┬───────────┘
-   parse_query │   ▲ render_query  (normalized, not source-exact)
-              ▼   │
-   ┌──────────────────────┐
-   │     QueryProgram      │   assignment sequence + chosen output variable
-   └──────────┬───────────┘
-              │ .output_expr
-              ▼
-   ┌──────────────────────┐   program_from_plan
-   │    DatasetExpr plan    │◀──────────────────── built directly in Python
-   │   (immutable, unary)   │──▶ optimize / canonicalize  (rule + LLM rewriters)
-   └──────────┬───────────┘
-   execute(plan, prompt_executor)
-              ▼
-   ┌──────────────────────┐
-   │    rows: list[dict]    │   local interpreter over Iterable[dict]
-   └──────────────────────┘
+```mermaid
+flowchart TD
+    PY["Python DSL text<br/>(imports + top-level assignments)"]
+    QP["QueryProgram<br/>(assignments + output variable)"]
+    PLAN["DatasetExpr plan<br/>(immutable, unary tree)"]
+    ROWS["rows<br/>(list of dicts)"]
+    RT(["plan built directly in Python"])
+
+    PY -->|"parse_query / load_query"| QP
+    QP -->|"render_query (normalized)"| PY
+    QP -->|".output_expr"| PLAN
+    RT -->|"program_from_plan"| QP
+    PLAN -->|"optimize / canonicalize (rule rewriter)"| PLAN
+    PY -->|"LLM rewrite (agent, re-parsed and validated)"| PY
+    PLAN -->|"execute(plan, prompt_executor)"| ROWS
 ```
 
 Components (all under [`src/mmds/`](src/mmds/)):
