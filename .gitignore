@@ -1,4 +1,6 @@
 .venv/
+.idea/
+.idea_backup/
 __pycache__/
 .mypy_cache/
 .pytest_cache/
