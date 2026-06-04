@@ -11,6 +11,7 @@ dependencies = [
     "google-genai",
     "ultralytics",
     "yt-dlp>=2026.3.3",
+    "clip @ git+https://github.com/ultralytics/CLIP.git",
 ]
 
 [project.scripts]
