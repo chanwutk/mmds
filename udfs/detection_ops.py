@@ -152,13 +152,12 @@ _VEHICLE_NMS_IOU = 0.65 # Two boxes are considered the same if their Intersectio
 
 # Color attributes for vehicle color prediction. Currently, we have 13 colors.
 # May need to change color references to improve color prediction accuracy.
+# Set white and black as more grayish colors to improve color prediction accuracy.
 _COLOR_REFERENCES: dict[str, tuple[float, float, float]] = {
-    "white": (235.0, 235.0, 235.0),
     "silver": (192.0, 192.0, 192.0),
-    "light_gray": (175.0, 175.0, 175.0),
+    "white": (175.0, 175.0, 175.0),
     "gray": (128.0, 128.0, 128.0),
-    "dark_gray": (85.0, 85.0, 85.0),
-    "black": (30.0, 30.0, 30.0),
+    "black": (85.0, 85.0, 85.0),
     "beige": (210.0, 195.0, 160.0),
     "yellow": (220.0, 200.0, 60.0),
     "red": (180.0, 35.0, 35.0),

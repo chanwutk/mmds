@@ -589,9 +589,7 @@ class DetectionOpsTests(unittest.TestCase):
             {
                 "white",
                 "silver",
-                "light_gray",
                 "gray",
-                "dark_gray",
                 "black",
                 "beige",
                 "yellow",
