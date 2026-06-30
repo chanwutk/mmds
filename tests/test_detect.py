@@ -531,6 +531,65 @@ class DetectionOpsTests(unittest.TestCase):
         )
         self.assertEqual(pruned_high_generic, pruned_high)
 
+    def test_nms_vehicle_detections_keeps_highest_confidence_overlap(self) -> None:
+        from udfs.detection_ops import nms_vehicle_detections
+
+        row = {
+            "detections": [
+                {
+                    "type": "suv",
+                    "bboxes": [
+                        {
+                            "frame_idx": 10,
+                            "bbox": [0.0, 0.0, 100.0, 100.0],
+                            "confidence": 0.9,
+                        },
+                        {
+                            "frame_idx": 10,
+                            "bbox": [5.0, 5.0, 95.0, 95.0],
+                            "confidence": 0.4,
+                        },
+                    ],
+                }
+            ]
+        }
+        nmsed = nms_vehicle_detections(row)
+        boxes = nmsed["detections"][0]["bboxes"]
+        self.assertEqual(len(boxes), 1)
+        self.assertAlmostEqual(boxes[0]["confidence"], 0.9)
+
+    def test_build_vehicle_frame_detections_shape(self) -> None:
+        from udfs.detection_ops import build_vehicle_frame_detections
+
+        row = {
+            "camera_id": "cam-i24v-highway2",
+            "detections": [
+                {
+                    "type": "sedan",
+                    "bboxes": [
+                        {
+                            "frame_idx": 3,
+                            "bbox": [10.0, 20.0, 110.0, 80.0],
+                            "confidence": 0.82,
+                        }
+                    ],
+                }
+            ],
+        }
+        result = build_vehicle_frame_detections(row)
+        self.assertEqual(len(result["frame_detections"]), 1)
+        detection = result["frame_detections"][0]
+        self.assertEqual(detection["frame_id"], 3)
+        self.assertEqual(detection["camera_id"], "cam-i24v-highway2")
+        self.assertEqual(detection["vehicle_class"], "sedan")
+        self.assertEqual(detection["bbox"], [10.0, 20.0, 110.0, 80.0])
+        self.assertAlmostEqual(detection["confidence"], 0.82)
+        self.assertIn(detection["color"], {"white", "silver", "gray", "black", "red", "blue"})
+        self.assertIn(
+            detection["subtype"],
+            {"hatchback", "pickup", "sedan", "coupe", "suv"},
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -8,12 +8,14 @@ from .model import (
     DetectSpec,
     ForEachPrompt,
     JsonValue,
+    JoinSpec,
     MMDSValidationError,
     PromptPart,
     PromptSpec,
     Record,
     RecordPath,
     SemanticSpec,
+    normalize_join_keys,
     normalize_output_schema,
     normalize_group_by,
     udf_spec_from_callable,
@@ -35,12 +37,14 @@ def Map(
     spec: str | Sequence[PromptInputPart] | Callable[..., Any],
     *,
     schema: JsonValue | None = None,
+    replace: bool = False,
     name: str | None = None,
 ) -> DatasetExpr:
     return DatasetExpr(
         kind="map",
         source=_normalize_source(data),
         spec=_normalize_spec(spec, op_kind="map", schema=schema),
+        replace=bool(replace),
         name=name,
     )
 
@@ -90,6 +94,66 @@ def Unnest(
         source=_normalize_source(data),
         field=field,
         keep_empty=bool(keep_empty),
+        name=name,
+    )
+
+
+def Join(
+    left: DatasetExpr,
+    right: DatasetExpr,
+    predicate: Callable[..., Any] | None = None,
+    *,
+    on: str | Sequence[str] | None = None,
+    one_to_one: bool = False,
+    score: Callable[..., Any] | None = None,
+    min_score: float | None = None,
+    left_key: str | Sequence[str] | None = None,
+    right_key: str | Sequence[str] | None = None,
+    name: str | None = None,
+) -> DatasetExpr:
+    """Pair-wise join over two row collections.
+
+    When ``on`` names one or more fields, the executor builds a hash index on
+    the right rows and probes by key — ``O(|left| + |right|)`` instead of a
+    nested loop. An optional ``predicate`` UDF further filters candidate pairs.
+
+    When ``one_to_one=True``, the executor keeps at most one match per left and
+    right track identity (``left_key`` / ``right_key``). Candidate pairs must
+    pass ``predicate`` and have ``score(left, right) >= min_score`` when
+    ``min_score`` is set. Pairs are taken in descending score order; unmatched
+    tracks are omitted.
+
+    At least one of ``on`` or ``predicate`` is required. Output rows are
+    ``{"left": <left row>, "right": <right row>}``, plus ``match_score`` when
+    ``one_to_one=True``.
+    """
+    keys = normalize_join_keys(on) if on is not None else ()
+    predicate_spec = None
+    if predicate is not None:
+        if not callable(predicate):
+            raise TypeError("Join predicates must be imported UDF callables.")
+        predicate_spec = udf_spec_from_callable(predicate)
+    score_spec = None
+    if score is not None:
+        if not callable(score):
+            raise TypeError("Join score functions must be imported UDF callables.")
+        score_spec = udf_spec_from_callable(score)
+    left_key_fields = normalize_join_keys(left_key) if left_key is not None else ()
+    right_key_fields = normalize_join_keys(right_key) if right_key is not None else ()
+    join_spec = JoinSpec(
+        keys=keys,
+        predicate=predicate_spec,
+        one_to_one=bool(one_to_one),
+        score=score_spec,
+        min_score=min_score,
+        left_key=left_key_fields,
+        right_key=right_key_fields,
+    )
+    return DatasetExpr(
+        kind="join",
+        source=_normalize_source(left),
+        right_source=_normalize_source(right),
+        spec=join_spec,
         name=name,
     )
 

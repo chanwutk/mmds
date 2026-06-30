@@ -40,7 +40,7 @@ The design goal is to keep those representations close enough that:
 
 The current implementation supports:
 
-- operators: `Input`, `Map`, `Filter`, `Reduce`, `Unnest`, `Detect`
+- operators: `Input`, `Map`, `Filter`, `Reduce`, `Unnest`, `Detect`, `Join`
 - public video utility: `VideoView(video, start, end)` for seek-based clip-range iteration
 - file-backed `Input(...)` roots over `.json` and `.jsonl`
 - prompt-backed semantics as either:
@@ -62,7 +62,7 @@ The current implementation intentionally does not support:
 - inline lambdas
 - nested functions or callables outside `udfs.*`
 - loops, conditionals, comprehensions, classes, or arbitrary Python control flow in query files
-- joins, sorts, projections, or cost-based optimization
+- joins, sorts, projections, or cost-based optimization beyond hash join
 - automatic `.py` implementation synthesis from `.pyi`
 - nested `ForEach(...)`
 - provider-specific media syntax in the DSL
@@ -79,6 +79,7 @@ The main entrypoints are exported from [src/mmds/__init__.py](/Users/chanwutk/Do
 - `Filter(data, spec, *, name=None)`
 - `Reduce(data, group_by, reducer, *, schema=None, name=None)`
 - `Unnest(data, field, *, keep_empty=False, name=None)`
+- `Join(left, right, predicate?, *, on=..., one_to_one=..., score=..., min_score=..., left_key=..., right_key=..., name=None)`
 - `Detect(data, video_field, classes, *, model="yoloe-11s-seg.pt", output_field="detections", name=None)`
 - `VideoView(video, start, end)`
 - `Record[...]`
@@ -100,6 +101,7 @@ The core model lives in [src/mmds/model.py](/Users/chanwutk/Documents/mmds/src/m
 - `ResolvedPrompt` is the execution-time prompt after all `Record[...]` references are resolved against data.
 - `UdfSpec` stores a stable import path for a UDF.
 - `DetectSpec` stores the parameters for a `Detect` node: `video_field`, `classes`, `model`, `output_field`.
+- `JoinSpec` stores hash-join keys, optional predicate/score UDFs, and one-to-one matching options.
 - `Assignment` and `QueryProgram` represent a parsed query file.
 - `MMDSValidationError` is the shared validation failure type.
 
@@ -107,6 +109,7 @@ The core model lives in [src/mmds/model.py](/Users/chanwutk/Documents/mmds/src/m
 
 - `Input` has no source.
 - `Map`, `Filter`, `Reduce`, `Unnest`, and `Detect` each have one `source`.
+- `Join` has `source` (left) and `right_source` (right).
 
 That shape is sufficient for the first operator set and keeps rendering and execution simple. If future operators introduce multiple inputs, `DatasetExpr` will need a general child list instead of a single `source`.
 
@@ -307,6 +310,45 @@ Design rules:
 
 - the OpenCV/NumPy stack (and, at run time, `torch`/`ultralytics`) is imported **lazily**: `mmds.execution` imports `.ops.detect` only when a `detect` node actually executes, and `mmds.VideoView` is a lazy export via module `__getattr__`. This keeps `import mmds` and the prompt/UDF execution paths usable without the heavy CV/ML dependencies installed.
 - `Detect` is **not** parsed from or rendered back to DSL text (it is for internal/programmatic use only)
+
+### Join predicates (library)
+
+Cross-camera relational filters live in [src/mmds/join/predicates.py](src/mmds/join/predicates.py).
+The UDF wrapper [udfs/join_ops.py](udfs/join_ops.py) exposes `same_vehicle(left, right)` and
+`vehicle_match_score(left, right)` for `Join` / `Filter` use.
+
+`same_vehicle` returns `True` only when **all** of the following pass:
+
+- `different_cameras` — `left.camera_id != right.camera_id`
+- `canonical_corridor_pair` — when both ids end in `highway<N>`, requires `N_left < N_right`
+  so self-joins emit each unordered track pair once (upstream camera on the left), eliminates duplication of entries
+- `travel_time_compatible` — track intervals overlap, or upstream `end_time` precedes
+  downstream `start_time` within `120 s` (with `2 s` overlap tolerance)
+- `direction_compatible` — upstream `exit_direction` and downstream `entry_direction` align
+  within `120°` on the compass; both tracks must be moving
+- `speed_compatible` — `avg_speed` values within `50%` relative difference
+
+### Join operator
+
+`Join(left, right, predicate?, on=..., one_to_one=..., score=..., left_key=..., right_key=...)`
+pairs rows from two sources. When `on=` names equi-join keys, the executor uses a hash join
+implemented in [src/mmds/join/hash_join.py](src/mmds/join/hash_join.py): it builds a hash index
+on the right input and only compares rows inside the same bucket.
+
+For cross-camera vehicle matching, the intended hash key is:
+
+```python
+hash_key = (vehicle_class, color, subtype)
+```
+
+(`VEHICLE_APPEARANCE_KEYS` in `hash_join.py`.)
+
+When `one_to_one=True`, candidate pairs inside each bucket are filtered by the optional
+`predicate`, scored with `score(left, right)`, sorted by descending score, and greedily matched
+so each `left_key` / `right_key` identity appears at most once. Output rows are
+`{"left": ..., "right": ..., "match_score": ...}`.
+
+`Join` is parsed from and rendered back to DSL text. `Detect` remains programmatic-only.
 
 ### UDF Contract
 

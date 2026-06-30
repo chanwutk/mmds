@@ -8,6 +8,7 @@ from .dsl import ForEach
 from .model import (
     Assignment,
     DatasetExpr,
+    JoinSpec,
     JsonValue,
     MMDSValidationError,
     PromptSpec,
@@ -15,11 +16,21 @@ from .model import (
     Record,
     RecordPath,
     UdfSpec,
+    normalize_join_keys,
     normalize_output_schema,
     normalize_group_by,
 )
 
-_MMDS_IMPORTS = {"Input", "Map", "Filter", "Reduce", "Unnest", "Record", "ForEach"}
+_MMDS_IMPORTS = {
+    "Input",
+    "Map",
+    "Filter",
+    "Reduce",
+    "Unnest",
+    "Join",
+    "Record",
+    "ForEach",
+}
 
 
 def load_query(source: str | Path) -> QueryProgram:
@@ -126,10 +137,17 @@ def _parse_call(
         return DatasetExpr(kind="input", input_path=input_path)
 
     if operator == "Map":
-        _expect_args(operator, node.args, 2, keywords, allowed_keywords={"name", "schema"})
+        _expect_args(operator, node.args, 2, keywords, allowed_keywords={"name", "replace", "schema"})
         source = _parse_source(node.args[0], bindings)
         spec = _parse_spec("map", node.args[1], udf_imports, schema_node=keywords.get("schema"))
-        return DatasetExpr(kind="map", source=source, spec=spec, name=_parse_optional_name(keywords))
+        replace = _parse_bool(keywords.get("replace"), default=False)
+        return DatasetExpr(
+            kind="map",
+            source=source,
+            spec=spec,
+            replace=replace,
+            name=_parse_optional_name(keywords),
+        )
 
     if operator == "Filter":
         _expect_args(operator, node.args, 2, keywords, allowed_keywords={"name"})
@@ -159,6 +177,61 @@ def _parse_call(
             source=source,
             field=_parse_string(node.args[1], "Unnest field"),
             keep_empty=keep_empty,
+            name=_parse_optional_name(keywords),
+        )
+
+    if operator == "Join":
+        allowed_keywords = {
+            "name",
+            "on",
+            "one_to_one",
+            "score",
+            "min_score",
+            "left_key",
+            "right_key",
+        }
+        unexpected = set(keywords) - allowed_keywords
+        if unexpected:
+            raise MMDSValidationError(
+                f"{operator} does not support keyword arguments: {sorted(unexpected)!r}."
+            )
+        if len(node.args) not in (2, 3):
+            raise MMDSValidationError(
+                f"{operator} expects 2 or 3 positional arguments."
+            )
+        left = _parse_source(node.args[0], bindings)
+        right = _parse_source(node.args[1], bindings)
+        predicate: UdfSpec | None = None
+        if len(node.args) == 3:
+            predicate = _parse_join_predicate(node.args[2], udf_imports)
+        join_keys = _parse_join_keys(keywords.get("on"))
+        one_to_one = _parse_bool(keywords.get("one_to_one"), default=False)
+        score = _parse_optional_join_score(keywords.get("score"), udf_imports)
+        min_score = _parse_optional_float(keywords.get("min_score"))
+        left_key = (
+            _parse_join_keys(keywords.get("left_key"))
+            if keywords.get("left_key") is not None
+            else ()
+        )
+        right_key = (
+            _parse_join_keys(keywords.get("right_key"))
+            if keywords.get("right_key") is not None
+            else ()
+        )
+        join_spec = JoinSpec(
+            keys=join_keys,
+            predicate=predicate,
+            one_to_one=one_to_one,
+            score=score,
+            min_score=min_score,
+            left_key=left_key,
+            right_key=right_key,
+        )
+        return DatasetExpr(
+            kind="join",
+            source=left,
+            right_source=right,
+            spec=join_spec,
             name=_parse_optional_name(keywords),
         )
 
@@ -303,6 +376,53 @@ def _parse_optional_name(keywords: dict[str, ast.AST]) -> str | None:
     if node is None:
         return None
     return _parse_string(node, "Operator name")
+
+
+def _parse_join_predicate(node: ast.AST, udf_imports: dict[str, UdfSpec]) -> UdfSpec:
+    if isinstance(node, ast.Name) and node.id in udf_imports:
+        return udf_imports[node.id]
+    raise MMDSValidationError("Join predicates must reference an imported UDF name.")
+
+
+def _parse_optional_join_score(
+    node: ast.AST | None,
+    udf_imports: dict[str, UdfSpec],
+) -> UdfSpec | None:
+    """Parse the optional join score UDF name. Used for one-to-one join."""
+    if node is None:
+        return None
+    if isinstance(node, ast.Name) and node.id in udf_imports:
+        return udf_imports[node.id]
+    raise MMDSValidationError("Join score= must reference an imported UDF name.")
+
+
+def _parse_optional_float(node: ast.AST | None) -> float | None:
+    """Parse the optional join min_score value. Used for one-to-one join."""
+    if node is None:
+        return None
+    if not isinstance(node, ast.Constant) or not isinstance(node.value, (int, float)):
+        raise MMDSValidationError("Join min_score= must be a numeric literal.")
+    return float(node.value)
+
+
+def _parse_join_keys(node: ast.AST | None) -> tuple[str, ...]:
+    if node is None:
+        return ()
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return normalize_join_keys(node.value)
+    if isinstance(node, (ast.List, ast.Tuple)):
+        keys: list[str] = []
+        for element in node.elts:
+            if isinstance(element, ast.Constant) and isinstance(element.value, str):
+                keys.append(element.value)
+            else:
+                raise MMDSValidationError(
+                    "Join on= must be a field name string or a list/tuple of field name strings."
+                )
+        return normalize_join_keys(keys)
+    raise MMDSValidationError(
+        "Join on= must be a field name string or a list/tuple of field name strings."
+    )
 
 
 def _expect_args(

@@ -11,6 +11,8 @@ def _apply_map(node: DatasetExpr, row: Row, prompt_executor: PromptExecutor | No
     updates = _execute_spec(node, row, prompt_executor)
     if not isinstance(updates, Mapping):
         raise MMDSValidationError("Map operations must return mapping-like field updates.")
+    if node.replace:
+        return dict(updates)
     result = dict(row)
     result.update(dict(updates))
     return result

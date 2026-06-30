@@ -590,6 +590,32 @@ class _FakeClient:
         self.files = _FakeFiles()
 
 
+class MapReplaceTests(unittest.TestCase):
+    def test_map_replace_returns_only_udf_fields(self) -> None:
+        input_path = _write_jsonl_rows([{"value": 5, "extra": "drop-me"}])
+        plan = Map(Input(input_path), add_bucket, replace=True)
+        result = execute(plan)
+        self.assertEqual(result, [{"bucket": 2}])
+
+    def test_map_merge_retains_input_fields_by_default(self) -> None:
+        input_path = _write_jsonl_rows([{"value": 5, "extra": "keep-me"}])
+        plan = Map(Input(input_path), add_bucket)
+        result = execute(plan)
+        self.assertEqual(result, [{"value": 5, "extra": "keep-me", "bucket": 2}])
+
+    def test_parse_and_render_map_replace(self) -> None:
+        source = """
+from mmds import Input, Map
+from udfs.test_ops import add_bucket
+
+docs = Input("docs.jsonl")
+output = Map(docs, add_bucket, replace=True)
+"""
+        program = load_query(source)
+        rendered = render_query(program)
+        self.assertIn("replace=True", rendered)
+
+
 def _write_json_rows(rows: list[dict]) -> str:
     handle = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8")
     try:
