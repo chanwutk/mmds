@@ -71,28 +71,27 @@ Run:
   },
   ...
   {
-    "vehicle_id": "join_unique_4c322784",
+    "vehicle_id": "join_unique_7f6a6656",
     "attributes": {
-      "class": "suv",
-      "color": "gray",
-      "subtype": "suv"
+      "class": "sedan",
+      "color": "dark_gray",
+      "subtype": "hatchback"
     },
     "timeline": [
       {
         "camera_id": "cam-i24v-highway2",
-        "entered": 0.0,
-        "exited": 0.266933
+        "entered": 0.066733,
+        "exited": 0.1001
       },
       {
         "camera_id": "cam-i24v-highway3",
-        "entered": 4.037367,
-        "exited": 4.1041
+        "entered": 0.0,
+        "exited": 0.033367
       }
     ],
-    "match_score": 0.35023628175258636
+    "match_score": 0.3517465516924858
   }
 ]
-
 """
 
 from mmds import Detect, Input, Join, Map, Unnest

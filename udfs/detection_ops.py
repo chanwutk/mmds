@@ -150,13 +150,21 @@ def keep_rows_with_detections(row: dict[str, Any]) -> bool:
 _VEHICLE_CLASSES = frozenset({"sedan", "suv", "truck"})
 _VEHICLE_NMS_IOU = 0.65 # Two boxes are considered the same if their Intersection Over Union (IoU) ≥ threshold
 
+# Color attributes for vehicle color prediction. Currently, we have 13 colors.
+# May need to change color references to improve color prediction accuracy.
 _COLOR_REFERENCES: dict[str, tuple[float, float, float]] = {
     "white": (235.0, 235.0, 235.0),
     "silver": (192.0, 192.0, 192.0),
+    "light_gray": (175.0, 175.0, 175.0),
     "gray": (128.0, 128.0, 128.0),
+    "dark_gray": (85.0, 85.0, 85.0),
     "black": (30.0, 30.0, 30.0),
+    "beige": (210.0, 195.0, 160.0),
+    "yellow": (220.0, 200.0, 60.0),
     "red": (180.0, 35.0, 35.0),
     "blue": (35.0, 60.0, 170.0),
+    "green": (40.0, 110.0, 55.0),
+    "brown": (120.0, 80.0, 50.0),
 }
 
 

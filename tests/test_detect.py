@@ -584,7 +584,23 @@ class DetectionOpsTests(unittest.TestCase):
         self.assertEqual(detection["vehicle_class"], "sedan")
         self.assertEqual(detection["bbox"], [10.0, 20.0, 110.0, 80.0])
         self.assertAlmostEqual(detection["confidence"], 0.82)
-        self.assertIn(detection["color"], {"white", "silver", "gray", "black", "red", "blue"})
+        self.assertIn(
+            detection["color"],
+            {
+                "white",
+                "silver",
+                "light_gray",
+                "gray",
+                "dark_gray",
+                "black",
+                "beige",
+                "yellow",
+                "red",
+                "blue",
+                "green",
+                "brown",
+            },
+        )
         self.assertIn(
             detection["subtype"],
             {"hatchback", "pickup", "sedan", "coupe", "suv"},
