@@ -1,5 +1,11 @@
 .venv/
+.idea/
+.idea_backup/
 __pycache__/
 .mypy_cache/
 .pytest_cache/
 .ruff_cache/
+
+# YOLOE / Ultralytics artifacts (downloaded when running Detect examples)
+mobileclip_blt.ts
+yoloe-11s-seg.pt

@@ -473,5 +473,64 @@ class ApplyDetectTests(unittest.TestCase):
         self.assertNotIsInstance(called_video, VideoView)
 
 
+class DetectionOpsTests(unittest.TestCase):
+    def test_keep_rows_with_high_confidence_bear(self) -> None:
+        from udfs.detection_ops import (
+            HIGH_CONFIDENCE_THRESHOLD,
+            keep_rows_with_class,
+            keep_rows_with_high_confidence_class,
+            prune_detections,
+            prune_class_detections_to_high_confidence,
+        )
+
+        low_only = {
+            "detections": [
+                {
+                    "type": "bear",
+                    "bboxes": [{"frame_idx": 1, "bbox": [0, 0, 1, 1], "confidence": 0.3}],
+                }
+            ]
+        }
+        high = {
+            "detections": [
+                {
+                    "type": "bear",
+                    "bboxes": [
+                        {
+                            "frame_idx": 2,
+                            "bbox": [0, 0, 1, 1],
+                            "confidence": HIGH_CONFIDENCE_THRESHOLD,
+                        }
+                    ],
+                }
+            ]
+        }
+
+        self.assertTrue(keep_rows_with_class(low_only, "bear"))
+        self.assertFalse(keep_rows_with_high_confidence_class(low_only, "bear"))
+        self.assertTrue(keep_rows_with_high_confidence_class(high, "bear"))
+
+        pruned_low = prune_class_detections_to_high_confidence(low_only, "bear")
+        self.assertEqual(pruned_low["detections"], [])
+        self.assertFalse(keep_rows_with_high_confidence_class(pruned_low, "bear"))
+
+        pruned_high = prune_class_detections_to_high_confidence(high, "bear")
+        self.assertTrue(keep_rows_with_high_confidence_class(pruned_high, "bear"))
+        self.assertEqual(pruned_high["detections"][0]["type"], "bear")
+        self.assertEqual(len(pruned_high["detections"][0]["bboxes"]), 1)
+        self.assertGreaterEqual(
+            pruned_high["detections"][0]["bboxes"][0]["confidence"],
+            HIGH_CONFIDENCE_THRESHOLD,
+        )
+
+        pruned_high_generic = prune_detections(
+            high,
+            min_confidence=HIGH_CONFIDENCE_THRESHOLD,
+            only_classes={"bear"},
+            keep_other_classes=True,
+        )
+        self.assertEqual(pruned_high_generic, pruned_high)
+
+
 if __name__ == "__main__":
     unittest.main()
