@@ -7,6 +7,7 @@ from .model import (
     DatasetExpr,
     DetectSpec,
     ForEachPrompt,
+    GatherSpec,
     JsonValue,
     MMDSValidationError,
     PromptPart,
@@ -139,6 +140,36 @@ def Detect(
             model=model,
             output_field=output_field,
         ),
+        name=name,
+    )
+
+
+def Gather(
+    data: DatasetExpr,
+    context_fn: Callable[..., Any],
+    output_field: str,
+    *,
+    name: str | None = None,
+) -> DatasetExpr:
+    """Attach context to each row by calling a UDF and storing its return value.
+
+    Args:
+        data: Source dataset expression.
+        context_fn: A UDF imported from ``udfs.*``.  It receives the full row
+            and returns a single context value (any JSON-serialisable type).
+            Unlike Map UDFs, it must *not* return a modified row — only the
+            value that will be stored under ``output_field``.
+        output_field: The field name added to each row to hold the context.
+        name: Optional operator label.
+    """
+    if not callable(context_fn):
+        raise TypeError("Gather context_fn must be a callable UDF.")
+    if not isinstance(output_field, str) or not output_field:
+        raise TypeError("Gather output_field must be a non-empty string.")
+    return DatasetExpr(
+        kind="gather",
+        source=_normalize_source(data),
+        spec=GatherSpec(fn=udf_spec_from_callable(context_fn), output_field=output_field),
         name=name,
     )
 

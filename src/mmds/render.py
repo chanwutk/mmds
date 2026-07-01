@@ -9,6 +9,7 @@ from .model import (
     Assignment,
     DatasetExpr,
     ForEachPrompt,
+    GatherSpec,
     JsonValue,
     PromptSpec,
     QueryProgram,
@@ -19,7 +20,7 @@ from .model import (
 
 def render_query(plan_or_query: DatasetExpr | QueryProgram) -> str:
     program = plan_or_query if isinstance(plan_or_query, QueryProgram) else program_from_plan(plan_or_query)
-    lines = ["from mmds import Input, Map, Filter, Reduce, Unnest, Record, ForEach"]
+    lines = ["from mmds import Filter, ForEach, Gather, Input, Map, Reduce, Record, Unnest"]
 
     grouped_udfs: dict[str, list[str]] = defaultdict(list)
     for spec in program.used_udfs():
@@ -80,6 +81,11 @@ def _render_expr(expr: DatasetExpr, node_names: dict[DatasetExpr, str]) -> str:
         if expr.name is not None:
             flags.append(f"name={_quote(expr.name)}")
         return f"Unnest({source_name}, {', '.join(flags)})"
+    if expr.kind == "gather":
+        spec = expr.spec
+        if not isinstance(spec, GatherSpec):
+            raise ValueError("gather nodes require a GatherSpec.")
+        return f"Gather({source_name}, {spec.fn.name}, {_quote(spec.output_field)}{name_suffix})"
     raise ValueError(f"Unsupported operator kind {expr.kind!r}.")
 
 

@@ -1,3 +1,11 @@
+def tag_summary(row: dict) -> str:
+    """Gather UDF: return a summary string from the row's tags list."""
+    tags = row.get("tags", [])
+    if isinstance(tags, list):
+        return f"tags:{','.join(str(t) for t in tags)}"
+    return f"tags:{tags}"
+
+
 def add_bucket(row: dict[str, int]) -> dict[str, int]:
     return {"bucket": row["value"] // 2}
 
