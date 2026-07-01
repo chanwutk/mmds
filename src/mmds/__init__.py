@@ -1,6 +1,6 @@
 from typing import TYPE_CHECKING
 
-from .dsl import Detect, Filter, ForEach, Input, Map, Reduce, Unnest
+from .dsl import Detect, Filter, ForEach, Gather, Input, Map, Reduce, Unnest
 from .execution import PromptExecutor, StaticPromptExecutor, execute
 from .execution.llm.gemini import GeminiPromptExecutor
 from .optimizers.rewriter.agent import LLMClient, StaticLLMClient
@@ -9,6 +9,7 @@ from .model import (
     DatasetExpr,
     DetectSpec,
     ForEachPrompt,
+    GatherSpec,
     JsonValue,
     MMDSValidationError,
     PromptSpec,
@@ -38,6 +39,8 @@ __all__ = [
     "Filter",
     "ForEach",
     "ForEachPrompt",
+    "Gather",
+    "GatherSpec",
     "GeminiPromptExecutor",
     "Input",
     "JsonValue",

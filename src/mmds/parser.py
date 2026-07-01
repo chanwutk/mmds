@@ -8,6 +8,7 @@ from .dsl import ForEach
 from .model import (
     Assignment,
     DatasetExpr,
+    GatherSpec,
     JsonValue,
     MMDSValidationError,
     PromptSpec,
@@ -19,7 +20,7 @@ from .model import (
     normalize_group_by,
 )
 
-_MMDS_IMPORTS = {"Input", "Map", "Filter", "Reduce", "Unnest", "Record", "ForEach"}
+_MMDS_IMPORTS = {"Filter", "ForEach", "Gather", "Input", "Map", "Reduce", "Record", "Unnest"}
 
 
 def load_query(source: str | Path) -> QueryProgram:
@@ -159,6 +160,22 @@ def _parse_call(
             source=source,
             field=_parse_string(node.args[1], "Unnest field"),
             keep_empty=keep_empty,
+            name=_parse_optional_name(keywords),
+        )
+
+    if operator == "Gather":
+        _expect_args(operator, node.args, 3, keywords, allowed_keywords={"name"})
+        source = _parse_source(node.args[0], bindings)
+        fn_node = node.args[1]
+        if not isinstance(fn_node, ast.Name) or fn_node.id not in udf_imports:
+            raise MMDSValidationError(
+                "Gather context_fn must be an imported UDF name (from udfs.*)."
+            )
+        output_field = _parse_string(node.args[2], "Gather output_field")
+        return DatasetExpr(
+            kind="gather",
+            source=source,
+            spec=GatherSpec(fn=udf_imports[fn_node.id], output_field=output_field),
             name=_parse_optional_name(keywords),
         )
 

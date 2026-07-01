@@ -10,7 +10,7 @@ JsonValue: TypeAlias = JsonScalar | dict[str, "JsonValue"] | list["JsonValue"]
 FieldSchemaValue: TypeAlias = str | dict[str, JsonValue]
 RecordSchema: TypeAlias = dict[str, FieldSchemaValue]
 OperatorKind: TypeAlias = Literal[
-    "input", "map", "filter", "reduce", "unnest", "detect"
+    "input", "map", "filter", "reduce", "unnest", "detect", "gather"
 ]
 
 
@@ -116,7 +116,29 @@ class DetectSpec:
             )
 
 
-SemanticSpec: TypeAlias = PromptSpec | UdfSpec | DetectSpec
+@dataclass(frozen=True)
+class GatherSpec:
+    """Spec for the Gather operator: attach context from a UDF to each row.
+
+    The UDF receives the full row and returns a context value (any JSON-serialisable
+    type). The operator stores that value under ``output_field`` in the output row,
+    leaving all other fields unchanged.
+
+    This is intentionally distinct from Map: the UDF returns *just the context
+    value*, not a modified row, making the enrichment contract explicit.
+    """
+
+    fn: UdfSpec
+    output_field: str
+
+    def __post_init__(self) -> None:
+        if not self.output_field:
+            raise MMDSValidationError(
+                "GatherSpec output_field must be a non-empty string."
+            )
+
+
+SemanticSpec: TypeAlias = PromptSpec | UdfSpec | DetectSpec | GatherSpec
 
 
 @dataclass(frozen=True)
@@ -147,6 +169,8 @@ class DatasetExpr:
             raise MMDSValidationError("Unnest nodes require a field to expand.")
         if self.kind == "detect" and not isinstance(self.spec, DetectSpec):
             raise MMDSValidationError("detect nodes require a DetectSpec.")
+        if self.kind == "gather" and not isinstance(self.spec, GatherSpec):
+            raise MMDSValidationError("gather nodes require a GatherSpec.")
 
     def children(self) -> tuple[DatasetExpr, ...]:
         if self.source is None:
@@ -212,6 +236,8 @@ class QueryProgram:
             for node in assignment.expr.walk_postorder():
                 if isinstance(node.spec, UdfSpec):
                     specs.add(node.spec)
+                elif isinstance(node.spec, GatherSpec):
+                    specs.add(node.spec.fn)
         return tuple(sorted(specs, key=lambda spec: (spec.module, spec.name)))
 
 

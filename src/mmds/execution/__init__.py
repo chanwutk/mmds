@@ -14,6 +14,7 @@ from ..model import (
 )
 from ._spec import PromptExecutor, StaticPromptExecutor
 from .ops.filter import _apply_filter
+from .ops.gather import _apply_gather
 from .ops.map import _apply_map
 from .ops.reduce import _apply_reduce
 from .ops.unnest import _apply_unnest
@@ -63,6 +64,8 @@ def _execute_node(
         yield from _apply_reduce(node, list(source), prompt_executor)
     elif node.kind == "unnest":
         yield from _apply_unnest(node, source)
+    elif node.kind == "gather":
+        yield from _apply_gather(node, source)
     elif node.kind == "detect":
         from .ops.detect import _apply_detect  # lazy: pulls OpenCV/NumPy only when used
 

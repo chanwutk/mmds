@@ -16,6 +16,8 @@ if str(SRC) not in sys.path:
 from mmds import (  # noqa: E402
     Filter,
     ForEach,
+    Gather,
+    GatherSpec,
     GeminiPromptExecutor,
     Input,
     MMDSValidationError,
@@ -35,7 +37,7 @@ from mmds import (  # noqa: E402
     render_query,
 )
 from mmds.optimizers.rewriter.agent import build_rewrite_prompt, rewrite  # noqa: E402
-from udfs.test_ops import add_bucket, annotate, keep_large, summarize_group  # noqa: E402
+from udfs.test_ops import add_bucket, annotate, keep_large, summarize_group, tag_summary  # noqa: E402
 
 
 class QueryRoundTripTests(unittest.TestCase):
@@ -482,6 +484,103 @@ class GeminiExecutorTests(unittest.TestCase):
                 for line in captured.output
             )
         )
+
+
+class GatherTests(unittest.TestCase):
+    def test_gather_attaches_context_to_each_row(self) -> None:
+        rows = [
+            {"value": 1, "tags": ["a", "b"]},
+            {"value": 2, "tags": ["c"]},
+            {"value": 3, "tags": []},
+        ]
+        input_path = _write_jsonl_rows(rows)
+        plan = Gather(Input(input_path), tag_summary, "summary")
+        result = execute(plan)
+
+        self.assertEqual(result, [
+            {"value": 1, "tags": ["a", "b"], "summary": "tags:a,b"},
+            {"value": 2, "tags": ["c"], "summary": "tags:c"},
+            {"value": 3, "tags": [], "summary": "tags:"},
+        ])
+
+    def test_gather_overwrites_existing_output_field(self) -> None:
+        rows = [{"value": 1, "tags": ["x"], "summary": "old"}]
+        input_path = _write_jsonl_rows(rows)
+        result = execute(Gather(Input(input_path), tag_summary, "summary"))
+        self.assertEqual(result[0]["summary"], "tags:x")
+
+    def test_gather_preserves_all_other_fields(self) -> None:
+        rows = [{"value": 42, "tags": ["a"], "extra": "keep_me"}]
+        input_path = _write_jsonl_rows(rows)
+        result = execute(Gather(Input(input_path), tag_summary, "ctx"))
+        self.assertIn("value", result[0])
+        self.assertIn("extra", result[0])
+        self.assertEqual(result[0]["value"], 42)
+        self.assertEqual(result[0]["extra"], "keep_me")
+
+    def test_gather_composes_with_map_and_filter(self) -> None:
+        rows = [
+            {"value": 1, "tags": ["a"]},
+            {"value": 5, "tags": ["b", "c"]},
+        ]
+        input_path = _write_jsonl_rows(rows)
+        plan = Gather(Map(Input(input_path), add_bucket), tag_summary, "ctx")
+        result = execute(plan)
+        self.assertEqual(len(result), 2)
+        self.assertIn("bucket", result[0])
+        self.assertIn("ctx", result[0])
+
+    def test_gather_dsl_rejects_non_udf_callable(self) -> None:
+        with self.assertRaises(MMDSValidationError):
+            Gather(Input("docs.jsonl"), lambda row: "ctx", "ctx")
+
+    def test_gather_dsl_rejects_empty_output_field(self) -> None:
+        with self.assertRaises(TypeError):
+            Gather(Input("docs.jsonl"), tag_summary, "")
+
+    def test_gather_dsl_rejects_non_string_output_field(self) -> None:
+        with self.assertRaises(TypeError):
+            Gather(Input("docs.jsonl"), tag_summary, 42)  # type: ignore[arg-type]
+
+    def test_gather_spec_rejects_empty_output_field(self) -> None:
+        from mmds.model import UdfSpec
+        with self.assertRaises(MMDSValidationError):
+            GatherSpec(fn=UdfSpec(module="udfs.test_ops", name="tag_summary"), output_field="")
+
+    def test_gather_parse_and_render_round_trip(self) -> None:
+        query = (
+            "from mmds import Filter, ForEach, Gather, Input, Map, Reduce, Record, Unnest\n"
+            "from udfs.test_ops import tag_summary\n\n"
+            'docs = Input("data.jsonl")\n'
+            'output = Gather(docs, tag_summary, "ctx")\n'
+        )
+        program = load_query(query)
+        rendered = render_query(program)
+        reparsed = load_query(rendered)
+        self.assertEqual(render_query(program), render_query(reparsed))
+        self.assertIn("Gather", rendered)
+        self.assertIn("tag_summary", rendered)
+        self.assertIn('"ctx"', rendered)
+
+    def test_gather_render_includes_udf_import(self) -> None:
+        plan = Gather(Input("data.jsonl"), tag_summary, "ctx")
+        rendered = render_query(program_from_plan(plan))
+        self.assertIn("from udfs.test_ops import tag_summary", rendered)
+
+    def test_gather_parser_rejects_non_udf_context_fn(self) -> None:
+        query = (
+            "from mmds import Filter, ForEach, Gather, Input, Map, Reduce, Record, Unnest\n\n"
+            'docs = Input("data.jsonl")\n'
+            'output = Gather(docs, some_unknown_fn, "ctx")\n'
+        )
+        with self.assertRaises(MMDSValidationError):
+            load_query(query)
+
+    def test_gather_used_udfs_includes_context_fn(self) -> None:
+        plan = Gather(Input("data.jsonl"), tag_summary, "ctx")
+        program = program_from_plan(plan)
+        udf_names = [spec.name for spec in program.used_udfs()]
+        self.assertIn("tag_summary", udf_names)
 
 
 class UdfCatalogTests(unittest.TestCase):
