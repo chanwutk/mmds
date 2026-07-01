@@ -24,10 +24,10 @@ ROOT = Path(__file__).resolve().parents[1]
 SOCCERNET_DIR = ROOT / "data" / "soccernet"
 TRANSCRIPT_DIR = ROOT / "data" / "transcripts"
 
-from udfs.soccer_ops import _GOAL_SIGNAL_WORDS, _GOAL_SIGNAL_PHRASES, _WHISPER_EXTRA_WORDS, _WHISPER_EXTRA_PHRASES  # noqa: E402
+from udfs.match_ops import _SIGNAL_WORDS, _SIGNAL_PHRASES  # noqa: E402
 
-_ALL_SIGNAL_WORDS = _GOAL_SIGNAL_WORDS | _WHISPER_EXTRA_WORDS
-_ALL_SIGNAL_PHRASES = _GOAL_SIGNAL_PHRASES + _WHISPER_EXTRA_PHRASES
+_ALL_SIGNAL_WORDS = _SIGNAL_WORDS
+_ALL_SIGNAL_PHRASES = _SIGNAL_PHRASES
 
 
 # ---------------------------------------------------------------------------
