@@ -14,13 +14,14 @@ from .model import (
     PromptSpec,
     QueryProgram,
     RecordPath,
+    SplitSpec,
     UdfSpec,
 )
 
 
 def render_query(plan_or_query: DatasetExpr | QueryProgram) -> str:
     program = plan_or_query if isinstance(plan_or_query, QueryProgram) else program_from_plan(plan_or_query)
-    lines = ["from mmds import Input, Map, Filter, Reduce, Unnest, Join, Record, ForEach"]
+    lines = ["from mmds import Input, Map, Filter, Reduce, Unnest, Split, Join, Record, ForEach"]
 
     grouped_udfs: dict[str, list[str]] = defaultdict(list)
     for spec in program.used_udfs():
@@ -91,7 +92,30 @@ def _render_expr(expr: DatasetExpr, node_names: dict[DatasetExpr, str]) -> str:
         if expr.name is not None:
             flags.append(f"name={_quote(expr.name)}")
         return f"Unnest({source_name}, {', '.join(flags)})"
+    if expr.kind == "split":
+        if not isinstance(expr.spec, SplitSpec):
+            raise ValueError("Split nodes require a SplitSpec.")
+        return _render_split_call(source_name, expr.spec, expr.name)
     raise ValueError(f"Unsupported operator kind {expr.kind!r}.")
+
+
+def _render_split_call(
+    source_name: str,
+    spec: SplitSpec,
+    name: str | None,
+) -> str:
+    flags: list[str] = []
+    if spec.chunk_sec != 30.0:
+        flags.append(f"chunk_sec={spec.chunk_sec}")
+    if spec.doc_id_key != "camera_id":
+        flags.append(f"doc_id_key={_quote(spec.doc_id_key)}")
+    if spec.output_prefix != "split_video":
+        flags.append(f"output_prefix={_quote(spec.output_prefix)}")
+    if name is not None:
+        flags.append(f"name={_quote(name)}")
+    if flags:
+        return f"Split({source_name}, {_quote(spec.video_field)}, {', '.join(flags)})"
+    return f"Split({source_name}, {_quote(spec.video_field)})"
 
 
 def _render_join_call(

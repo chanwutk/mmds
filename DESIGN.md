@@ -40,7 +40,7 @@ The design goal is to keep those representations close enough that:
 
 The current implementation supports:
 
-- operators: `Input`, `Map`, `Filter`, `Reduce`, `Unnest`, `Detect`, `Join`
+- operators: `Input`, `Map`, `Filter`, `Reduce`, `Unnest`, `Split`, `Detect`, `Join`
 - public video utility: `VideoView(video, start, end)` for seek-based clip-range iteration
 - file-backed `Input(...)` roots over `.json` and `.jsonl`
 - prompt-backed semantics as either:
@@ -79,6 +79,7 @@ The main entrypoints are exported from [src/mmds/__init__.py](/Users/chanwutk/Do
 - `Filter(data, spec, *, name=None)`
 - `Reduce(data, group_by, reducer, *, schema=None, name=None)`
 - `Unnest(data, field, *, keep_empty=False, name=None)`
+- `Split(data, video_field, *, chunk_sec=30, doc_id_key="camera_id", output_prefix="split_video", name=None)`
 - `Join(left, right, predicate?, *, on=..., one_to_one=..., score=..., min_score=..., left_key=..., right_key=..., name=None)`
 - `Detect(data, video_field, classes, *, model="yoloe-11s-seg.pt", output_field="detections", name=None)`
 - `VideoView(video, start, end)`
@@ -100,6 +101,7 @@ The core model lives in [src/mmds/model.py](/Users/chanwutk/Documents/mmds/src/m
 - `ForEachPrompt` represents repeated prompt expansion over grouped records.
 - `ResolvedPrompt` is the execution-time prompt after all `Record[...]` references are resolved against data.
 - `UdfSpec` stores a stable import path for a UDF.
+- `SplitSpec` stores fixed-duration video chunking parameters: `video_field`, `chunk_sec`, `doc_id_key`, `output_prefix`.
 - `DetectSpec` stores the parameters for a `Detect` node: `video_field`, `classes`, `model`, `output_field`.
 - `JoinSpec` stores hash-join keys, optional predicate/score UDFs, and one-to-one matching options.
 - `Assignment` and `QueryProgram` represent a parsed query file.
@@ -108,7 +110,7 @@ The core model lives in [src/mmds/model.py](/Users/chanwutk/Documents/mmds/src/m
 `DatasetExpr` uses a unary tree shape today:
 
 - `Input` has no source.
-- `Map`, `Filter`, `Reduce`, `Unnest`, and `Detect` each have one `source`.
+- `Map`, `Filter`, `Reduce`, `Unnest`, `Split`, and `Detect` each have one `source`.
 - `Join` has `source` (left) and `right_source` (right).
 
 That shape is sufficient for the first operator set and keeps rendering and execution simple. If future operators introduce multiple inputs, `DatasetExpr` will need a general child list instead of a single `source`.
@@ -217,6 +219,7 @@ Operator semantics:
 - `Filter`: applies prompt/UDF to one row and keeps rows whose result is truthy
 - `Reduce`: groups rows by the configured fields, calls the reducer once per group, and merges returned aggregate fields with the group key fields
 - `Unnest`: expands one field; lists and tuples explode into multiple rows, scalars pass through unchanged, and missing/empty values produce no row unless `keep_empty=True`
+- `Split`: reads the `VideoView` (or string path plus row `duration_sec`) at `video_field`, slices the clip into contiguous `chunk_sec` intervals, and fans out one output row per chunk; each chunk row adds `{output_prefix}_id`, `{output_prefix}_chunk_num`, `{output_prefix}_chunk_start`, `{output_prefix}_chunk_end`, and narrows `video_field` to the chunk's absolute `start`/`end`
 - `Detect`: reads the video pointed to by `video_field`; if the value is a `VideoView`-shaped dict with `start`/`end`, wraps the source in a `VideoView`, runs YOLOE detection on the selected frames, and merges a detection list with absolute source-video `frame_idx` values into `output_field`
 
 Prompt execution flow:
@@ -348,7 +351,7 @@ When `one_to_one=True`, candidate pairs inside each bucket are filtered by the o
 so each `left_key` / `right_key` identity appears at most once. Output rows are
 `{"left": ..., "right": ..., "match_score": ...}`.
 
-`Join` is parsed from and rendered back to DSL text. `Detect` remains programmatic-only.
+`Join` and `Split` are parsed from and rendered back to DSL text. `Detect` remains programmatic-only.
 
 ### UDF Contract
 
@@ -430,6 +433,7 @@ The current suite covers:
 - execution for UDF-backed and prompt-backed queries
 - `Record[...]` resolution and `ForEach([...])` expansion
 - `Unnest` behavior on scalar, empty, and missing values
+- `Split` behavior on `VideoView` clips, tail chunks, and missing bounds
 - `Detect` behavior, including `VideoView` clip slicing and absolute-frame detection indices
 - video utility behavior for direct downloads, platform downloads via `yt-dlp`, and `VideoView` iteration
 - parser validation for unsupported Python and invalid prompt forms

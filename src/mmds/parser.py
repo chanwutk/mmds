@@ -15,6 +15,7 @@ from .model import (
     QueryProgram,
     Record,
     RecordPath,
+    SplitSpec,
     UdfSpec,
     normalize_join_keys,
     normalize_output_schema,
@@ -27,6 +28,7 @@ _MMDS_IMPORTS = {
     "Filter",
     "Reduce",
     "Unnest",
+    "Split",
     "Join",
     "Record",
     "ForEach",
@@ -177,6 +179,32 @@ def _parse_call(
             source=source,
             field=_parse_string(node.args[1], "Unnest field"),
             keep_empty=keep_empty,
+            name=_parse_optional_name(keywords),
+        )
+
+    if operator == "Split":
+        _expect_args(operator, node.args, 2, keywords, allowed_keywords={"chunk_sec", "doc_id_key", "output_prefix", "name"})
+        source = _parse_source(node.args[0], bindings)
+        video_field = _parse_string(node.args[1], "Split video_field")
+        chunk_sec = _parse_optional_float(keywords.get("chunk_sec"))
+        if chunk_sec is None:
+            chunk_sec = 30.0
+        doc_id_key = "camera_id"
+        if keywords.get("doc_id_key") is not None:
+            doc_id_key = _parse_string(keywords["doc_id_key"], "Split doc_id_key")
+        output_prefix = "split_video"
+        if keywords.get("output_prefix") is not None:
+            output_prefix = _parse_string(keywords["output_prefix"], "Split output_prefix")
+        split_spec = SplitSpec(
+            video_field=video_field,
+            chunk_sec=chunk_sec,
+            doc_id_key=doc_id_key,
+            output_prefix=output_prefix,
+        )
+        return DatasetExpr(
+            kind="split",
+            source=source,
+            spec=split_spec,
             name=_parse_optional_name(keywords),
         )
 

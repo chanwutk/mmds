@@ -75,6 +75,10 @@ def _execute_node(
         yield from _apply_reduce(node, list(source), prompt_executor)
     elif node.kind == "unnest":
         yield from _apply_unnest(node, source)
+    elif node.kind == "split":
+        from .ops.split import _apply_split
+
+        yield from _apply_split(node, source)
     elif node.kind == "detect":
         from .ops.detect import _apply_detect  # lazy: pulls OpenCV/NumPy only when used
 

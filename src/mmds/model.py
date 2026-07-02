@@ -10,7 +10,7 @@ JsonValue: TypeAlias = JsonScalar | dict[str, "JsonValue"] | list["JsonValue"]
 FieldSchemaValue: TypeAlias = str | dict[str, JsonValue]
 RecordSchema: TypeAlias = dict[str, FieldSchemaValue]
 OperatorKind: TypeAlias = Literal[
-    "input", "map", "filter", "reduce", "unnest", "detect", "join"
+    "input", "map", "filter", "reduce", "unnest", "split", "detect", "join"
 ]
 
 
@@ -149,6 +149,32 @@ class JoinSpec:
 
 
 @dataclass(frozen=True)
+class SplitSpec:
+    """Spec for the Split operator: fan out rows into fixed-duration video chunks."""
+
+    video_field: str
+    chunk_sec: float = 30.0
+    doc_id_key: str = "camera_id"
+    output_prefix: str = "split_video"
+
+    def __post_init__(self) -> None:
+        if not self.video_field:
+            raise MMDSValidationError(
+                "SplitSpec video_field must be a non-empty string."
+            )
+        if not isinstance(self.chunk_sec, (int, float)) or self.chunk_sec <= 0:
+            raise MMDSValidationError("SplitSpec chunk_sec must be a positive number.")
+        if not self.doc_id_key:
+            raise MMDSValidationError(
+                "SplitSpec doc_id_key must be a non-empty string."
+            )
+        if not self.output_prefix:
+            raise MMDSValidationError(
+                "SplitSpec output_prefix must be a non-empty string."
+            )
+
+
+@dataclass(frozen=True)
 class DetectSpec:
     """Spec for the Detect operator: runs YOLOE on every frame of a video field."""
 
@@ -176,7 +202,7 @@ class DetectSpec:
             )
 
 
-SemanticSpec: TypeAlias = PromptSpec | UdfSpec | DetectSpec | JoinSpec
+SemanticSpec: TypeAlias = PromptSpec | UdfSpec | SplitSpec | DetectSpec | JoinSpec
 
 
 @dataclass(frozen=True)
@@ -221,6 +247,8 @@ class DatasetExpr:
             raise MMDSValidationError("Reduce nodes require one or more grouping keys.")
         if self.kind == "unnest" and self.field is None:
             raise MMDSValidationError("Unnest nodes require a field to expand.")
+        if self.kind == "split" and not isinstance(self.spec, SplitSpec):
+            raise MMDSValidationError("split nodes require a SplitSpec.")
         if self.replace and self.kind != "map":
             raise MMDSValidationError("replace=True is only supported on Map nodes.")
         if self.kind == "detect" and not isinstance(self.spec, DetectSpec):

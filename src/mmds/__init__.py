@@ -1,6 +1,6 @@
 from typing import TYPE_CHECKING
 
-from .dsl import Detect, Filter, ForEach, Input, Join, Map, Reduce, Unnest
+from .dsl import Detect, Filter, ForEach, Input, Join, Map, Reduce, Split, Unnest
 from .execution import PromptExecutor, StaticPromptExecutor, execute
 from .execution.llm.gemini import GeminiPromptExecutor
 from .optimizers.rewriter.agent import LLMClient, StaticLLMClient
@@ -18,6 +18,7 @@ from .model import (
     RecordPath,
     ResolvedPrompt,
     Row,
+    SplitSpec,
     UdfSpec,
 )
 from .parser import load_query, parse_query
@@ -55,6 +56,8 @@ __all__ = [
     "Reduce",
     "ResolvedPrompt",
     "Row",
+    "Split",
+    "SplitSpec",
     "StaticLLMClient",
     "StaticPromptExecutor",
     "UdfCatalog",
