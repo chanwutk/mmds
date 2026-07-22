@@ -207,6 +207,9 @@ def Detect(
     *,
     model: str = "yoloe-11s-seg.pt",
     output_field: str = "detections",
+    frame_stride: int = 1,
+    conf: float | None = None,
+    imgsz: int | None = None,
     name: str | None = None,
 ) -> DatasetExpr:
     """Run YOLOE object detection on every frame of a video field.
@@ -220,11 +223,28 @@ def Detect(
         model: YOLOE weights file.  Defaults to ``"yoloe-11s-seg.pt"``.
         output_field: Name of the output field that receives the detection
             list.  Defaults to ``"detections"``.
+        frame_stride: Run inference on every ``frame_stride``-th frame
+            (``1`` = every frame, the default). Frames that are skipped are
+            not sent through the model, trading temporal density for lower
+            inference cost; use this when detections are expected to be
+            consistent across a few consecutive frames (e.g. slow-moving or
+            already-tracked objects).
+        conf: Minimum detection confidence passed to the model. ``None``
+            (the default) uses the model's own default threshold. Lower it
+            (e.g. ``0.1``) to recover small or low-contrast objects that the
+            default threshold discards.
+        imgsz: Inference image size passed to the model. ``None`` (the
+            default) uses the model's own default (typically ``640``). Raise
+            it (e.g. ``1280``) so that small objects—vehicles in high-mounted
+            traffic footage, for example—survive downscaling.
         name: Optional operator label.
 
     The output field contains a list of objects, one per detected class::
 
         [{"type": "dog", "bboxes": [{"frame_idx": 0, "bbox": [x1,y1,x2,y2], "confidence": 0.9}, ...]}, ...]
+
+    Only frames actually sampled under ``frame_stride`` contribute ``bboxes``;
+    their ``frame_idx`` values remain absolute indices into the source video.
     """
     if not isinstance(video_field, str) or not video_field:
         raise TypeError("Detect video_field must be a non-empty string.")
@@ -236,6 +256,18 @@ def Detect(
         raise TypeError("Detect model must be a non-empty string.")
     if not isinstance(output_field, str) or not output_field:
         raise TypeError("Detect output_field must be a non-empty string.")
+    if isinstance(frame_stride, bool) or not isinstance(frame_stride, int) or frame_stride < 1:
+        raise TypeError("Detect frame_stride must be an integer >= 1.")
+    if conf is not None and (
+        isinstance(conf, bool)
+        or not isinstance(conf, (int, float))
+        or not (0.0 <= float(conf) <= 1.0)
+    ):
+        raise TypeError("Detect conf must be a number in [0.0, 1.0] or None.")
+    if imgsz is not None and (
+        isinstance(imgsz, bool) or not isinstance(imgsz, int) or imgsz < 1
+    ):
+        raise TypeError("Detect imgsz must be a positive integer or None.")
     return DatasetExpr(
         kind="detect",
         source=_normalize_source(data),
@@ -244,6 +276,9 @@ def Detect(
             classes=tuple(classes),
             model=model,
             output_field=output_field,
+            frame_stride=frame_stride,
+            conf=conf,
+            imgsz=imgsz,
         ),
         name=name,
     )

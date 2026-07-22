@@ -182,6 +182,9 @@ class DetectSpec:
     classes: tuple[str, ...]
     model: str = "yoloe-11s-seg.pt"
     output_field: str = "detections"
+    frame_stride: int = 1
+    conf: float | None = None
+    imgsz: int | None = None
 
     def __post_init__(self) -> None:
         if not self.video_field:
@@ -200,6 +203,32 @@ class DetectSpec:
             raise MMDSValidationError(
                 "DetectSpec output_field must be a non-empty string."
             )
+        if (
+            isinstance(self.frame_stride, bool)
+            or not isinstance(self.frame_stride, int)
+            or self.frame_stride < 1
+        ):
+            raise MMDSValidationError(
+                "DetectSpec frame_stride must be an integer >= 1."
+            )
+        if self.conf is not None:
+            if (
+                isinstance(self.conf, bool)
+                or not isinstance(self.conf, (int, float))
+                or not (0.0 <= float(self.conf) <= 1.0)
+            ):
+                raise MMDSValidationError(
+                    "DetectSpec conf must be a number in [0.0, 1.0] or None."
+                )
+        if self.imgsz is not None:
+            if (
+                isinstance(self.imgsz, bool)
+                or not isinstance(self.imgsz, int)
+                or self.imgsz < 1
+            ):
+                raise MMDSValidationError(
+                    "DetectSpec imgsz must be a positive integer or None."
+                )
 
 
 SemanticSpec: TypeAlias = PromptSpec | UdfSpec | SplitSpec | DetectSpec | JoinSpec

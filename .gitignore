@@ -9,3 +9,10 @@ __pycache__/
 # YOLOE / Ultralytics artifacts (downloaded when running Detect examples)
 mobileclip_blt.ts
 yoloe-11s-seg.pt
+
+# Trained vehicle-color MobileNet checkpoint + its training data (not committed)
+models/
+data/vehicle_color/
+
+# Local UCA / UCF-Crime video files (symlink or copy; do not commit binaries)
+data/uca/videos/*.mp4

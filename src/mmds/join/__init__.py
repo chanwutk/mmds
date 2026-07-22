@@ -18,6 +18,15 @@ from .predicates import (
     speed_compatible,
     travel_time_compatible,
 )
+from .eval_trajectories import (
+    CostReport,
+    EvalReport,
+    TrajectoryMatch,
+    evaluate_trajectories,
+    greedy_match_trajectories,
+    normalize_trajectory_row,
+    normalize_trajectory_rows,
+)
 from .trajectory import (
     join_match_to_trajectory_record,
     timeline_segment_from_track,
@@ -28,13 +37,20 @@ from .trajectory import (
 
 __all__ = [
     "VEHICLE_APPEARANCE_KEYS",
+    "CostReport",
+    "EvalReport",
+    "TrajectoryMatch",
     "build_hash_index",
     "canonical_corridor_pair",
     "different_cameras",
     "direction_compatible",
+    "evaluate_trajectories",
+    "greedy_match_trajectories",
     "hash_join",
     "join_hash_key",
     "nested_loop_join",
+    "normalize_trajectory_row",
+    "normalize_trajectory_rows",
     "one_to_one_hash_join",
     "orient_upstream_downstream",
     "join_match_to_trajectory_record",

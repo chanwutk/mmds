@@ -14,6 +14,7 @@ from ...model import MMDSValidationError, PromptSpec, ResolvedPrompt, expand_out
 
 logger = logging.getLogger(__name__)
 _VIDEO_TYPES = {"video", "videoview"}
+_IMAGE_TYPES = {"image"}
 
 
 class GeminiPromptExecutor:
@@ -36,6 +37,46 @@ class GeminiPromptExecutor:
         self.poll_interval_seconds = poll_interval_seconds
         self.file_ready_timeout_seconds = file_ready_timeout_seconds
         self._uploaded_files: dict[str, tuple[str, str | None]] = {}
+        # Cumulative usage counters across every generate_content call. Reset
+        # with reset_usage() to meter a single pipeline run.
+        self.prompt_calls = 0
+        self.prompt_tokens = 0
+        self.candidates_tokens = 0
+        self.total_tokens = 0
+
+    def reset_usage(self) -> None:
+        """Zero the cumulative prompt-call / token counters."""
+        self.prompt_calls = 0
+        self.prompt_tokens = 0
+        self.candidates_tokens = 0
+        self.total_tokens = 0
+
+    def usage_snapshot(self) -> dict[str, int]:
+        """Return the cumulative prompt-call and token counts so far."""
+        return {
+            "prompt_calls": self.prompt_calls,
+            "prompt_tokens": self.prompt_tokens,
+            "candidates_tokens": self.candidates_tokens,
+            "total_tokens": self.total_tokens,
+        }
+
+    def _record_usage(self, response: Any) -> None:
+        """Accumulate token usage from a ``generate_content`` response.
+
+        The Gemini SDK exposes ``response.usage_metadata`` with
+        ``prompt_token_count`` / ``candidates_token_count`` /
+        ``total_token_count``. Missing or non-numeric fields contribute 0 so
+        fakes and older responses leave the counters untouched.
+        """
+        self.prompt_calls += 1
+        usage = getattr(response, "usage_metadata", None)
+        if usage is None and isinstance(response, Mapping):
+            usage = response.get("usage_metadata")
+        if usage is None:
+            return
+        self.prompt_tokens += _usage_field(usage, "prompt_token_count")
+        self.candidates_tokens += _usage_field(usage, "candidates_token_count")
+        self.total_tokens += _usage_field(usage, "total_token_count")
 
     def execute(
         self,
@@ -56,6 +97,7 @@ class GeminiPromptExecutor:
             _format_debug_parts(parts),
         )
         response = client.models.generate_content(model=self.model, contents=contents, config=config)
+        self._record_usage(response)
         text = getattr(response, "text", None)
         if not text:
             raise MMDSValidationError("Gemini returned an empty response.")
@@ -92,10 +134,41 @@ class GeminiPromptExecutor:
                 flush_text()
                 parts.append(self._build_video_part(value, client, types))
                 continue
+            if _is_image_payload(value):
+                flush_text()
+                parts.append(self._build_image_part(value, client, types))
+                continue
             text_buffer.append(_stringify_prompt_value(value))
 
         flush_text()
         return parts
+
+    def _build_image_part(self, value: Mapping[str, Any], client: Any, types: Any) -> Any:
+        if "bytes" in value:
+            mime_type = value.get("mime_type")
+            if not isinstance(mime_type, str) or not mime_type:
+                raise MMDSValidationError("Inline image bytes require a mime_type.")
+            return types.Part(
+                inline_data=types.Blob(data=value["bytes"], mime_type=mime_type),
+            )
+
+        file_uri: str | None = None
+        mime_type: str | None = value.get("mime_type")
+        if "path" in value:
+            file_uri, mime_type = self._upload_file(value["path"], client)
+        elif "uri" in value:
+            file_uri = value["uri"]
+        elif "source" in value:
+            file_uri, mime_type = self._resolve_source_media(value["source"], mime_type, client)
+        else:
+            raise MMDSValidationError(
+                "Image prompt values must include one of 'path', 'uri', 'source', or 'bytes'."
+            )
+
+        file_data_kwargs = {"file_uri": file_uri}
+        if mime_type is not None:
+            file_data_kwargs["mime_type"] = mime_type
+        return types.Part(file_data=types.FileData(**file_data_kwargs))
 
     def _build_video_part(self, value: Mapping[str, Any], client: Any, types: Any) -> Any:
         metadata = _build_video_metadata(value, types)
@@ -112,11 +185,11 @@ class GeminiPromptExecutor:
         file_uri: str | None = None
         mime_type: str | None = value.get("mime_type")
         if "path" in value:
-            file_uri, mime_type = self._upload_video_file(value["path"], client)
+            file_uri, mime_type = self._upload_file(value["path"], client)
         elif "uri" in value:
             file_uri = value["uri"]
         elif "source" in value:
-            file_uri, mime_type = self._resolve_source_video(value["source"], mime_type, client)
+            file_uri, mime_type = self._resolve_source_media(value["source"], mime_type, client)
         else:
             raise MMDSValidationError(
                 "Video prompt values must include one of 'path', 'uri', 'source', or 'bytes'."
@@ -130,7 +203,7 @@ class GeminiPromptExecutor:
             video_metadata=metadata,
         )
 
-    def _upload_video_file(self, path_value: Any, client: Any) -> tuple[str, str | None]:
+    def _upload_file(self, path_value: Any, client: Any) -> tuple[str, str | None]:
         path = str(Path(path_value))
         cached = self._uploaded_files.get(path)
         if cached is not None:
@@ -154,22 +227,22 @@ class GeminiPromptExecutor:
         self._uploaded_files[path] = (file_uri, mime_type)
         return self._uploaded_files[path]
 
-    def _resolve_source_video(
+    def _resolve_source_media(
         self,
         source_value: Any,
         mime_type: str | None,
         client: Any,
     ) -> tuple[str, str | None]:
         if not isinstance(source_value, str) or not source_value:
-            raise MMDSValidationError("Video 'source' values must be non-empty strings.")
+            raise MMDSValidationError("Media 'source' values must be non-empty strings.")
 
         parsed = urlparse(source_value)
         if parsed.scheme == "file":
             local_path = url2pathname(parsed.path)
-            return self._upload_video_file(local_path, client)
+            return self._upload_file(local_path, client)
         if parsed.scheme:
             return source_value, mime_type
-        return self._upload_video_file(source_value, client)
+        return self._upload_file(source_value, client)
 
     def _get_client(self) -> Any:
         if self._client is not None:
@@ -197,11 +270,29 @@ class GeminiPromptExecutor:
         return self._types
 
 
+def _usage_field(usage: Any, field_name: str) -> int:
+    """Read a token-count field from a usage-metadata object or mapping.
+
+    Returns 0 when the field is absent or not a finite integer count.
+    """
+    value = usage.get(field_name) if isinstance(usage, Mapping) else getattr(usage, field_name, None)
+    if isinstance(value, bool) or not isinstance(value, Real):
+        return 0
+    return int(value)
+
+
 def _is_video_payload(value: Any) -> bool:
     if not isinstance(value, Mapping):
         return False
     media_type = value.get("type")
     return isinstance(media_type, str) and media_type.casefold() in _VIDEO_TYPES
+
+
+def _is_image_payload(value: Any) -> bool:
+    if not isinstance(value, Mapping):
+        return False
+    media_type = value.get("type")
+    return isinstance(media_type, str) and media_type.casefold() in _IMAGE_TYPES
 
 
 def _build_video_metadata(value: Mapping[str, Any], types: Any) -> Any:
@@ -260,7 +351,9 @@ def _stringify_prompt_value(value: Any) -> str:
     if isinstance(value, (int, float, bool)) or value is None:
         return json.dumps(value)
     if isinstance(value, bytes):
-        raise MMDSValidationError("Binary prompt values must be wrapped in a video field descriptor.")
+        raise MMDSValidationError(
+            "Binary prompt values must be wrapped in a video or image field descriptor."
+        )
     if isinstance(value, Mapping) or isinstance(value, list):
         return json.dumps(value, sort_keys=True)
     return str(value)

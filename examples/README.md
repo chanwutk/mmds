@@ -14,6 +14,12 @@ top-level [GET_START.md](../GET_START.md) for setup and [README.md](../README.md
 | [`twelvelabs_brand_safety.py`](twelvelabs_brand_safety.py) | `Map` (video prompt) → `Filter` | Gemini API key; `data/clips.jsonl` |
 | [`twelvelabs_highlight_candidates.py`](twelvelabs_highlight_candidates.py) | `Map` (video prompt) → `Filter` | Gemini API key; `data/nba_knicks.jsonl` |
 | [`split_highlight_videos.py`](split_highlight_videos.py) | `Split` → `Map` → `Reduce` + `ForEach` | Gemini API key; `data/nba_warriors.jsonl` |
+| [`flare_text_video_join.py`](flare_text_video_join.py) | `Map` → `Join` → `Map` → `Reduce` | Local UCA Abuse001/002/003 + GT captions; output grouped by video like `annotation_excerpt.json` (no Gemini) |
+| [`join_cross_camera_vehicle.py`](join_cross_camera_vehicle.py) | `Detect` → `Map` → `Unnest` → `Map` (promote/embed/project) → `Join` → `Map` | Local I24V 5s highway2/3; motion-aware tracking + appearance re-ID one-to-one join trajectories (no Gemini; ResNet50 weights auto-download, histogram fallback) |
+| [`semantic_join_cross_camera_vehicle.py`](semantic_join_cross_camera_vehicle.py) | `Reduce` + `ForEach` → `Unnest` | Same I24V clips; Gemini soft-reference stitch |
+| [`hybrid_join_cross_camera_vehicle.py`](hybrid_join_cross_camera_vehicle.py) | per branch: `Filter` → `Detect` → `Map` → `Unnest` → `Map` (crop) → `Map` (Gemini crop label) then cross-camera `Join` → `Map` | Local I24V 5s highway2/3 + Gemini API key; per-track crop labeling, cheap cross-camera join |
+| [`compare_cross_camera_joins.py`](compare_cross_camera_joins.py) | driver (not a DSL query) | Soft-reference P/R/F1 + wall-time/prompt-call/token cost proxies for UDF vs semantic |
+| [`eval_cross_camera_join.py`](eval_cross_camera_join.py) | driver (not a DSL query) | Scores the UDF join against `data/i24v_..._ground_truth.json`: P/R/F1, attribute agreement, per-match FP/FN diagnostics, and wall time/tokens; `--compare-semantic` adds a side-by-side UDF vs semantic table |
 | [`twelvelabs_map_reduce.py`](twelvelabs_map_reduce.py) | `Map` → `Unnest` → `Reduce` + `ForEach` | Gemini API key; `data/animals.jsonl` |
 | [`wildlife_detection.py`](wildlife_detection.py) | `Detect` (local YOLOE) → `Unnest` | no API key; downloads weights + video |
 | [`detect_multi_species.py`](detect_multi_species.py) | `Detect` → `Unnest` | no API key; downloads weights + video |

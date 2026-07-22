@@ -17,6 +17,8 @@ from mmds.join.predicates import (  # noqa: E402
     direction_compatible,
     same_vehicle,
     speed_compatible,
+    temporal_iou,
+    temporal_overlap,
     travel_time_compatible,
 )
 

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from udfs.vehicle_color_model import predict_color_from_crop
+
 
 # YOLOE conf scores are model-internal (0–1); Ultralytics defaults drop boxes below ~0.25.
 HIGH_CONFIDENCE_THRESHOLD = 0.5
@@ -149,22 +151,36 @@ def keep_rows_with_detections(row: dict[str, Any]) -> bool:
 
 _VEHICLE_CLASSES = frozenset({"sedan", "suv", "truck"})
 _VEHICLE_NMS_IOU = 0.65 # Two boxes are considered the same if their Intersection Over Union (IoU) ≥ threshold
+# Transient key used to carry a box's class through class-agnostic NMS; popped
+# before the box is emitted, so it never leaks into output records.
+_NMS_CLASS_KEY = "_nms_vehicle_class"
 
-# Color attributes for vehicle color prediction. Currently, we have 13 colors.
-# May need to change color references to improve color prediction accuracy.
-# Set white and black as more grayish colors to improve color prediction accuracy.
-_COLOR_REFERENCES: dict[str, tuple[float, float, float]] = {
-    "silver": (192.0, 192.0, 192.0),
-    "white": (175.0, 175.0, 175.0),
-    "gray": (128.0, 128.0, 128.0),
-    "black": (85.0, 85.0, 85.0),
-    "beige": (210.0, 195.0, 160.0),
-    "yellow": (220.0, 200.0, 60.0),
-    "red": (180.0, 35.0, 35.0),
-    "blue": (35.0, 60.0, 170.0),
-    "green": (40.0, 110.0, 55.0),
-    "brown": (120.0, 80.0, 50.0),
-}
+# The named-color vocabulary produced by the heuristic color classifier and the
+# learned model's label mapping (see udfs/vehicle_color_model.py). Neutral
+# colors (white/silver/gray/black) are decided by brightness; chromatic colors
+# by hue — see classify_vehicle_color.
+VEHICLE_COLOR_VOCAB: frozenset[str] = frozenset(
+    {
+        "white",
+        "silver",
+        "gray",
+        "black",
+        "beige",
+        "yellow",
+        "red",
+        "green",
+        "brown",
+        "blue",
+    }
+)
+
+# Saturation/brightness gates (on a 0..1 scale) separating neutral (achromatic)
+# vehicles from chromatic ones. Tuned for traffic-camera crops where paint is
+# rarely fully saturated; below _NEUTRAL_SAT_MAX we decide by brightness only.
+_NEUTRAL_SAT_MAX = 0.18
+_BLACK_VALUE_MAX = 0.25
+_GRAY_VALUE_MAX = 0.55
+_SILVER_VALUE_MAX = 0.80
 
 
 def _bbox_iou(left: list[float], right: list[float]) -> float:
@@ -250,8 +266,8 @@ def nms_vehicle_detections(
     detection_field: str = "detections",
 ) -> dict[str, Any]:
     """
-    Map UDF: class-wise per-frame NMS for sedan/suv/truck after ``Detect``.
-    
+    Map UDF: class-agnostic per-frame NMS for sedan/suv/truck after ``Detect``.
+
     Args:
         row: The input row containing the detections.
         iou_threshold: The IoU threshold for suppression.
@@ -259,16 +275,24 @@ def nms_vehicle_detections(
 
     Returns:
         List of dicts for selected (kept) boxes, each in the original dict format.
-    
-    Performs Non-Maximum Suppression (NMS) on vehicle detections to remove duplicate or overlapping boxes.
-    It groups detections by frame index and then applies the NMS algorithm to each group independently.
-    The resulting list of boxes is sorted by frame index and then by confidence score.
+
+    Performs Non-Maximum Suppression (NMS) on vehicle detections to remove
+    duplicate or overlapping boxes. All vehicle-class boxes in a frame are
+    pooled and suppressed **together**, regardless of class: YOLOE's open-vocab
+    label flickers (e.g. ``sedan`` vs ``suv``) for the same physical vehicle, so
+    per-class NMS would keep two overlapping boxes for one car and double-count
+    it downstream. The highest-confidence box wins and its class is retained.
+    The kept boxes are regrouped by class and sorted by frame index then x.
     """
     detections = row.get(detection_field)
     if not isinstance(detections, list):
         return {detection_field: []}
 
-    nmsed: list[dict[str, Any]] = []
+    # Pool every vehicle box by frame, tagging each with its class so NMS can
+    # run across classes and we can regroup afterwards. Class order is captured
+    # from first appearance to keep the output group order deterministic.
+    class_order: list[str] = []
+    by_frame: dict[int, list[dict[str, Any]]] = {}
     for item in detections:
         if not isinstance(item, dict):
             continue
@@ -276,69 +300,129 @@ def nms_vehicle_detections(
         bboxes = item.get("bboxes")
         if vehicle_class not in _VEHICLE_CLASSES or not isinstance(bboxes, list):
             continue
-
-        by_frame: dict[int, list[dict[str, Any]]] = {}
+        if vehicle_class not in class_order:
+            class_order.append(vehicle_class)
         for bbox_entry in bboxes:
             if not isinstance(bbox_entry, dict):
                 continue
             frame_id = bbox_entry.get("frame_idx")
             if not isinstance(frame_id, int):
                 continue
-            by_frame.setdefault(frame_id, []).append(bbox_entry)
+            tagged = dict(bbox_entry)
+            tagged[_NMS_CLASS_KEY] = vehicle_class
+            by_frame.setdefault(frame_id, []).append(tagged)
 
-        kept_bboxes: list[dict[str, Any]] = []
-        for frame_id in sorted(by_frame):
-            kept_bboxes.extend(
-                _nms_boxes(by_frame[frame_id], iou_threshold=iou_threshold)
-            )
+    kept_by_class: dict[str, list[dict[str, Any]]] = {}
+    for frame_id in sorted(by_frame):
+        for kept in _nms_boxes(by_frame[frame_id], iou_threshold=iou_threshold):
+            vehicle_class = kept.pop(_NMS_CLASS_KEY)
+            kept_by_class.setdefault(vehicle_class, []).append(kept)
+
+    nmsed: list[dict[str, Any]] = []
+    for vehicle_class in class_order:
+        kept_bboxes = kept_by_class.get(vehicle_class)
+        if not kept_bboxes:
+            continue
         kept_bboxes.sort(
             key=lambda entry: (entry.get("frame_idx", 0), entry.get("bbox", [0])[0])
         )
-        if kept_bboxes:
-            nmsed.append({"type": vehicle_class, "bboxes": kept_bboxes})
+        nmsed.append({"type": vehicle_class, "bboxes": kept_bboxes})
 
     return {detection_field: nmsed}
 
 
-def nearest_named_color(rgb: tuple[float, float, float]) -> str:
-    """Map an ``(r, g, b)`` triple to the closest named color in the vocab."""
-    best_name = "gray" # Default color if no match is found
-    best_distance = float("inf")
-    for name, reference in _COLOR_REFERENCES.items():
-        distance = sum((value - ref) ** 2 for value, ref in zip(rgb, reference))
-        if distance < best_distance:
-            best_distance = distance
-            best_name = name
-    return best_name
+def classify_vehicle_color(rgb: tuple[float, float, float]) -> str:
+    """Map an ``(r, g, b)`` triple (0..255) to a named vehicle color via HSV.
+
+    Saturation decides neutral vs. chromatic: low-saturation pixels are
+    white/silver/gray/black by brightness alone (paint, glass, and shadow are
+    achromatic), while saturated pixels are named by hue. This avoids the
+    everything-looks-gray failure of averaging raw RGB.
+    """
+    import colorsys
+
+    red, green, blue = (max(0.0, min(255.0, float(value))) for value in rgb)
+    hue, saturation, value = colorsys.rgb_to_hsv(red / 255.0, green / 255.0, blue / 255.0)
+    hue_deg = hue * 360.0
+
+    # Achromatic: decide by brightness only.
+    if saturation < _NEUTRAL_SAT_MAX:
+        if value < _BLACK_VALUE_MAX:
+            return "black"
+        if value < _GRAY_VALUE_MAX:
+            return "gray"
+        if value < _SILVER_VALUE_MAX:
+            return "silver"
+        return "white"
+
+    # Very dark pixels read as black regardless of a noisy hue.
+    if value < _BLACK_VALUE_MAX:
+        return "black"
+
+    # Chromatic: name by hue sector, mapped onto the vocabulary.
+    if hue_deg < 15.0 or hue_deg >= 330.0:
+        return "red"
+    if hue_deg < 45.0:
+        # Orange/amber: dark & muted reads as brown, otherwise beige.
+        return "brown" if value < 0.55 else "beige"
+    if hue_deg < 70.0:
+        return "yellow"
+    if hue_deg < 170.0:
+        return "green"
+    return "blue"
 
 
 def vehicle_sub_type_from_geometry(vehicle_class: str, bbox: list[float]) -> str:
     """Coarse subtype from class and box aspect ratio. Helper function for predict_vehicle_attributes."""
-    if vehicle_class == "truck":
-        return "pickup"
-    if vehicle_class == "suv":
-        return "suv"
     if not isinstance(bbox, list) or len(bbox) != 4:
         return "sedan"
     x1, y1, x2, y2 = (float(value) for value in bbox)
-    width = max(1.0, x2 - x1)
-    height = max(1.0, y2 - y1)
+    width = max(1.0, abs(x2 - x1))
+    height = max(1.0, abs(y2 - y1))
     ratio = width / height
+    if vehicle_class == "truck":
+        if ratio >= 3.2:
+            return "tractor_trailer"
+        if ratio >= 2.4:
+            return "flatbed_truck"
+        if ratio >= 1.8:
+            return "box_truck"
+        return "pickup"
     if ratio >= 2.2:
         return "coupe"
+    if ratio <= 1.35:
+        return "suv"
     if ratio <= 1.5:
         return "hatchback"
     return "sedan" # Default subtype if no match is found
 
 
-def _mean_rgb_from_crop(crop: Any) -> tuple[float, float, float] | None:
-    """Calculate the mean RGB values from a cropped vehicle image. Helper function for predict_vehicle_attributes."""
+def _dominant_rgb_from_crop(crop: Any) -> tuple[float, float, float] | None:
+    """Return a robust ``(r, g, b)`` (0..255) for a BGR vehicle crop, or ``None``.
+
+    Samples the central body region (avoiding background/road at the box edges)
+    and takes the **median** per channel — robust to windshield glare, shadow,
+    and background bleed, unlike a whole-crop mean.
+    """
+    import numpy as np
+
     if crop is None or getattr(crop, "size", 0) == 0:
         return None
-    mean = crop.reshape(-1, crop.shape[-1]).mean(axis=0)
-    if len(mean) < 3:
+    if getattr(crop, "ndim", 0) != 3 or crop.shape[-1] < 3:
         return None
-    blue, green, red = (float(mean[0]), float(mean[1]), float(mean[2]))
+
+    height, width = crop.shape[:2]
+    # Central 50% vertically, central 40% horizontally: the vehicle body.
+    y0, y1 = int(height * 0.25), max(1, int(height * 0.75))
+    x0, x1 = int(width * 0.30), max(1, int(width * 0.70))
+    region = crop[y0:y1, x0:x1]
+    if getattr(region, "size", 0) == 0:
+        region = crop
+
+    median = np.median(region.reshape(-1, region.shape[-1]), axis=0)
+    if len(median) < 3:
+        return None
+    blue, green, red = float(median[0]), float(median[1]), float(median[2])
     return (red, green, blue)
 
 
@@ -347,9 +431,17 @@ def predict_vehicle_attributes(
     bbox: list[float],
     crop: Any | None,
 ) -> dict[str, str]:
-    """Return ``vehicle_color`` and ``vehicle_sub_type`` for a vehicle box."""
-    mean_rgb = _mean_rgb_from_crop(crop)
-    color = nearest_named_color(mean_rgb) if mean_rgb is not None else "gray"
+    """Return ``vehicle_color`` and ``vehicle_sub_type`` for a vehicle box.
+
+    Color prefers the learned MobileNetV3 classifier
+    (:func:`udfs.vehicle_color_model.predict_color_from_crop`); when its weights
+    are absent or inference is unavailable it returns ``None`` and we fall back
+    to the HSV body-region heuristic (:func:`classify_vehicle_color`).
+    """
+    color = predict_color_from_crop(crop)
+    if color is None:
+        dominant_rgb = _dominant_rgb_from_crop(crop)
+        color = classify_vehicle_color(dominant_rgb) if dominant_rgb is not None else "gray"
     sub_type = vehicle_sub_type_from_geometry(vehicle_class, bbox)
     return {
         "vehicle_color": color,
@@ -401,6 +493,31 @@ def _video_path_from_row(row: dict[str, Any], *, video_field: str = "video") -> 
     if isinstance(video, list):
         return None
     return str(video.path)
+
+
+def crop_from_track_row(row: dict[str, Any], *, video_field: str = "video") -> Any | None:
+    """Return the representative BGR crop for a track row, or ``None``.
+
+    Reads the ``rep_frame_id`` frame of the track's source video and slices out
+    the ``rep_bbox`` rectangle. Shared by ``crop_ops`` (JPEG crop for Gemini) and
+    ``reid_ops`` (appearance embedding) so the extraction lives in one place.
+    """
+    rep_frame_id = row.get("rep_frame_id")
+    rep_bbox = row.get("rep_bbox")
+    if not isinstance(rep_frame_id, int):
+        return None
+    if not isinstance(rep_bbox, list) or len(rep_bbox) != 4:
+        return None
+    video_path = _video_path_from_row(row, video_field=video_field)
+    if not video_path:
+        return None
+    frame = _read_frame_at_index(video_path, rep_frame_id)
+    if frame is None:
+        return None
+    crop = _crop_from_frame(frame, rep_bbox)
+    if crop is None or getattr(crop, "size", 0) == 0:
+        return None
+    return crop
 
 
 def build_vehicle_frame_detections(

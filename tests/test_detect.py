@@ -106,6 +106,30 @@ class DetectSpecTests(unittest.TestCase):
         self.assertEqual(spec.model, "yoloe-s.pt")
         self.assertEqual(spec.output_field, "hits")
 
+    def test_default_frame_stride_is_one(self) -> None:
+        spec = DetectSpec(video_field="v", classes=("dog",))
+        self.assertEqual(spec.frame_stride, 1)
+
+    def test_custom_frame_stride(self) -> None:
+        spec = DetectSpec(video_field="v", classes=("dog",), frame_stride=3)
+        self.assertEqual(spec.frame_stride, 3)
+
+    def test_zero_frame_stride_raises(self) -> None:
+        with self.assertRaises(MMDSValidationError):
+            DetectSpec(video_field="v", classes=("dog",), frame_stride=0)
+
+    def test_negative_frame_stride_raises(self) -> None:
+        with self.assertRaises(MMDSValidationError):
+            DetectSpec(video_field="v", classes=("dog",), frame_stride=-1)
+
+    def test_non_int_frame_stride_raises(self) -> None:
+        with self.assertRaises(MMDSValidationError):
+            DetectSpec(video_field="v", classes=("dog",), frame_stride=1.5)  # type: ignore[arg-type]
+
+    def test_bool_frame_stride_raises(self) -> None:
+        with self.assertRaises(MMDSValidationError):
+            DetectSpec(video_field="v", classes=("dog",), frame_stride=True)  # type: ignore[arg-type]
+
     def test_empty_video_field_raises(self) -> None:
         with self.assertRaises(MMDSValidationError):
             DetectSpec(video_field="", classes=("dog",))
@@ -125,6 +149,52 @@ class DetectSpecTests(unittest.TestCase):
     def test_empty_output_field_raises(self) -> None:
         with self.assertRaises(MMDSValidationError):
             DetectSpec(video_field="v", classes=("dog",), output_field="")
+
+    def test_conf_and_imgsz_default_to_none(self) -> None:
+        spec = DetectSpec(video_field="v", classes=("dog",))
+        self.assertIsNone(spec.conf)
+        self.assertIsNone(spec.imgsz)
+
+    def test_custom_conf_and_imgsz(self) -> None:
+        spec = DetectSpec(video_field="v", classes=("dog",), conf=0.1, imgsz=1280)
+        self.assertEqual(spec.conf, 0.1)
+        self.assertEqual(spec.imgsz, 1280)
+
+    def test_conf_bounds_are_inclusive(self) -> None:
+        self.assertEqual(DetectSpec(video_field="v", classes=("d",), conf=0.0).conf, 0.0)
+        self.assertEqual(DetectSpec(video_field="v", classes=("d",), conf=1.0).conf, 1.0)
+
+    def test_conf_below_zero_raises(self) -> None:
+        with self.assertRaises(MMDSValidationError):
+            DetectSpec(video_field="v", classes=("dog",), conf=-0.1)
+
+    def test_conf_above_one_raises(self) -> None:
+        with self.assertRaises(MMDSValidationError):
+            DetectSpec(video_field="v", classes=("dog",), conf=1.1)
+
+    def test_conf_bool_raises(self) -> None:
+        with self.assertRaises(MMDSValidationError):
+            DetectSpec(video_field="v", classes=("dog",), conf=True)  # type: ignore[arg-type]
+
+    def test_conf_non_number_raises(self) -> None:
+        with self.assertRaises(MMDSValidationError):
+            DetectSpec(video_field="v", classes=("dog",), conf="0.1")  # type: ignore[arg-type]
+
+    def test_imgsz_zero_raises(self) -> None:
+        with self.assertRaises(MMDSValidationError):
+            DetectSpec(video_field="v", classes=("dog",), imgsz=0)
+
+    def test_imgsz_negative_raises(self) -> None:
+        with self.assertRaises(MMDSValidationError):
+            DetectSpec(video_field="v", classes=("dog",), imgsz=-1)
+
+    def test_imgsz_bool_raises(self) -> None:
+        with self.assertRaises(MMDSValidationError):
+            DetectSpec(video_field="v", classes=("dog",), imgsz=True)  # type: ignore[arg-type]
+
+    def test_imgsz_float_raises(self) -> None:
+        with self.assertRaises(MMDSValidationError):
+            DetectSpec(video_field="v", classes=("dog",), imgsz=1280.0)  # type: ignore[arg-type]
 
 
 # ---------------------------------------------------------------------------
@@ -172,6 +242,60 @@ class DetectDSLTests(unittest.TestCase):
     def test_non_string_source_raises(self) -> None:
         with self.assertRaises(TypeError):
             Detect("not-a-node", "clip", ["dog"])  # type: ignore[arg-type]
+
+    def test_default_frame_stride_is_one(self) -> None:
+        node = Detect(self._source(), "clip", ["dog"])
+        spec = node.spec
+        assert isinstance(spec, DetectSpec)
+        self.assertEqual(spec.frame_stride, 1)
+
+    def test_custom_frame_stride_is_forwarded(self) -> None:
+        node = Detect(self._source(), "clip", ["dog"], frame_stride=4)
+        spec = node.spec
+        assert isinstance(spec, DetectSpec)
+        self.assertEqual(spec.frame_stride, 4)
+
+    def test_zero_frame_stride_raises(self) -> None:
+        with self.assertRaises(TypeError):
+            Detect(self._source(), "clip", ["dog"], frame_stride=0)
+
+    def test_negative_frame_stride_raises(self) -> None:
+        with self.assertRaises(TypeError):
+            Detect(self._source(), "clip", ["dog"], frame_stride=-2)
+
+    def test_bool_frame_stride_raises(self) -> None:
+        with self.assertRaises(TypeError):
+            Detect(self._source(), "clip", ["dog"], frame_stride=True)  # type: ignore[arg-type]
+
+    def test_conf_and_imgsz_default_to_none(self) -> None:
+        node = Detect(self._source(), "clip", ["dog"])
+        spec = node.spec
+        assert isinstance(spec, DetectSpec)
+        self.assertIsNone(spec.conf)
+        self.assertIsNone(spec.imgsz)
+
+    def test_conf_and_imgsz_are_forwarded(self) -> None:
+        node = Detect(self._source(), "clip", ["dog"], conf=0.1, imgsz=1280)
+        spec = node.spec
+        assert isinstance(spec, DetectSpec)
+        self.assertEqual(spec.conf, 0.1)
+        self.assertEqual(spec.imgsz, 1280)
+
+    def test_out_of_range_conf_raises(self) -> None:
+        with self.assertRaises(TypeError):
+            Detect(self._source(), "clip", ["dog"], conf=1.5)
+
+    def test_bool_conf_raises(self) -> None:
+        with self.assertRaises(TypeError):
+            Detect(self._source(), "clip", ["dog"], conf=True)  # type: ignore[arg-type]
+
+    def test_non_positive_imgsz_raises(self) -> None:
+        with self.assertRaises(TypeError):
+            Detect(self._source(), "clip", ["dog"], imgsz=0)
+
+    def test_bool_imgsz_raises(self) -> None:
+        with self.assertRaises(TypeError):
+            Detect(self._source(), "clip", ["dog"], imgsz=True)  # type: ignore[arg-type]
 
 
 # ---------------------------------------------------------------------------
@@ -327,6 +451,74 @@ class DetectInVideoTests(unittest.TestCase):
 
         self.assertEqual(detections[0]["bboxes"][0]["frame_idx"], 20)
         self.assertEqual(detections[0]["bboxes"][1]["frame_idx"], 21)
+
+    def test_frame_stride_skips_predict_on_non_sampled_frames(self) -> None:
+        frames = [np.zeros((48, 64, 3), dtype=np.uint8) for _ in range(4)]
+        video = _make_video(num_frames=len(frames))
+        video.__iter__ = MagicMock(return_value=iter(frames))
+
+        results = [
+            _make_yoloe_result(0, "dog", [0, 0, 10, 10], 0.9),
+            _make_yoloe_result(0, "dog", [1, 1, 11, 11], 0.8),
+        ]
+        mock_model = MagicMock()
+        mock_model.get_text_pe.return_value = MagicMock()
+        mock_model.predict.side_effect = [[results[0]], [results[1]]]
+
+        with patch("mmds.execution.ops.detect._get_model", return_value=mock_model):
+            detections = _detect_in_video(video, ["dog"], "yoloe-11s-seg.pt", frame_stride=2)
+
+        # Only frames 0 and 2 (relative) should be sent through the model.
+        self.assertEqual(mock_model.predict.call_count, 2)
+        bboxes = detections[0]["bboxes"]
+        self.assertEqual([b["frame_idx"] for b in bboxes], [0, 2])
+
+    def test_frame_stride_one_matches_default_behavior(self) -> None:
+        frame = np.zeros((48, 64, 3), dtype=np.uint8)
+        result = _make_yoloe_result(0, "dog", [10.0, 20.0, 50.0, 60.0], 0.9)
+        detections = self._run([frame], [result])
+        strided = self._run([frame], [result])
+        self.assertEqual(detections, strided)
+
+    def test_zero_frame_stride_raises(self) -> None:
+        frame = np.zeros((48, 64, 3), dtype=np.uint8)
+        video = _make_video(num_frames=1)
+        video.__iter__ = MagicMock(return_value=iter([frame]))
+        mock_model = MagicMock()
+        with patch("mmds.execution.ops.detect._get_model", return_value=mock_model):
+            with self.assertRaises(MMDSValidationError):
+                _detect_in_video(video, ["dog"], "yoloe-11s-seg.pt", frame_stride=0)
+
+    def _predict_kwargs(self, **detect_kwargs) -> dict:
+        """Run one frame through the model and return the kwargs predict saw."""
+        frame = np.zeros((48, 64, 3), dtype=np.uint8)
+        video = _make_video(num_frames=1)
+        video.__iter__ = MagicMock(return_value=iter([frame]))
+        result = _make_yoloe_result(0, "dog", [0, 0, 10, 10], 0.9)
+        mock_model = MagicMock()
+        mock_model.get_text_pe.return_value = MagicMock()
+        mock_model.predict.return_value = [result]
+
+        with patch("mmds.execution.ops.detect._get_model", return_value=mock_model):
+            _detect_in_video(video, ["dog"], "yoloe-11s-seg.pt", **detect_kwargs)
+        return mock_model.predict.call_args.kwargs
+
+    def test_conf_and_imgsz_forwarded_to_predict(self) -> None:
+        kwargs = self._predict_kwargs(conf=0.1, imgsz=1280)
+        self.assertEqual(kwargs["conf"], 0.1)
+        self.assertEqual(kwargs["imgsz"], 1280)
+
+    def test_unset_conf_and_imgsz_not_forwarded(self) -> None:
+        # When unset, the model's own defaults must apply — we must NOT pin
+        # conf/imgsz to None, which Ultralytics would reject.
+        kwargs = self._predict_kwargs()
+        self.assertNotIn("conf", kwargs)
+        self.assertNotIn("imgsz", kwargs)
+
+    def test_only_conf_forwarded_when_imgsz_unset(self) -> None:
+        kwargs = self._predict_kwargs(conf=0.25)
+        self.assertEqual(kwargs["conf"], 0.25)
+        self.assertNotIn("imgsz", kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -557,6 +749,107 @@ class DetectionOpsTests(unittest.TestCase):
         boxes = nmsed["detections"][0]["bboxes"]
         self.assertEqual(len(boxes), 1)
         self.assertAlmostEqual(boxes[0]["confidence"], 0.9)
+
+    def test_nms_vehicle_detections_suppresses_across_classes(self) -> None:
+        """Overlapping boxes of different classes (YOLOE label flicker) collapse
+        to the single highest-confidence box, keeping its class."""
+        from udfs.detection_ops import nms_vehicle_detections
+
+        row = {
+            "detections": [
+                {
+                    "type": "sedan",
+                    "bboxes": [
+                        {"frame_idx": 7, "bbox": [0.0, 0.0, 100.0, 100.0], "confidence": 0.55},
+                    ],
+                },
+                {
+                    "type": "suv",
+                    "bboxes": [
+                        {"frame_idx": 7, "bbox": [4.0, 4.0, 104.0, 104.0], "confidence": 0.80},
+                    ],
+                },
+            ]
+        }
+        nmsed = nms_vehicle_detections(row)
+        # Only one box should survive, and it should be the suv (higher conf).
+        total = sum(len(g["bboxes"]) for g in nmsed["detections"])
+        self.assertEqual(total, 1)
+        self.assertEqual(nmsed["detections"][0]["type"], "suv")
+        self.assertAlmostEqual(nmsed["detections"][0]["bboxes"][0]["confidence"], 0.80)
+        # The transient class-carrying key must not leak into output boxes.
+        self.assertNotIn("_nms_vehicle_class", nmsed["detections"][0]["bboxes"][0])
+
+    def test_nms_vehicle_detections_keeps_non_overlapping_across_classes(self) -> None:
+        """Different-class boxes that do NOT overlap are both kept."""
+        from udfs.detection_ops import nms_vehicle_detections
+
+        row = {
+            "detections": [
+                {
+                    "type": "sedan",
+                    "bboxes": [
+                        {"frame_idx": 7, "bbox": [0.0, 0.0, 50.0, 50.0], "confidence": 0.6},
+                    ],
+                },
+                {
+                    "type": "truck",
+                    "bboxes": [
+                        {"frame_idx": 7, "bbox": [500.0, 500.0, 600.0, 600.0], "confidence": 0.7},
+                    ],
+                },
+            ]
+        }
+        nmsed = nms_vehicle_detections(row)
+        types = {g["type"] for g in nmsed["detections"]}
+        self.assertEqual(types, {"sedan", "truck"})
+
+    def test_classify_vehicle_color_neutrals_by_brightness(self) -> None:
+        from udfs.detection_ops import classify_vehicle_color
+
+        self.assertEqual(classify_vehicle_color((10.0, 10.0, 10.0)), "black")
+        self.assertEqual(classify_vehicle_color((110.0, 110.0, 110.0)), "gray")
+        self.assertEqual(classify_vehicle_color((175.0, 175.0, 175.0)), "silver")
+        self.assertEqual(classify_vehicle_color((245.0, 245.0, 245.0)), "white")
+
+    def test_classify_vehicle_color_chromatic_by_hue(self) -> None:
+        from udfs.detection_ops import classify_vehicle_color
+
+        self.assertEqual(classify_vehicle_color((200.0, 20.0, 20.0)), "red")
+        self.assertEqual(classify_vehicle_color((230.0, 220.0, 30.0)), "yellow")
+        self.assertEqual(classify_vehicle_color((30.0, 160.0, 60.0)), "green")
+        self.assertEqual(classify_vehicle_color((30.0, 60.0, 200.0)), "blue")
+
+    def test_classify_vehicle_color_dark_saturated_is_black(self) -> None:
+        from udfs.detection_ops import classify_vehicle_color
+
+        # Low brightness overrides a noisy hue.
+        self.assertEqual(classify_vehicle_color((20.0, 8.0, 8.0)), "black")
+
+    def test_classify_vehicle_color_outputs_are_in_vocab(self) -> None:
+        from udfs.detection_ops import VEHICLE_COLOR_VOCAB, classify_vehicle_color
+
+        for rgb in [
+            (0, 0, 0), (128, 128, 128), (255, 255, 255), (200, 20, 20),
+            (230, 220, 30), (30, 160, 60), (30, 60, 200), (120, 80, 40),
+        ]:
+            self.assertIn(classify_vehicle_color(rgb), VEHICLE_COLOR_VOCAB)
+
+    def test_dominant_rgb_uses_center_region(self) -> None:
+        from udfs.detection_ops import _dominant_rgb_from_crop
+
+        # Red border, blue center: the center-region median should be blue.
+        crop = np.zeros((50, 50, 3), dtype=np.uint8)
+        crop[:, :] = (0, 0, 200)  # BGR red everywhere
+        crop[12:38, 15:35] = (200, 0, 0)  # BGR blue in the central body region
+        r, g, b = _dominant_rgb_from_crop(crop)
+        self.assertGreater(b, r)  # blue dominates the sampled center
+
+    def test_dominant_rgb_none_on_empty(self) -> None:
+        from udfs.detection_ops import _dominant_rgb_from_crop
+
+        self.assertIsNone(_dominant_rgb_from_crop(None))
+        self.assertIsNone(_dominant_rgb_from_crop(np.zeros((0, 0, 3), dtype=np.uint8)))
 
     def test_build_vehicle_frame_detections_shape(self) -> None:
         from udfs.detection_ops import build_vehicle_frame_detections

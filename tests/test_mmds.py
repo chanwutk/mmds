@@ -459,6 +459,76 @@ class GeminiExecutorTests(unittest.TestCase):
         with self.assertRaisesRegex(MMDSValidationError, "cannot include both 'start' and 'start_offset'"):
             executor.execute("map", prompt, resolved, payload={}, context={})
 
+    def test_gemini_executor_builds_inline_image_parts(self) -> None:
+        fake_client = _FakeClient('{"color": "white"}')
+        executor = GeminiPromptExecutor(client=fake_client, types_module=_FakeTypes, poll_interval_seconds=0.0)
+        prompt = PromptSpec(
+            parts=("Label ", Record["crop"]),
+            output_schema={"color": "string"},
+        )
+        resolved = ResolvedPrompt(
+            parts=("Label ", {"type": "image", "bytes": b"jpegbytes", "mime_type": "image/jpeg"}),
+            output_schema=prompt.output_schema,
+        )
+
+        result = executor.execute("map", prompt, resolved, payload={}, context={})
+        self.assertEqual(result, {"color": "white"})
+        content = fake_client.models.calls[0]["contents"]
+        self.assertEqual(content.parts[0].text, "Label ")
+        self.assertEqual(content.parts[1].inline_data.data, b"jpegbytes")
+        self.assertEqual(content.parts[1].inline_data.mime_type, "image/jpeg")
+        self.assertIsNone(content.parts[1].file_data)
+        self.assertEqual(fake_client.files.upload_calls, [])
+
+    def test_gemini_executor_accepts_image_uri(self) -> None:
+        fake_client = _FakeClient('{"color": "white"}')
+        executor = GeminiPromptExecutor(client=fake_client, types_module=_FakeTypes, poll_interval_seconds=0.0)
+        prompt = PromptSpec(
+            parts=("Label ", Record["crop"]),
+            output_schema={"color": "string"},
+        )
+        resolved = ResolvedPrompt(
+            parts=("Label ", {"type": "image", "uri": "https://example.com/crop.jpg"}),
+            output_schema=prompt.output_schema,
+        )
+
+        executor.execute("map", prompt, resolved, payload={}, context={})
+        content = fake_client.models.calls[0]["contents"]
+        self.assertEqual(content.parts[1].file_data.file_uri, "https://example.com/crop.jpg")
+        self.assertIsNone(content.parts[1].video_metadata)
+
+    def test_gemini_executor_uploads_local_image_path(self) -> None:
+        fake_client = _FakeClient('{"color": "white"}')
+        executor = GeminiPromptExecutor(client=fake_client, types_module=_FakeTypes, poll_interval_seconds=0.0)
+        prompt = PromptSpec(
+            parts=("Label ", Record["crop"]),
+            output_schema={"color": "string"},
+        )
+        resolved = ResolvedPrompt(
+            parts=("Label ", {"type": "image", "path": "/tmp/crop.jpg"}),
+            output_schema=prompt.output_schema,
+        )
+
+        executor.execute("map", prompt, resolved, payload={}, context={})
+        self.assertEqual(fake_client.files.upload_calls, ["/tmp/crop.jpg"])
+        content = fake_client.models.calls[0]["contents"]
+        self.assertEqual(content.parts[1].file_data.file_uri, "uploaded://video")
+
+    def test_gemini_executor_rejects_inline_image_without_mime_type(self) -> None:
+        fake_client = _FakeClient('{"color": "white"}')
+        executor = GeminiPromptExecutor(client=fake_client, types_module=_FakeTypes, poll_interval_seconds=0.0)
+        prompt = PromptSpec(
+            parts=("Label ", Record["crop"]),
+            output_schema={"color": "string"},
+        )
+        resolved = ResolvedPrompt(
+            parts=("Label ", {"type": "image", "bytes": b"jpegbytes"}),
+            output_schema=prompt.output_schema,
+        )
+
+        with self.assertRaisesRegex(MMDSValidationError, "Inline image bytes require a mime_type"):
+            executor.execute("map", prompt, resolved, payload={}, context={})
+
     def test_gemini_executor_logs_built_parts(self) -> None:
         fake_client = _FakeClient('{"summary": "done"}')
         executor = GeminiPromptExecutor(client=fake_client, types_module=_FakeTypes, poll_interval_seconds=0.0)
@@ -481,6 +551,66 @@ class GeminiExecutorTests(unittest.TestCase):
                 "Part 2: _FakePart(text=None, inline_data=None, file_data=_FakeFileData(file_uri='https://youtube.com/watch?v=demo'" in line
                 for line in captured.output
             )
+        )
+
+    def _usage_prompt(self):
+        prompt = PromptSpec(parts=("Summarize",), output_schema={"summary": "string"})
+        resolved = ResolvedPrompt(parts=("Summarize",), output_schema=prompt.output_schema)
+        return prompt, resolved
+
+    def test_gemini_executor_accumulates_token_usage(self) -> None:
+        fake_client = _FakeClient('{"summary": "done"}', usage=_FakeUsage(10, 4, 14))
+        executor = GeminiPromptExecutor(
+            client=fake_client, types_module=_FakeTypes, poll_interval_seconds=0.0
+        )
+        prompt, resolved = self._usage_prompt()
+
+        executor.execute("map", prompt, resolved, payload={}, context={})
+        executor.execute("map", prompt, resolved, payload={}, context={})
+
+        self.assertEqual(
+            executor.usage_snapshot(),
+            {
+                "prompt_calls": 2,
+                "prompt_tokens": 20,
+                "candidates_tokens": 8,
+                "total_tokens": 28,
+            },
+        )
+
+    def test_gemini_executor_counts_calls_without_usage_metadata(self) -> None:
+        fake_client = _FakeClient('{"summary": "done"}')  # usage=None
+        executor = GeminiPromptExecutor(
+            client=fake_client, types_module=_FakeTypes, poll_interval_seconds=0.0
+        )
+        prompt, resolved = self._usage_prompt()
+
+        executor.execute("map", prompt, resolved, payload={}, context={})
+
+        snapshot = executor.usage_snapshot()
+        self.assertEqual(snapshot["prompt_calls"], 1)
+        self.assertEqual(snapshot["prompt_tokens"], 0)
+        self.assertEqual(snapshot["candidates_tokens"], 0)
+        self.assertEqual(snapshot["total_tokens"], 0)
+
+    def test_gemini_executor_reset_usage(self) -> None:
+        fake_client = _FakeClient('{"summary": "done"}', usage=_FakeUsage(5, 5, 10))
+        executor = GeminiPromptExecutor(
+            client=fake_client, types_module=_FakeTypes, poll_interval_seconds=0.0
+        )
+        prompt, resolved = self._usage_prompt()
+
+        executor.execute("map", prompt, resolved, payload={}, context={})
+        executor.reset_usage()
+
+        self.assertEqual(
+            executor.usage_snapshot(),
+            {
+                "prompt_calls": 0,
+                "prompt_tokens": 0,
+                "candidates_tokens": 0,
+                "total_tokens": 0,
+            },
         )
 
 
@@ -574,19 +704,31 @@ class _FakeFiles:
         return _FakeUploadedFile()
 
 
+class _FakeUsage:
+    def __init__(self, prompt, candidates, total):
+        self.prompt_token_count = prompt
+        self.candidates_token_count = candidates
+        self.total_token_count = total
+
+
 class _FakeModels:
-    def __init__(self, text):
+    def __init__(self, text, usage=None):
         self.text = text
+        self.usage = usage
         self.calls = []
 
     def generate_content(self, **kwargs):
         self.calls.append(kwargs)
-        return type("Response", (), {"text": self.text})()
+        return type(
+            "Response",
+            (),
+            {"text": self.text, "usage_metadata": self.usage},
+        )()
 
 
 class _FakeClient:
-    def __init__(self, text):
-        self.models = _FakeModels(text)
+    def __init__(self, text, usage=None):
+        self.models = _FakeModels(text, usage=usage)
         self.files = _FakeFiles()
 
 

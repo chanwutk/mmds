@@ -210,3 +210,50 @@ def same_vehicle(left: dict[str, Any], right: dict[str, Any]) -> bool:
         and direction_compatible(left, right)
         and speed_compatible(left, right)
     )
+
+
+def _track_interval_seconds(track: dict[str, Any]) -> tuple[float, float] | None:
+    """Parse a track's ISO ``start_time``/``end_time`` to ``(start, end)`` seconds."""
+    start = _parse_iso_timestamp(track.get("start_time"))
+    end = _parse_iso_timestamp(track.get("end_time"))
+    if start is None or end is None:
+        return None
+    start_sec = start.timestamp()
+    end_sec = end.timestamp()
+    if end_sec < start_sec:
+        return None
+    return start_sec, end_sec
+
+
+def temporal_overlap(left: dict[str, Any], right: dict[str, Any]) -> bool:
+    """Cross-camera predicate for synchronized feeds: track intervals overlap.
+
+    The two I24V clips are time-synchronized, so the same vehicle appears at
+    overlapping timestamps in both feeds. A small ``_MAX_SYNC_OVERLAP_SEC``
+    tolerance absorbs frame-boundary jitter in track start/end times.
+    """
+    left_interval = _track_interval_seconds(left)
+    right_interval = _track_interval_seconds(right)
+    if left_interval is None or right_interval is None:
+        return False
+    left_start, left_end = left_interval
+    right_start, right_end = right_interval
+    return (
+        left_start <= right_end + _MAX_SYNC_OVERLAP_SEC
+        and right_start <= left_end + _MAX_SYNC_OVERLAP_SEC
+    )
+
+
+def temporal_iou(left: dict[str, Any], right: dict[str, Any]) -> float:
+    """Match score: intersection-over-union of the two tracks' time intervals."""
+    left_interval = _track_interval_seconds(left)
+    right_interval = _track_interval_seconds(right)
+    if left_interval is None or right_interval is None:
+        return 0.0
+    left_start, left_end = left_interval
+    right_start, right_end = right_interval
+    overlap = max(0.0, min(left_end, right_end) - max(left_start, right_start))
+    union = max(left_end, right_end) - min(left_start, right_start)
+    if union <= 0.0:
+        return 1.0 if overlap > 0.0 or left_start == right_start else 0.0
+    return overlap / union

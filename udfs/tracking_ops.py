@@ -7,10 +7,15 @@ from typing import Any
 _VEHICLE_CLASSES = frozenset({"sedan", "suv", "truck"})
 _DEFAULT_FPS = 30.0 # Default fps for tracking timestamps
 
-# IoU association threshold for StrongSORT-shaped linking across frames.
+# IoU association threshold for linking a detection to a track.
 _TRACK_IOU_THRESHOLD = 0.3
-# Close a track when no matching box appears within this many frames.
+# Close a track when no matching box appears within this many frames. Kept
+# generous because the low-confidence detector produces intermittent boxes;
+# a short tolerance fragments a vehicle across its own detection dropouts.
 _MAX_TRACK_FRAME_GAP = 30
+# EMA weight for the smoothed per-frame center velocity (0..1). Higher = more
+# responsive to the latest motion; lower = smoother/steadier prediction.
+_VELOCITY_SMOOTHING = 0.5
 # Margin (fraction of frame width/height) for edge exit detection.
 _EDGE_MARGIN = 0.05
 
@@ -138,31 +143,76 @@ def _is_near_frame_edge(
     )
 
 
+def _predicted_bbox(
+    last_bbox: list[float],
+    center: tuple[float, float],
+    velocity: tuple[float, float],
+    gap: int,
+) -> tuple[list[float], tuple[float, float]]:
+    """Constant-velocity forecast of a track's box ``gap`` frames ahead.
+
+    Extrapolates the (smoothed) center velocity and re-centers the last box's
+    dimensions on the predicted center. Returns ``(predicted_bbox, predicted_center)``.
+    """
+    pred_cx = center[0] + velocity[0] * gap
+    pred_cy = center[1] + velocity[1] * gap
+    width = last_bbox[2] - last_bbox[0]
+    height = last_bbox[3] - last_bbox[1]
+    predicted = [
+        pred_cx - width / 2.0,
+        pred_cy - height / 2.0,
+        pred_cx + width / 2.0,
+        pred_cy + height / 2.0,
+    ]
+    return predicted, (pred_cx, pred_cy)
+
+
 def _assign_track_ids(
     detections: list[dict[str, Any]],
     *,
     track_prefix: str,
     max_frame_gap: int = _MAX_TRACK_FRAME_GAP,
+    iou_threshold: float = _TRACK_IOU_THRESHOLD,
+    velocity_smoothing: float = _VELOCITY_SMOOTHING,
 ) -> list[dict[str, Any]]:
-    """
-    Greedy IoU tracker: assign stable ``track_id`` values across frames.
-    
+    """Motion-aware greedy tracker: assign stable ``track_id`` across frames.
+
+    For each detection (processed in frame order), every active track is also
+    forecast forward with a **constant-velocity** model using a **smoothed**
+    (EMA) center velocity, and association uses the **better of the predicted-box
+    and last-box IoU**. The prediction only *adds* reach — it bridges moderate
+    motion and short detection gaps that a pure last-box-IoU tracker would drop —
+    and can never lose a match the last box would have made, so it never
+    increases fragmentation relative to the plain IoU tracker.
+
+    A track is an eligible match when the frame gap is in ``[1, max_frame_gap]``
+    and ``max(predicted_iou, last_iou) >= iou_threshold``. The best eligible
+    track (highest such IoU) wins; unmatched detections start a new track
+    (``veh-1``, ``veh-2``, ...).
+
+    (A center-distance fallback gate and a class-consistency gate were evaluated
+    and both *increased* fragmentation on the I24V clips — the distance gate via
+    greedy mis-assignment churn, the class gate by splitting a vehicle whenever
+    YOLOE's label flickered to ``truck`` — so neither is used. Robustly fixing
+    those would need global (Hungarian) assignment + a Kalman filter, i.e. a real
+    StrongSORT backend.)
+
     Args:
-        detections: List of detection dicts, each with a 'frame_id', 'bbox', and 'track_id'.
+        detections: Detection dicts, each with ``frame_id`` and ``bbox``.
         track_prefix: Prefix for new track IDs.
-        max_frame_gap: Maximum frame gap to consider for track association.
+        max_frame_gap: Maximum frame gap to bridge when associating.
+        iou_threshold: Minimum ``max(predicted, last-box)`` IoU to associate.
+        velocity_smoothing: EMA weight for the smoothed center velocity.
 
     Returns:
-        List of detection dicts with assigned 'track_id'.
-    
-    For each detection, find the best matching track (highest IoU) across all active tracks.
-    If no match is found, create a new track (suv-1, sedan-2, ...).
-    Tag each detection with the best track ID.
+        The detections tagged with an assigned ``track_id``.
     """
     ordered = sorted(
         detections,
         key=lambda item: (item.get("frame_id", 0), item.get("bbox", [0])[0]),
     )
+    # Track state: last_frame/bbox/center, smoothed velocity, and how many
+    # detections it has (to seed velocity on the first observed motion).
     active_tracks: dict[str, dict[str, Any]] = {}
     next_track = 1
     tracked: list[dict[str, Any]] = []
@@ -173,29 +223,63 @@ def _assign_track_ids(
         if not isinstance(frame_id, int) or not isinstance(bbox, list) or len(bbox) != 4:
             continue
 
+        det_bbox = [float(v) for v in bbox]
+        det_center = _bbox_centroid(det_bbox)
+
         best_track_id: str | None = None
-        best_iou = _TRACK_IOU_THRESHOLD
-        for track_id, last_detection in active_tracks.items():
-            last_frame = last_detection.get("frame_id")
-            last_bbox = last_detection.get("bbox")
-            if not isinstance(last_frame, int) or not isinstance(last_bbox, list):
+        best_iou = iou_threshold
+        for track_id, state in active_tracks.items():
+            gap = frame_id - state["last_frame"]
+            if gap < 1 or gap > max_frame_gap:
                 continue
-            gap = frame_id - last_frame
-            if gap <= 0 or gap > max_frame_gap:
-                continue
-            iou = _bbox_iou([float(v) for v in bbox], [float(v) for v in last_bbox])
-            if iou > best_iou:
-                best_iou = iou
+            pred_bbox, _ = _predicted_bbox(
+                state["last_bbox"], state["last_center"], state["velocity"], gap
+            )
+            # Better of the predicted box and the last box: prediction adds reach
+            # for moving objects without ever losing a last-box overlap match.
+            assoc_iou = max(
+                _bbox_iou(det_bbox, pred_bbox), _bbox_iou(det_bbox, state["last_bbox"])
+            )
+            if assoc_iou > best_iou:
+                best_iou = assoc_iou
                 best_track_id = track_id
 
         if best_track_id is None:
             best_track_id = f"{track_prefix}-{next_track}"
             next_track += 1
+            active_tracks[best_track_id] = {
+                "last_frame": frame_id,
+                "last_bbox": det_bbox,
+                "last_center": det_center,
+                "velocity": (0.0, 0.0),
+                "n": 0,
+            }
+
+        state = active_tracks[best_track_id]
+        gap = max(1, frame_id - state["last_frame"])
+        instant_v = (
+            (det_center[0] - state["last_center"][0]) / gap,
+            (det_center[1] - state["last_center"][1]) / gap,
+        )
+        if state["n"] == 0:
+            velocity = (0.0, 0.0)  # first detection: no motion sample yet
+        elif state["n"] == 1:
+            velocity = instant_v  # first motion sample seeds the velocity
+        else:
+            old_vx, old_vy = state["velocity"]
+            velocity = (
+                velocity_smoothing * instant_v[0] + (1.0 - velocity_smoothing) * old_vx,
+                velocity_smoothing * instant_v[1] + (1.0 - velocity_smoothing) * old_vy,
+            )
+        state["velocity"] = velocity
+        state["last_frame"] = frame_id
+        state["last_bbox"] = det_bbox
+        state["last_center"] = det_center
+        state["n"] += 1
 
         tagged = dict(detection)
         tagged["track_id"] = best_track_id
         tracked.append(tagged)
-        active_tracks[best_track_id] = tagged
 
     return tracked
 
@@ -346,6 +430,23 @@ def _summarize_track(
     if not isinstance(first_frame, int) or not isinstance(last_frame, int):
         return {}
 
+    # Representative frame/box: the highest-confidence detection in the track.
+    # Used downstream to extract a single crop for appearance labeling.
+    rep_detection = max(
+        ordered,
+        key=lambda detection: float(detection["confidence"])
+        if isinstance(detection.get("confidence"), (int, float))
+        else -1.0,
+    )
+    rep_frame_id = rep_detection.get("frame_id")
+    rep_bbox = rep_detection.get("bbox")
+    if not isinstance(rep_frame_id, int):
+        rep_frame_id = first_frame
+    if isinstance(rep_bbox, list) and len(rep_bbox) == 4:
+        rep_bbox = [float(value) for value in rep_bbox]
+    else:
+        rep_bbox = None
+
     return {
         "track_id": track_id,
         "camera_id": camera_id,
@@ -359,6 +460,8 @@ def _summarize_track(
         "exit_direction": exit_direction,
         "centroid_path": path,
         "confidence": confidence,
+        "rep_frame_id": rep_frame_id,
+        "rep_bbox": rep_bbox,
     }
 
 
@@ -367,6 +470,8 @@ def strongsort_track_frame_detections(
     *,
     input_field: str = "frame_detections",
     summaries_field: str = "track_summaries",
+    min_track_frames: int | None = None,
+    min_track_confidence: float | None = None,
 ) -> dict[str, Any]:
     """Map UDF: StrongSORT-shaped tracking over ``frame_detections``.
 
@@ -401,31 +506,49 @@ def strongsort_track_frame_detections(
     if not isinstance(frame_detections, list) or not frame_detections:
         return {summaries_field: []}
 
-    by_class: dict[str, list[dict[str, Any]]] = {}
-    for detection in frame_detections:
-        if not isinstance(detection, dict):
+    # Track class-agnostically: associate boxes across frames by IoU regardless of
+    # the per-frame YOLOE class. YOLOE's class label flickers (sedan<->suv) for the
+    # same physical vehicle; tracking per class would split one vehicle into several
+    # tracks. Each track's class/color/subtype is resolved afterwards by majority
+    # vote in :func:`_summarize_track`.
+    vehicle_detections = [
+        detection
+        for detection in frame_detections
+        if isinstance(detection, dict) and detection.get("vehicle_class") in _VEHICLE_CLASSES
+    ]
+    if not vehicle_detections:
+        return {summaries_field: []}
+
+    tracker = StrongSortTracker(track_prefix="veh")
+    tracked = tracker.update(vehicle_detections)
+
+    by_track: dict[str, list[dict[str, Any]]] = {}
+    for detection in tracked:
+        track_id = detection.get("track_id")
+        if not isinstance(track_id, str):
             continue
-        vehicle_class = detection.get("vehicle_class")
-        if vehicle_class not in _VEHICLE_CLASSES:
-            continue
-        by_class.setdefault(str(vehicle_class), []).append(detection)
+        by_track.setdefault(track_id, []).append(detection)
+
+    frames_threshold = (
+        _MIN_TRACK_FRAMES if min_track_frames is None else min_track_frames
+    )
+    confidence_threshold = (
+        _MIN_TRACK_CONFIDENCE
+        if min_track_confidence is None
+        else min_track_confidence
+    )
 
     summaries: list[dict[str, Any]] = []
-    for vehicle_class, class_detections in sorted(by_class.items()):
-        tracker = StrongSortTracker(track_prefix=vehicle_class)
-        tracked = tracker.update(class_detections)
-
-        by_track: dict[str, list[dict[str, Any]]] = {}
-        for detection in tracked:
-            track_id = detection.get("track_id")
-            if not isinstance(track_id, str):
-                continue
-            by_track.setdefault(track_id, []).append(detection)
-
-        for track_id, track_detections in sorted(by_track.items()):
-            summary = _summarize_track(track_id, track_detections, row)
-            if summary:
-                summaries.append(summary)
+    for track_id, track_detections in sorted(by_track.items()):
+        summary = _summarize_track(track_id, track_detections, row)
+        # Drop short / low-confidence fragments so the greedy IoU tracker's
+        # split tracks don't inflate the distinct-vehicle count.
+        if summary and _track_is_substantial(
+            summary,
+            min_frames=frames_threshold,
+            min_confidence=confidence_threshold,
+        ):
+            summaries.append(summary)
 
     return {summaries_field: summaries}
 
@@ -456,9 +579,51 @@ _TRACK_JOIN_FIELDS: tuple[str, ...] = (
     "entry_direction",
     "exit_direction",
     "confidence",
+    "embedding",
 )
 
 
 def project_track_summary_row(row: dict[str, Any]) -> dict[str, Any]:
     """Map UDF: keep only fields needed for cross-camera join and trajectory export."""
     return {key: row[key] for key in _TRACK_JOIN_FIELDS if key in row}
+
+
+# Minimum observed detections and mean confidence for a track to be treated as
+# a real vehicle rather than a short tracker fragment. The greedy IoU tracker
+# fragments fast-moving highway vehicles into many one-/two-frame stubs, which
+# otherwise inflate the vehicle count and flood the cross-camera join with
+# spurious pairs. Confidence is kept low because the detector runs at a low
+# ``conf`` floor, so a real track's mean confidence is legitimately modest;
+# track *length* is the more reliable fragment signal.
+_MIN_TRACK_FRAMES = 5
+_MIN_TRACK_CONFIDENCE = 0.15
+
+
+def _track_is_substantial(
+    summary: dict[str, Any],
+    *,
+    min_frames: int = _MIN_TRACK_FRAMES,
+    min_confidence: float = _MIN_TRACK_CONFIDENCE,
+) -> bool:
+    """Return whether a track summary is a real vehicle vs. a short fragment.
+
+    Shared by :func:`is_substantial_track` (promoted-row Filter predicate) and
+    :func:`strongsort_track_frame_detections` (nested-summary filtering) so both
+    apply identical thresholds. Uses ``centroid_path`` length as the frame count
+    and mean ``confidence``.
+    """
+    path = summary.get("centroid_path")
+    frame_count = len(path) if isinstance(path, list) else 0
+    confidence = summary.get("confidence")
+    confidence = float(confidence) if isinstance(confidence, (int, float)) else 0.0
+    return frame_count >= min_frames and confidence >= min_confidence
+
+
+def is_substantial_track(row: dict[str, Any]) -> bool:
+    """Filter predicate: drop short / low-confidence tracker fragments.
+
+    Expects a promoted track-summary row (``centroid_path`` and ``confidence``
+    at the top level). Keeps tracks with at least ``_MIN_TRACK_FRAMES`` observed
+    detections and mean ``confidence`` >= ``_MIN_TRACK_CONFIDENCE``.
+    """
+    return _track_is_substantial(row)
