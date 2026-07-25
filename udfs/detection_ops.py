@@ -392,8 +392,6 @@ def vehicle_sub_type_from_geometry(vehicle_class: str, bbox: list[float]) -> str
         return "coupe"
     if ratio <= 1.35:
         return "suv"
-    if ratio <= 1.5:
-        return "hatchback"
     return "sedan" # Default subtype if no match is found
 
 

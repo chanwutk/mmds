@@ -127,7 +127,7 @@ stitched = Reduce(
         "silver, gray, black, beige, yellow, red, blue, green, brown. "
         "Subtypes of trucks should be chosen from the following list: tractor trailer,"
         "flatbed truck, box truck, and pickup. Subtypes of cars should be chosen from "
-        "the following list: coupe, suv, hatchback, and sedan. Build a continuous "
+        "the following list: coupe, suv, and sedan. Build a continuous "
         "trajectory record of each vehicle that appears in both camera footages with "
         "specific timestamps down to the milisecond (from start/end frames).\n",
         ForEach(
