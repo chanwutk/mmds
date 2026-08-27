@@ -14,6 +14,11 @@ def annotate(row: dict[str, int]) -> dict[str, str]:
     return {"label": f"v{row['value']}"}
 
 
+def empty_update(row: dict) -> dict:
+    """Test Map UDF that intentionally replaces a row with an empty mapping."""
+    return {}
+
+
 def join_rows_share_incident_id(left: dict, right: dict) -> bool:
     """Test join predicate: both rows share the same string ``incident_id``."""
     return left.get("incident_id") == right.get("incident_id")

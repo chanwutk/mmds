@@ -2,10 +2,18 @@ from __future__ import annotations
 
 import math
 from datetime import datetime, timedelta, timezone
+from numbers import Real
 from typing import Any
 
 _VEHICLE_CLASSES = frozenset({"sedan", "suv", "truck"})
 _DEFAULT_FPS = 30.0 # Default fps for tracking timestamps
+
+
+def _finite_number(value: Any) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, Real):
+        return None
+    number = float(value)
+    return number if math.isfinite(number) else None
 
 # IoU association threshold for linking a detection to a track.
 _TRACK_IOU_THRESHOLD = 0.3
@@ -419,9 +427,9 @@ def _summarize_track(
         )
 
     confidences = [
-        float(detection["confidence"])
+        confidence
         for detection in ordered
-        if isinstance(detection.get("confidence"), (int, float))
+        if (confidence := _finite_number(detection.get("confidence"))) is not None
     ]
     confidence = sum(confidences) / len(confidences) if confidences else 0.0
 
@@ -434,8 +442,8 @@ def _summarize_track(
     # Used downstream to extract a single crop for appearance labeling.
     rep_detection = max(
         ordered,
-        key=lambda detection: float(detection["confidence"])
-        if isinstance(detection.get("confidence"), (int, float))
+        key=lambda detection: _finite_number(detection.get("confidence"))
+        if _finite_number(detection.get("confidence")) is not None
         else -1.0,
     )
     rep_frame_id = rep_detection.get("frame_id")
@@ -614,8 +622,7 @@ def _track_is_substantial(
     """
     path = summary.get("centroid_path")
     frame_count = len(path) if isinstance(path, list) else 0
-    confidence = summary.get("confidence")
-    confidence = float(confidence) if isinstance(confidence, (int, float)) else 0.0
+    confidence = _finite_number(summary.get("confidence")) or 0.0
     return frame_count >= min_frames and confidence >= min_confidence
 
 

@@ -245,6 +245,9 @@ def Detect(
 
     Only frames actually sampled under ``frame_stride`` contribute ``bboxes``;
     their ``frame_idx`` values remain absolute indices into the source video.
+    Detection cost grows linearly with the number of decoded frames and input
+    rows; ``frame_stride=1`` with a large ``imgsz`` is a quality-first,
+    demo-scale configuration rather than a production throughput default.
     """
     if not isinstance(video_field, str) or not video_field:
         raise TypeError("Detect video_field must be a non-empty string.")

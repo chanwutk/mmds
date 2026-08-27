@@ -1,15 +1,6 @@
-"""Deprecated compatibility imports for example trajectory evaluation."""
+"""Compatibility re-export of packaged trajectory evaluation helpers."""
 
-from warnings import warn
-
-warn(
-    "mmds.join.eval_trajectories is deprecated; import evaluation helpers from "
-    "mmds.case_studies.trajectory_evaluation instead.",
-    DeprecationWarning,
-    stacklevel=2,
-)
-
-from mmds.case_studies.trajectory_evaluation import (  # noqa: E402,F401
+from mmds.case_studies.trajectory_evaluation import (
     CostReport,
     EvalReport,
     TrajectoryMatch,

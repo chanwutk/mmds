@@ -5,6 +5,7 @@ __pycache__/
 .mypy_cache/
 .pytest_cache/
 .ruff_cache/
+.DS_Store
 
 # YOLOE / Ultralytics artifacts (downloaded when running Detect examples)
 mobileclip_blt.ts
@@ -16,3 +17,14 @@ data/vehicle_color/
 
 # Local UCA / UCF-Crime video files (symlink or copy; do not commit binaries)
 data/uca/videos/*.mp4
+
+# Local research-dataset media (manifests and ground truth stay committed)
+data/i24v_traffic/videos/*.mp4
+!data/i24v_traffic/videos/highway2.mp4
+!data/i24v_traffic/videos/highway3.mp4
+data/campus_traffic/*.mp4
+data/campus_traffic/drone/*.png
+data/campus_traffic/infra/*.png
+
+# Generated detection output
+data/i24v_traffic_highway2_highway3_5s_nmsed.json

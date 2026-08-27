@@ -93,23 +93,45 @@ def _l2_normalize(vector: list[float]) -> list[float]:
     return [value / norm for value in vector]
 
 
-def _cnn_embed(crop: Any) -> list[float] | None:
-    """CNN appearance embedding, or ``None`` if the CNN path is unavailable."""
+def _cnn_embed_batch(
+    crops: list[Any],
+    *,
+    batch_size: int,
+) -> list[list[float] | None]:
+    """Return bounded-batch CNN embeddings, preserving input positions."""
+    results: list[list[float] | None] = [None] * len(crops)
     with _model_lock:
         model = _load_backbone()
         if model is None:
-            return None
-        try:
-            import torch
+            return results
+        for start in range(0, len(crops), batch_size):
+            batch = crops[start : start + batch_size]
+            try:
+                import torch
 
-            tensor = _preprocess(crop)
-            if tensor is None:
-                return None
-            with torch.no_grad():
-                features = model(tensor)
-            return _l2_normalize([float(v) for v in features.reshape(-1).tolist()])
-        except Exception:
-            return None
+                valid = [
+                    (offset, tensor)
+                    for offset, crop in enumerate(batch)
+                    if (tensor := _preprocess(crop)) is not None
+                ]
+                if not valid:
+                    continue
+                tensors = torch.cat([tensor for _, tensor in valid], dim=0)
+                with torch.no_grad():
+                    features = model(tensors)
+                for (offset, _), feature in zip(valid, features):
+                    results[start + offset] = _l2_normalize(
+                        [float(value) for value in feature.reshape(-1).tolist()]
+                    )
+            except Exception:
+                # Leave this batch empty so the histogram fallback handles it.
+                continue
+    return results
+
+
+def _cnn_embed(crop: Any) -> list[float] | None:
+    """CNN appearance embedding, or ``None`` if the CNN path is unavailable."""
+    return _cnn_embed_batch([crop], batch_size=1)[0]
 
 
 def _histogram_embed(crop: Any) -> list[float] | None:
@@ -128,16 +150,30 @@ def _histogram_embed(crop: Any) -> list[float] | None:
     return _l2_normalize(hist.tolist())
 
 
-def embed_crop(crop: Any) -> list[float] | None:
-    """Return an appearance embedding for a BGR crop, or ``None`` if unusable.
+def embed_crops(
+    crops: list[Any],
+    *,
+    batch_size: int = 32,
+) -> list[list[float] | None]:
+    """Return appearance embeddings in bounded batches.
 
-    Prefers the CNN backbone; falls back to the color histogram when the CNN is
-    unavailable. Never raises.
+    CNN failures fall back independently to the offline histogram descriptor,
+    preserving the input order and result count.
     """
-    vector = _cnn_embed(crop)
-    if vector is not None:
-        return vector
-    return _histogram_embed(crop)
+    if isinstance(batch_size, bool) or not isinstance(batch_size, int) or batch_size <= 0:
+        raise ValueError("batch_size must be a positive integer.")
+    if not crops:
+        return []
+    vectors = _cnn_embed_batch(crops, batch_size=batch_size)
+    return [
+        vector if vector is not None else _histogram_embed(crop)
+        for crop, vector in zip(crops, vectors)
+    ]
+
+
+def embed_crop(crop: Any) -> list[float] | None:
+    """Return one embedding, preserving the original single-item API."""
+    return embed_crops([crop], batch_size=1)[0]
 
 
 def cosine_similarity(left: Any, right: Any) -> float:

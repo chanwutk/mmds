@@ -88,5 +88,6 @@ def __getattr__(name: str):
 
 def main() -> None:
     print(
-        "MMDS exposes a Python DSL. Import Input, Map, Filter, Reduce, Unnest, Record, and ForEach from mmds."
+        "MMDS exposes a Python DSL. Import Input, Map, Filter, Reduce, Unnest, "
+        "Split, Join, Detect, Record, and ForEach from mmds."
     )

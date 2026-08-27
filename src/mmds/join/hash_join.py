@@ -1,21 +1,30 @@
 from __future__ import annotations
 
+import math
+import warnings
 from collections import defaultdict
 from collections.abc import Callable, Iterable, Iterator
+from numbers import Real
 from typing import Any
 
 from ..model import MMDSValidationError, Row
-
-# Hash key for cross-camera vehicle appearance matching
-VEHICLE_APPEARANCE_KEYS: tuple[str, ...] = ("vehicle_class", "color", "subtype")
 
 JoinPredicate = Callable[[Row, Row], bool]
 JoinScore = Callable[[Row, Row], float]
 
 
-def vehicle_appearance_hash_key(row: Row) -> tuple[Any, ...] | None:
-    """Hash bucket key for cross-camera vehicle appearance matching."""
-    return join_hash_key(row, VEHICLE_APPEARANCE_KEYS)
+def __getattr__(name: str) -> Any:
+    if name not in {"VEHICLE_APPEARANCE_KEYS", "vehicle_appearance_hash_key"}:
+        raise AttributeError(name)
+    warnings.warn(
+        f"mmds.join.hash_join.{name} is deprecated; import it from "
+        "udfs.join_ops instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    from udfs import join_ops
+
+    return getattr(join_ops, name)
 
 
 def join_hash_key(row: Row, keys: tuple[str, ...]) -> tuple[Any, ...] | None:
@@ -116,7 +125,9 @@ def one_to_one_hash_join(
 ) -> Iterator[Row]:
     """
     Greedy one-to-one join over hash buckets.
-    Complexity is O(|left| + |right| + n log n), where n is the number of candidate pairs in all matching buckets.
+    With hash keys, complexity is O(|left| + |right| + n log n), where n is
+    the number of candidate pairs in matching buckets. Without keys, candidate
+    generation is O(|left| * |right|).
     
     Candidate pairs inside each bucket must pass ``predicate`` (when set) and
     ``score_fn``. Pairs are sorted by descending score; each ``left_key`` and
@@ -206,9 +217,15 @@ def _maybe_add_candidate(
         raise MMDSValidationError(
             "Join score UDFs must be binary callables: score(left, right) -> number."
         ) from exc
-    if not isinstance(raw_score, (int, float)):
-        return
+    if isinstance(raw_score, bool) or not isinstance(raw_score, Real):
+        raise MMDSValidationError(
+            "Join score UDFs must return a finite real number."
+        )
     score = float(raw_score)
+    if not math.isfinite(score):
+        raise MMDSValidationError(
+            "Join score UDFs must return a finite real number."
+        )
     if min_score is not None and score < float(min_score):
         return
     candidates.append((score, dict(left), dict(right)))

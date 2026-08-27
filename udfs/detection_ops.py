@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from udfs.vehicle_color_model import predict_color_from_crop
+from udfs.vehicle_color_model import predict_color_from_crop, predict_colors_from_crops
 
 
 # YOLOE conf scores are model-internal (0–1); Ultralytics defaults drop boxes below ~0.25.
@@ -447,6 +447,40 @@ def predict_vehicle_attributes(
     }
 
 
+def predict_vehicle_attributes_batch(
+    vehicle_classes: list[str],
+    bboxes: list[list[float]],
+    crops: list[Any],
+    *,
+    batch_size: int = 32,
+) -> list[dict[str, str]]:
+    """Predict attributes for aligned vehicle boxes with batched color inference."""
+    if not (len(vehicle_classes) == len(bboxes) == len(crops)):
+        raise ValueError("vehicle_classes, bboxes, and crops must have equal lengths.")
+    learned_colors = predict_colors_from_crops(crops, batch_size=batch_size)
+    attributes: list[dict[str, str]] = []
+    for vehicle_class, bbox, crop, learned_color in zip(
+        vehicle_classes, bboxes, crops, learned_colors
+    ):
+        color = learned_color
+        if color is None:
+            dominant_rgb = _dominant_rgb_from_crop(crop)
+            color = (
+                classify_vehicle_color(dominant_rgb)
+                if dominant_rgb is not None
+                else "gray"
+            )
+        attributes.append(
+            {
+                "vehicle_color": color,
+                "vehicle_sub_type": vehicle_sub_type_from_geometry(
+                    vehicle_class, bbox
+                ),
+            }
+        )
+    return attributes
+
+
 def _crop_from_frame(frame: Any, bbox: list[float]) -> Any | None:
     """Crop the bounding box to the rectangular frame dimensions."""
     if not isinstance(bbox, list) or len(bbox) != 4:
@@ -464,27 +498,21 @@ def _crop_from_frame(frame: Any, bbox: list[float]) -> Any | None:
 
 def _read_frame_at_index(video_path: str, frame_id: int) -> Any | None:
     """Read the frame at the given index from the video file. Used to load only frames with detections."""
-    import cv2
+    from mmds.utilities.video import read_frames_at_indices
 
-    cap = cv2.VideoCapture(video_path)
-    try:
-        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_id)
-        ok, frame = cap.read()
-        return frame if ok else None
-    finally:
-        cap.release()
+    return read_frames_at_indices(video_path, [frame_id]).get(frame_id)
 
 
 def _video_path_from_row(row: dict[str, Any], *, video_field: str = "video") -> str | None:
     """Resolve the absolute path to the source video file referenced by this row."""
-    from mmds.execution.ops.detect import _resolve_video_source
+    from mmds.utilities.media import resolve_video_source
     from mmds.utilities.video import open_video
 
     raw = row.get(video_field)
     if raw is None:
         return None
     try:
-        source = _resolve_video_source(raw)
+        source = resolve_video_source(raw)
         video = open_video(source)
     except Exception:
         return None
@@ -576,12 +604,11 @@ def build_vehicle_frame_detections(
     video_path = _video_path_from_row(row, video_field=video_field)
     frame_cache: dict[int, Any] = {}
     if video_path:
-        for frame_id in boxes_by_frame:
-            frame = _read_frame_at_index(video_path, frame_id)
-            if frame is not None:
-                frame_cache[frame_id] = frame
+        from mmds.utilities.video import read_frames_at_indices
 
-    frame_detections: list[dict[str, Any]] = []
+        frame_cache = read_frames_at_indices(video_path, boxes_by_frame)
+
+    pending: list[tuple[int, str, list[float], float, Any | None]] = []
     for frame_id in sorted(boxes_by_frame):
         frame = frame_cache.get(frame_id)
         for vehicle_class, box in boxes_by_frame[frame_id]:
@@ -592,17 +619,35 @@ def build_vehicle_frame_detections(
             if not isinstance(confidence, (int, float)):
                 continue
             crop = _crop_from_frame(frame, bbox) if frame is not None else None
-            attrs = predict_vehicle_attributes(vehicle_class, bbox, crop)
-            frame_detections.append(
-                {
-                    "frame_id": frame_id,
-                    "camera_id": camera_id,
-                    "bbox": [float(value) for value in bbox],
-                    "confidence": float(confidence),
-                    "vehicle_class": vehicle_class,
-                    "color": attrs["vehicle_color"],
-                    "subtype": attrs["vehicle_sub_type"],
-                }
+            pending.append(
+                (
+                    frame_id,
+                    vehicle_class,
+                    [float(value) for value in bbox],
+                    float(confidence),
+                    crop,
+                )
             )
+
+    attributes = predict_vehicle_attributes_batch(
+        [vehicle_class for _, vehicle_class, _, _, _ in pending],
+        [bbox for _, _, bbox, _, _ in pending],
+        [crop for _, _, _, _, crop in pending],
+    )
+    frame_detections: list[dict[str, Any]] = []
+    for (frame_id, vehicle_class, bbox, confidence, _), attrs in zip(
+        pending, attributes
+    ):
+        frame_detections.append(
+            {
+                "frame_id": frame_id,
+                "camera_id": camera_id,
+                "bbox": bbox,
+                "confidence": confidence,
+                "vehicle_class": vehicle_class,
+                "color": attrs["vehicle_color"],
+                "subtype": attrs["vehicle_sub_type"],
+            }
+        )
 
     return {output_field: frame_detections}

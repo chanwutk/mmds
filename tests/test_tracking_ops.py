@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -11,8 +13,10 @@ if str(ROOT) not in sys.path:
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
+from mmds import Filter, Input, execute  # noqa: E402
 from udfs.tracking_ops import (  # noqa: E402
     StrongSortTracker,
+    is_substantial_track,
     project_track_summary_row,
     promote_track_summary_row,
     strongsort_track_frame_detections,
@@ -79,30 +83,27 @@ class TrackSummaryTests(unittest.TestCase):
             "video": {"start": 0, "end": 5},
             "frame_detections": [
                 {
-                    "frame_id": 10,
+                    "frame_id": 10 + index,
                     "camera_id": "cam-i24v-highway2",
-                    "bbox": [100.0, 200.0, 200.0, 300.0],
-                    "confidence": 0.9,
+                    "bbox": [
+                        100.0 + 10 * index,
+                        200.0 + 5 * index,
+                        200.0 + 10 * index,
+                        300.0 + 5 * index,
+                    ],
+                    "confidence": confidence,
                     "vehicle_class": "suv",
                     "color": "black",
                     "subtype": "suv",
-                },
-                {
-                    "frame_id": 11,
-                    "camera_id": "cam-i24v-highway2",
-                    "bbox": [110.0, 205.0, 210.0, 305.0],
-                    "confidence": 0.88,
-                    "vehicle_class": "suv",
-                    "color": "black",
-                    "subtype": "suv",
-                },
+                }
+                for index, confidence in enumerate((0.9, 0.88, 0.89, 0.89, 0.89))
             ],
         }
         result = strongsort_track_frame_detections(row)
         summaries = result["track_summaries"]
         self.assertEqual(len(summaries), 1)
         summary = summaries[0]
-        self.assertEqual(summary["track_id"], "suv-1")
+        self.assertEqual(summary["track_id"], "veh-1")
         self.assertEqual(summary["camera_id"], "cam-i24v-highway2")
         self.assertEqual(summary["vehicle_class"], "suv")
         self.assertEqual(summary["color"], "black")
@@ -111,7 +112,7 @@ class TrackSummaryTests(unittest.TestCase):
         self.assertIn("end_time", summary)
         self.assertGreater(summary["avg_speed"], 0.0)
         self.assertIn(summary["entry_direction"], {"E", "NE", "N", "NW", "W", "SW", "S", "SE", "stationary"})
-        self.assertEqual(len(summary["centroid_path"]), 2)
+        self.assertEqual(len(summary["centroid_path"]), 5)
         self.assertAlmostEqual(summary["confidence"], 0.89, places=2)
 
     def test_promote_track_summary_row(self) -> None:
@@ -155,6 +156,58 @@ class TrackSummaryTests(unittest.TestCase):
         self.assertNotIn("detections", projected)
         self.assertNotIn("frame_detections", projected)
         self.assertNotIn("video", projected)
+
+
+class FragmentThresholdTests(unittest.TestCase):
+    def _track(self, *, frames: int, confidence: object) -> dict:
+        return {
+            "track_id": "veh-1",
+            "centroid_path": [
+                {"frame_id": index, "x": 1.0, "y": 2.0}
+                for index in range(frames)
+            ],
+            "confidence": confidence,
+        }
+
+    def test_requires_minimum_frame_count(self) -> None:
+        self.assertFalse(is_substantial_track(self._track(frames=4, confidence=0.9)))
+
+    def test_requires_minimum_confidence(self) -> None:
+        self.assertFalse(is_substantial_track(self._track(frames=5, confidence=0.14)))
+
+    def test_accepts_exact_thresholds(self) -> None:
+        self.assertTrue(is_substantial_track(self._track(frames=5, confidence=0.15)))
+
+    def test_invalid_and_non_finite_confidence_are_not_substantial(self) -> None:
+        for confidence in (None, "high", True, float("nan"), float("inf")):
+            with self.subTest(confidence=confidence):
+                self.assertFalse(
+                    is_substantial_track(
+                        self._track(frames=5, confidence=confidence)
+                    )
+                )
+
+    def test_filter_execution_drops_fragment_rows(self) -> None:
+        rows = [
+            self._track(frames=5, confidence=0.2),
+            {**self._track(frames=1, confidence=0.99), "track_id": "fragment"},
+        ]
+        handle = tempfile.NamedTemporaryFile(
+            "w",
+            suffix=".jsonl",
+            delete=False,
+            encoding="utf-8",
+        )
+        try:
+            for row in rows:
+                handle.write(json.dumps(row))
+                handle.write("\n")
+            handle.close()
+            result = execute(Filter(Input(handle.name), is_substantial_track))
+        finally:
+            Path(handle.name).unlink(missing_ok=True)
+
+        self.assertEqual([row["track_id"] for row in result], ["veh-1"])
 
 
 if __name__ == "__main__":

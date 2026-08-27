@@ -11,6 +11,7 @@ from urllib.parse import urlparse
 from urllib.request import url2pathname
 
 from ...model import MMDSValidationError, PromptSpec, ResolvedPrompt, expand_output_schema
+from ...utilities.media import resolve_local_media_path
 
 logger = logging.getLogger(__name__)
 _VIDEO_TYPES = {"video", "videoview"}
@@ -18,7 +19,12 @@ _IMAGE_TYPES = {"image"}
 
 
 class GeminiPromptExecutor:
-    """Prompt executor backed by the Gemini API."""
+    """Prompt executor backed by the Gemini API.
+
+    When ``media_root`` is set, every local path uploaded from prompt data must
+    resolve to a regular file beneath that root. ``None`` retains unrestricted
+    local-path behavior for backward compatibility.
+    """
 
     def __init__(
         self,
@@ -29,6 +35,7 @@ class GeminiPromptExecutor:
         types_module: Any | None = None,
         poll_interval_seconds: float = 5.0,
         file_ready_timeout_seconds: float = 300.0,
+        media_root: str | Path | None = None,
     ) -> None:
         self.model = model
         self.api_key = api_key
@@ -36,6 +43,9 @@ class GeminiPromptExecutor:
         self._types = types_module
         self.poll_interval_seconds = poll_interval_seconds
         self.file_ready_timeout_seconds = file_ready_timeout_seconds
+        self.media_root = (
+            Path(media_root).expanduser().resolve() if media_root is not None else None
+        )
         self._uploaded_files: dict[str, tuple[str, str | None]] = {}
         # Cumulative usage counters across every generate_content call. Reset
         # with reset_usage() to meter a single pipeline run.
@@ -204,7 +214,21 @@ class GeminiPromptExecutor:
         )
 
     def _upload_file(self, path_value: Any, client: Any) -> tuple[str, str | None]:
-        path = str(Path(path_value))
+        try:
+            if self.media_root is None:
+                local_path = Path(path_value).expanduser()
+            else:
+                local_path = resolve_local_media_path(
+                    path_value,
+                    media_root=self.media_root,
+                )
+        except MMDSValidationError:
+            raise
+        except (TypeError, ValueError) as exc:
+            raise MMDSValidationError(
+                f"Local media paths must be path-like values, got {path_value!r}."
+            ) from exc
+        path = str(local_path)
         cached = self._uploaded_files.get(path)
         if cached is not None:
             return cached

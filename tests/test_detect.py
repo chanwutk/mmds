@@ -16,10 +16,10 @@ import numpy as np  # noqa: E402
 
 from mmds import Detect, Input  # noqa: E402
 from mmds.model import DatasetExpr, DetectSpec, MMDSValidationError  # noqa: E402
+from mmds.utilities.media import resolve_video_source  # noqa: E402
 from mmds.execution.ops.detect import (  # noqa: E402
     _apply_detect,
     _detect_in_video,
-    _resolve_video_source,
 )
 
 
@@ -299,51 +299,51 @@ class DetectDSLTests(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# _resolve_video_source
+# resolve_video_source
 # ---------------------------------------------------------------------------
 
 
 class ResolveVideoSourceTests(unittest.TestCase):
     def test_plain_string(self) -> None:
-        self.assertEqual(_resolve_video_source("/data/clip.mp4"), "/data/clip.mp4")
+        self.assertEqual(resolve_video_source("/data/clip.mp4"), "/data/clip.mp4")
 
     def test_dict_with_source_key(self) -> None:
         self.assertEqual(
-            _resolve_video_source({"source": "s3://bucket/v.mp4"}), "s3://bucket/v.mp4"
+            resolve_video_source({"source": "s3://bucket/v.mp4"}), "s3://bucket/v.mp4"
         )
 
     def test_dict_with_path_key(self) -> None:
         self.assertEqual(
-            _resolve_video_source({"path": "/local/v.mp4"}), "/local/v.mp4"
+            resolve_video_source({"path": "/local/v.mp4"}), "/local/v.mp4"
         )
 
     def test_dict_with_uri_key(self) -> None:
         self.assertEqual(
-            _resolve_video_source({"uri": "https://yt.com/v"}), "https://yt.com/v"
+            resolve_video_source({"uri": "https://yt.com/v"}), "https://yt.com/v"
         )
 
     def test_dict_prefers_source_over_path(self) -> None:
         self.assertEqual(
-            _resolve_video_source({"source": "s", "path": "p"}),
+            resolve_video_source({"source": "s", "path": "p"}),
             "s",
         )
 
     def test_dict_without_known_keys_raises(self) -> None:
         with self.assertRaises(MMDSValidationError):
-            _resolve_video_source({"url": "https://example.com/v.mp4"})
+            resolve_video_source({"url": "https://example.com/v.mp4"})
 
     def test_int_raises(self) -> None:
         with self.assertRaises(MMDSValidationError):
-            _resolve_video_source(42)
+            resolve_video_source(42)
 
     def test_none_raises(self) -> None:
         with self.assertRaises(MMDSValidationError):
-            _resolve_video_source(None)
+            resolve_video_source(None)
 
     def test_videoview_dict_extracts_source(self) -> None:
         """VideoView dicts with start/end still resolve to the source string."""
         self.assertEqual(
-            _resolve_video_source(
+            resolve_video_source(
                 {
                     "type": "VideoView",
                     "source": "https://www.youtube.com/watch?v=abc",

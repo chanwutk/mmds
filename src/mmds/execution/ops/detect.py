@@ -4,6 +4,7 @@ import threading
 from typing import Any
 
 from ...model import DatasetExpr, DetectSpec, MMDSValidationError, Row
+from ...utilities.media import resolve_video_source
 from ...utilities.video import Video, VideoView, open_video
 
 # ---------------------------------------------------------------------------
@@ -60,32 +61,6 @@ def _get_model(model_name: str) -> Any:
 
 
 # ---------------------------------------------------------------------------
-# Video source resolution
-# ---------------------------------------------------------------------------
-
-
-def _resolve_video_source(value: Any) -> str:
-    """Extract a path/URL string from a row field value.
-
-    Accepted forms:
-    - a plain string (file path or URL)
-    - a dict with a ``"source"``, ``"path"``, or ``"uri"`` key
-    """
-    if isinstance(value, str):
-        return value
-    if isinstance(value, dict):
-        for key in ("source", "path", "uri"):
-            if key in value and isinstance(value[key], str):
-                return value[key]
-        raise MMDSValidationError(
-            "Detect: video dict must contain a 'source', 'path', or 'uri' string key."
-        )
-    raise MMDSValidationError(
-        f"Detect: video field must be a string path/URL or a dict, got {type(value).__name__!r}."
-    )
-
-
-# ---------------------------------------------------------------------------
 # Core apply function
 # ---------------------------------------------------------------------------
 
@@ -101,7 +76,7 @@ def _apply_detect(node: DatasetExpr, row: Row) -> Row:
             f"Detect: field {spec.video_field!r} is missing from the row."
         )
 
-    source = _resolve_video_source(raw)
+    source = resolve_video_source(raw)
     video = open_video(source)
     if isinstance(video, list):
         raise MMDSValidationError(

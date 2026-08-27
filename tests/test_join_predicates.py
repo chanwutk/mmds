@@ -11,7 +11,7 @@ if str(ROOT) not in sys.path:
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from mmds.join.predicates import (  # noqa: E402
+from udfs.join_ops import (  # noqa: E402
     canonical_corridor_pair,
     different_cameras,
     direction_compatible,

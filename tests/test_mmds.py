@@ -18,6 +18,7 @@ from mmds import (  # noqa: E402
     ForEach,
     GeminiPromptExecutor,
     Input,
+    Join,
     MMDSValidationError,
     Map,
     PromptSpec,
@@ -35,7 +36,7 @@ from mmds import (  # noqa: E402
     render_query,
 )
 from mmds.optimizers.rewriter.agent import build_rewrite_prompt, rewrite  # noqa: E402
-from udfs.test_ops import add_bucket, annotate, keep_large, summarize_group  # noqa: E402
+from udfs.test_ops import add_bucket, annotate, empty_update, keep_large, summarize_group  # noqa: E402
 
 
 class QueryRoundTripTests(unittest.TestCase):
@@ -270,6 +271,16 @@ class OptimizerTests(unittest.TestCase):
 
         self.assertEqual(original, optimized)
 
+    def test_rule_optimizer_preserves_self_join_identity_and_results(self) -> None:
+        input_path = _write_json_rows([{"value": 2}, {"value": 4}])
+        source = Map(Input(input_path), add_bucket)
+        plan = Join(source, source, on=("bucket",))
+
+        optimized = optimize(plan)
+
+        self.assertIs(optimized.source, optimized.right_source)
+        self.assertEqual(execute(plan), execute(optimized))
+
     def test_llm_optimizer_rewrites_and_validates_inputs(self) -> None:
         query = """
 from mmds import Input, Map, Filter, Record
@@ -294,7 +305,7 @@ output = Filter(mapped, ["keep ", Record["label"]])
 
         rewritten = rewrite(query, client, objective="latency")
         self.assertIn('output = Filter(mapped, ["keep ", Record["label"]])', rewritten)
-        self.assertIn("Record, and ForEach", build_rewrite_prompt(query, objective="latency"))
+        self.assertIn("Split, Join, Record, and ForEach", build_rewrite_prompt(query, objective="latency"))
         self.assertIn("Preserve the same Input(...) file paths.", build_rewrite_prompt(query))
 
     def test_llm_optimizer_rejects_changed_inputs(self) -> None:
@@ -366,6 +377,95 @@ class GeminiExecutorTests(unittest.TestCase):
         self.assertEqual(fake_client.files.upload_calls, ["/tmp/demo.mp4"])
         content = fake_client.models.calls[0]["contents"]
         self.assertEqual(content.parts[1].file_data.file_uri, "uploaded://video")
+
+    def test_gemini_executor_media_root_allows_relative_local_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            media = root / "demo.mp4"
+            media.write_bytes(b"video")
+            fake_client = _FakeClient('{"summary": "done"}')
+            executor = GeminiPromptExecutor(
+                client=fake_client,
+                types_module=_FakeTypes,
+                poll_interval_seconds=0.0,
+                media_root=root,
+            )
+            prompt = PromptSpec(
+                parts=("Watch ", Record["video"]),
+                output_schema={"summary": "string"},
+            )
+            resolved = ResolvedPrompt(
+                parts=("Watch ", {"type": "Video", "path": "demo.mp4"}),
+                output_schema=prompt.output_schema,
+            )
+
+            executor.execute("map", prompt, resolved, payload={}, context={})
+
+            self.assertEqual(fake_client.files.upload_calls, [str(media.resolve())])
+
+    def test_gemini_executor_media_root_rejects_path_escape(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            root = base / "media"
+            root.mkdir()
+            outside = base / "outside.mp4"
+            outside.write_bytes(b"video")
+            fake_client = _FakeClient('{"summary": "done"}')
+            executor = GeminiPromptExecutor(
+                client=fake_client,
+                types_module=_FakeTypes,
+                poll_interval_seconds=0.0,
+                media_root=root,
+            )
+            prompt = PromptSpec(
+                parts=("Watch ", Record["video"]),
+                output_schema={"summary": "string"},
+            )
+            resolved = ResolvedPrompt(
+                parts=("Watch ", {"type": "Video", "path": "../outside.mp4"}),
+                output_schema=prompt.output_schema,
+            )
+
+            with self.assertRaisesRegex(MMDSValidationError, "outside media_root"):
+                executor.execute("map", prompt, resolved, payload={}, context={})
+            self.assertEqual(fake_client.files.upload_calls, [])
+
+    def test_gemini_executor_media_root_rejects_file_url_symlink_escape(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            root = base / "media"
+            root.mkdir()
+            outside = base / "outside.mp4"
+            outside.write_bytes(b"video")
+            link = root / "linked.mp4"
+            link.symlink_to(outside)
+            fake_client = _FakeClient('{"summary": "done"}')
+            executor = GeminiPromptExecutor(
+                client=fake_client,
+                types_module=_FakeTypes,
+                poll_interval_seconds=0.0,
+                media_root=root,
+            )
+            prompt = PromptSpec(
+                parts=("Watch ", Record["video"]),
+                output_schema={"summary": "string"},
+            )
+            resolved = ResolvedPrompt(
+                parts=(
+                    "Watch ",
+                    {
+                        "type": "VideoView",
+                        "source": link.as_uri(),
+                        "start": 0,
+                        "end": 1,
+                    },
+                ),
+                output_schema=prompt.output_schema,
+            )
+
+            with self.assertRaisesRegex(MMDSValidationError, "outside media_root"):
+                executor.execute("map", prompt, resolved, payload={}, context={})
+            self.assertEqual(fake_client.files.upload_calls, [])
 
     def test_gemini_executor_accepts_source_video_uri(self) -> None:
         fake_client = _FakeClient('{"summary": "done"}')
@@ -738,6 +838,12 @@ class MapReplaceTests(unittest.TestCase):
         plan = Map(Input(input_path), add_bucket, replace=True)
         result = execute(plan)
         self.assertEqual(result, [{"bucket": 2}])
+
+    def test_map_replace_empty_mapping_yields_empty_row(self) -> None:
+        input_path = _write_jsonl_rows([{"value": 5, "extra": "drop-me"}])
+        plan = Map(Input(input_path), empty_update, replace=True)
+
+        self.assertEqual(execute(plan), [{}])
 
     def test_map_merge_retains_input_fields_by_default(self) -> None:
         input_path = _write_jsonl_rows([{"value": 5, "extra": "keep-me"}])

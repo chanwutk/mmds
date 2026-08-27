@@ -15,7 +15,11 @@ if str(SRC) not in sys.path:
 import numpy as np  # noqa: E402
 
 from udfs import vehicle_reid_model as reid  # noqa: E402
-from udfs.reid_ops import appearance_match_score, attach_track_embedding  # noqa: E402
+from udfs.reid_ops import (  # noqa: E402
+    appearance_match_score,
+    attach_track_embedding,
+    attach_track_summary_embeddings,
+)
 
 
 class CosineSimilarityTests(unittest.TestCase):
@@ -74,6 +78,40 @@ class EmbedCropFallbackTests(unittest.TestCase):
         with patch.object(reid, "_load_backbone", return_value=None):
             self.assertIsNone(reid.embed_crop(None))
 
+    def test_batch_histogram_fallback_matches_single_results(self):
+        crops = [
+            np.full((20, 20, 3), value, dtype=np.uint8)
+            for value in (20, 80, 160)
+        ]
+        with patch.object(reid, "_load_backbone", return_value=None):
+            batched = reid.embed_crops(crops, batch_size=2)
+            expected = [reid.embed_crop(crop) for crop in crops]
+        self.assertEqual(batched, expected)
+
+    def test_cnn_batches_are_bounded(self):
+        import torch
+
+        class FakeBackbone:
+            def __init__(self):
+                self.batch_sizes = []
+
+            def __call__(self, tensor):
+                self.batch_sizes.append(len(tensor))
+                means = tensor.mean(dim=(1, 2, 3))
+                return torch.stack((means, means + 1.0), dim=1)
+
+        crops = [
+            np.full((12, 12, 3), value, dtype=np.uint8)
+            for value in (10, 20, 30, 40, 50)
+        ]
+        backbone = FakeBackbone()
+        with patch.object(reid, "_load_backbone", return_value=backbone):
+            vectors = reid.embed_crops(crops, batch_size=2)
+        self.assertEqual(len(vectors), len(crops))
+        self.assertEqual(backbone.batch_sizes, [2, 2, 1])
+        for vector in vectors:
+            self.assertAlmostEqual(sum(value * value for value in vector) ** 0.5, 1.0)
+
 
 class AppearanceMatchScoreTests(unittest.TestCase):
     def test_uses_cosine_when_embeddings_present(self):
@@ -86,6 +124,12 @@ class AppearanceMatchScoreTests(unittest.TestCase):
         right = {"confidence": 0.6}
         # mean confidence = 0.7
         self.assertAlmostEqual(appearance_match_score(left, right), 0.7)
+
+    def test_mismatched_embedding_dimensions_return_zero(self):
+        left = {"embedding": [1.0, 0.0], "confidence": 0.9}
+        right = {"embedding": [1.0, 0.0, 0.0], "confidence": 0.9}
+
+        self.assertEqual(appearance_match_score(left, right), 0.0)
 
 
 class AttachTrackEmbeddingTests(unittest.TestCase):
@@ -104,6 +148,40 @@ class AttachTrackEmbeddingTests(unittest.TestCase):
         with patch.object(reid_ops, "crop_from_track_row", return_value=None):
             result = attach_track_embedding({"track_id": "t1"})
         self.assertEqual(result["embedding"], [])
+
+    def test_embeds_track_summaries_before_unnest_with_one_frame_read(self):
+        from udfs import reid_ops
+
+        frame = np.arange(12 * 12 * 3, dtype=np.uint8).reshape(12, 12, 3)
+        row = {
+            "camera_id": "cam-a",
+            "video": {"path": "/tmp/video.mp4"},
+            "track_summaries": [
+                {"track_id": "t1", "rep_frame_id": 7, "rep_bbox": [0, 0, 6, 6]},
+                {"track_id": "t2", "rep_frame_id": 7, "rep_bbox": [6, 6, 12, 12]},
+            ],
+        }
+        with patch.object(
+            reid_ops, "_video_path_from_row", return_value="/tmp/video.mp4"
+        ):
+            with patch(
+                "mmds.utilities.video.read_frames_at_indices",
+                return_value={7: frame},
+            ) as read_frames:
+                with patch.object(
+                    reid_ops,
+                    "embed_crops",
+                    return_value=[[1.0, 0.0], [0.0, 1.0]],
+                ) as embed_batch:
+                    result = attach_track_summary_embeddings(row, batch_size=2)
+
+        read_frames.assert_called_once_with("/tmp/video.mp4", [7, 7])
+        self.assertEqual(embed_batch.call_args.kwargs["batch_size"], 2)
+        self.assertEqual(
+            [summary["embedding"] for summary in result["track_summaries"]],
+            [[1.0, 0.0], [0.0, 1.0]],
+        )
+        self.assertNotIn("embedding", row["track_summaries"][0])
 
 
 if __name__ == "__main__":

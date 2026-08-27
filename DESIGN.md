@@ -62,7 +62,7 @@ The current implementation intentionally does not support:
 - inline lambdas
 - nested functions or callables outside `udfs.*`
 - loops, conditionals, comprehensions, classes, or arbitrary Python control flow in query files
-- joins, sorts, projections, or cost-based optimization beyond hash join
+- sorts, projections, or cost-based optimization beyond hash join
 - automatic `.py` implementation synthesis from `.pyi`
 - nested `ForEach(...)`
 - provider-specific media syntax in the DSL
@@ -192,7 +192,8 @@ It has two jobs:
 
 Normalization behavior:
 
-- always emits `from mmds import Input, Map, Filter, Reduce, Unnest, Record, ForEach`
+- always emits the required names from `Input`, `Map`, `Filter`, `Reduce`,
+  `Unnest`, `Split`, `Join`, `Record`, and `ForEach`
 - emits grouped `from udfs... import ...` lines for referenced UDFs
 - uses double-quoted string literals
 - renders structured prompt lists explicitly
@@ -295,6 +296,11 @@ Gemini executor behavior:
 - expands concise MMDS output schemas into object-shaped JSON Schema and requests JSON output using Gemini structured output config
 - uses a bare boolean schema for `Filter`
 - uses the operator-provided output field schema for `Map` and `Reduce`
+- accepts an optional `media_root`; when configured, local `path`, scheme-less
+  `source`, and `file://` inputs are resolved canonically and must remain under
+  that root after symlink resolution
+- leaves remote URIs and inline bytes outside the local-path sandbox
+- preserves legacy unrestricted local-path behavior when `media_root=None`
 
 This design follows Gemini’s official support for video inputs and structured JSON output. Sources used to align the design and implementation:
 
@@ -331,19 +337,24 @@ Design rules:
 - the OpenCV/NumPy stack (and, at run time, `torch`/`ultralytics`) is imported **lazily**: `mmds.execution` imports `.ops.detect` only when a `detect` node actually executes, and `mmds.VideoView` is a lazy export via module `__getattr__`. This keeps `import mmds` and the prompt/UDF execution paths usable without the heavy CV/ML dependencies installed.
 - `Detect` is **not** parsed from or rendered back to DSL text (it is for internal/programmatic use only)
 
-### Join predicates (library)
+### Join predicates (case-study UDFs)
 
-Cross-camera relational filters live in [src/mmds/join/predicates.py](src/mmds/join/predicates.py).
-The UDF wrapper [udfs/join_ops.py](udfs/join_ops.py) exposes `same_vehicle(left, right)` and
-`vehicle_match_score(left, right)` for the flat self-join, plus `tracks_temporally_overlap(left, right)`
-and `temporal_iou_score(left, right)` for the two-branch cross-camera hybrid join.
+Reusable cross-camera case-study helpers live in the lazy
+[`mmds.case_studies`](src/mmds/case_studies/) namespace, outside the generic
+Join runtime. Explicit UDF entrypoints in [udfs/join_ops.py](udfs/join_ops.py)
+preserve the `udfs.*` callable contract and expose `same_vehicle(left, right)`,
+`vehicle_match_score(left, right)`, `temporal_overlap(left, right)`, and
+`temporal_iou(left, right)`.
+The old `mmds.join.predicates` and package-level domain exports are one-release
+deprecation shims; new code must import the UDF modules directly.
 
 `temporal_overlap` returns `True` when the two tracks' `[start_time, end_time]` intervals overlap
 (with a small `_MAX_SYNC_OVERLAP_SEC` tolerance for synchronized feeds); `temporal_iou` returns the
 intersection-over-union of those intervals in seconds and is used as the greedy one-to-one match score.
 
-Text↔clip retrieval helpers live in [src/mmds/join/text_retrieval.py](src/mmds/join/text_retrieval.py).
-The UDF wrapper [udfs/retrieval_ops.py](udfs/retrieval_ops.py) exposes
+Text↔clip retrieval helpers live in
+[src/mmds/case_studies/text_retrieval.py](src/mmds/case_studies/text_retrieval.py);
+[udfs/retrieval_ops.py](udfs/retrieval_ops.py) exposes the UDF wrappers
 `tag_gallery_video`, `format_gt_caption_clip`, and `group_gt_clips_by_video`.
 The UCA example treats `data/uca/annotation_excerpt.json` as ground truth: Join
 captions to gallery videos on `video_id`, Map each caption to a clip, then Reduce
@@ -351,7 +362,14 @@ by `video_id` into annotation_excerpt-style rows (`duration` / `timestamps` /
 `sentences`). Gallery/caption inputs are assumed scoped to Abuse001/002/003.
 
 Soft-reference trajectory evaluation lives in
-[src/mmds/join/eval_trajectories.py](src/mmds/join/eval_trajectories.py).
+[src/mmds/case_studies/trajectory_evaluation.py](src/mmds/case_studies/trajectory_evaluation.py)
+and is re-exported by
+[examples/support/trajectory_evaluation.py](examples/support/trajectory_evaluation.py);
+traffic trajectory helpers live in
+[src/mmds/case_studies/trajectory.py](src/mmds/case_studies/trajectory.py) with
+UDF wrappers in [udfs/trajectory_ops.py](udfs/trajectory_ops.py).
+The old `mmds.join.eval_trajectories`, `mmds.join.trajectory`, and
+`mmds.join.text_retrieval` modules remain deprecation shims for one release.
 It compares UDF join trajectories (e.g. `examples/join_cross_camera_vehicle.py`)
 to an LLM baseline (e.g. `examples/semantic_join_cross_camera_vehicle.py`) via
 greedy one-to-one matching on per-camera timeline IoU plus soft attribute
@@ -364,7 +382,7 @@ Per shared camera, interval IoU is gated: the camera contributes `0.0` unless
 (default `1.0` seconds; pass `None` / CLI `--max-endpoint-delta -1` to disable).
 Missing / extra cameras still contribute `0.0`. The semantic output is a **soft
 reference**, not oracle ground truth. The driver
-[examples/compare_cross_camera_joins.py](examples/compare_cross_camera_joins.py)
+[examples/eval_cross_camera_join.py](examples/eval_cross_camera_join.py)
 reports precision / recall / F1 and cost proxies (wall time + prompt call count +
 Gemini token counts). `GeminiPromptExecutor` accumulates
 `response.usage_metadata` across calls (`prompt_tokens` / `candidates_tokens` /
@@ -409,7 +427,7 @@ For cross-camera vehicle matching, the intended hash key is:
 hash_key = (vehicle_class, color, subtype)
 ```
 
-(`VEHICLE_APPEARANCE_KEYS` in `hash_join.py`.)
+(`VEHICLE_APPEARANCE_KEYS` in `udfs/join_ops.py`.)
 
 When `one_to_one=True`, candidate pairs inside each bucket are filtered by the optional
 `predicate`, scored with `score(left, right)`, sorted by descending score, and greedily matched
@@ -418,17 +436,33 @@ so each `left_key` / `right_key` identity appears at most once. Output rows are
 
 `Join` and `Split` are parsed from and rendered back to DSL text. `Detect` remains programmatic-only.
 
-#### Hybrid cross-camera vehicle join
+#### Demo-scale performance limits
 
-[examples/hybrid_join_cross_camera_vehicle.py](examples/hybrid_join_cross_camera_vehicle.py) is a
-cost-optimized middle ground between the local UDF join and the full-video semantic join. It keeps
-detection, tracking, and joining local, and spends only a tiny amount of Gemini: one cropped still per
-track (not video) to label constrained-enum appearance attributes.
+The cross-camera vehicle example is quality-first and intentionally
+demo-scale:
 
-- The two feeds are split into distinct branches with `Filter` (`udfs/camera_ops.py`
-  `keep_highway2` / `keep_highway3`), so this is a true **cross-camera** join rather than a flat
-  self-join — the `different_cameras`, `canonical_corridor_pair`, `direction_compatible`, and
-  `speed_compatible` checks are all dropped.
+- `Detect(frame_stride=1, imgsz=1280)` runs YOLOE on every frame so small,
+  fast-moving vehicles remain trackable. Runtime grows linearly with cameras
+  and decoded frames; use shorter clips, a larger `frame_stride`, or a smaller
+  `imgsz` for exploratory runs.
+- the appearance self-join deliberately omits `on=` because exact
+  class/color/subtype buckets reduced recall when labels differed across
+  cameras. Without hash keys, candidate generation is `O(T²)` in the number of
+  tracks. This is acceptable for the documented five-second fixture, not for
+  unbounded feeds.
+- the executor still evaluates a shared self-join subtree once, so Detect,
+  tracking, and embedding are not duplicated.
+
+Production-scale deployments need measured batching/blocking strategies tied
+to a target workload and accuracy benchmark; this design does not silently
+trade recall for throughput.
+
+#### Cross-camera vehicle pipeline
+
+[examples/join_cross_camera_vehicle.py](examples/join_cross_camera_vehicle.py)
+keeps detection, tracking, appearance embedding, joining, and trajectory export
+local. It uses the following case-study components:
+
 - NMS is **class-agnostic**: `udfs/detection_ops.py` `nms_vehicle_detections` pools all vehicle
   boxes in a frame across classes before suppression, so when YOLOE labels the same physical
   vehicle with two overlapping boxes (e.g. `sedan` and `suv`), only the highest-confidence one
@@ -446,7 +480,8 @@ track (not video) to label constrained-enum appearance attributes.
   churn) and a class-consistency gate (split a vehicle whenever its label flickered to `truck`).
   A robust further reduction needs global per-frame (Hungarian) assignment + a Kalman filter — i.e. a
   real StrongSORT backend — not more heuristics on the greedy matcher.
-- **Vehicle color** is predicted per box by `udfs/detection_ops.py` `predict_vehicle_attributes`.
+- **Vehicle color** is predicted in bounded per-camera batches by
+  `udfs/detection_ops.py` `predict_vehicle_attributes_batch`.
   It prefers a learned **MobileNetV3-small** classifier (`udfs/vehicle_color_model.py`) trained on
   the 8-color *Vehicle Color Recognition* dataset (Chen et al.) via
   `scripts/train_vehicle_color_model.py`; its labels are remapped onto the project color vocabulary
@@ -462,8 +497,9 @@ track (not video) to label constrained-enum appearance attributes.
   whole-crop **mean**-RGB nearest-color heuristic that biased everything toward neutral grays (averaging
   the whole box desaturates the color). Output names come from `VEHICLE_COLOR_VOCAB`. The learned model
   remains the higher-accuracy path.
-- **Fragment filtering**: the greedy IoU tracker (a stub for real StrongSORT) has no motion model,
-  so fast-moving highway vehicles fragment into many short tracks. `strongsort_track_frame_detections`
+- **Fragment filtering**: the greedy IoU tracker remains a lightweight
+  StrongSORT-shaped approximation, so fast-moving highway vehicles can fragment
+  into short tracks. `strongsort_track_frame_detections`
   drops these directly — it keeps only tracks with `>= min_track_frames` observed detections and mean
   `confidence >= min_track_confidence` (defaults `_MIN_TRACK_FRAMES=5`, `_MIN_TRACK_CONFIDENCE=0.15`;
   both overridable per call). Length is the primary signal because the detector runs at a low `conf`
@@ -471,11 +507,14 @@ track (not video) to label constrained-enum appearance attributes.
   `is_substantial_track` `Filter` predicate (both call the shared `_track_is_substantial` helper), used
   on the promoted-row path before the paid crop + Gemini steps.
 - `_summarize_track` records `rep_frame_id` and `rep_bbox` (the track's highest-confidence
-  detection); `udfs/detection_ops.py` `crop_from_track_row` slices that box out of that frame (shared
-  by the crop and re-ID ops). `udfs/crop_ops.py` `attach_track_crop` JPEG-encodes it into an
-  `{"type": "image", "bytes": ...}` prompt descriptor.
-- **Appearance re-ID** (`udfs/reid_ops.py`, `udfs/vehicle_reid_model.py`): `attach_track_embedding`
-  embeds each track's representative crop into an appearance vector, and the cross-camera `Join` in
+  detection); ordered frame reads reuse one `VideoCapture` per video row rather than reopening the
+  codec for each frame. `udfs/detection_ops.py` `crop_from_track_row` slices that box out of that
+  frame for re-ID.
+- **Appearance re-ID** (`udfs/reid_ops.py`, `udfs/vehicle_reid_model.py`): the
+  cross-camera example batches representative crops per camera row before
+  `Unnest`; the single-track `attach_track_embedding` API remains available.
+  Color and re-ID model batches are bounded to control memory and retain the
+  existing HSV/histogram fallbacks. The cross-camera `Join` in
   [examples/join_cross_camera_vehicle.py](examples/join_cross_camera_vehicle.py) **drops the exact
   `(class, color, subtype)` hash key** and scores candidate pairs by embedding **cosine similarity**
   (`appearance_match_score`), still pruned by the `same_vehicle` predicate and matched `one_to_one`.
@@ -484,15 +523,10 @@ track (not video) to label constrained-enum appearance attributes.
   0.44→1.0 and F1 0.57→0.86. The embedding is a frozen ImageNet ResNet50 penultimate feature (real
   learned appearance, no training) with a coarse RGB-histogram fallback when `torch`/weights are
   unavailable; `appearance_match_score` falls back to mean track confidence when an embedding is
-  absent, so the join always runs. `torch`/`torchvision` load lazily; the backbone is cached behind
+  absent, so the join always runs. Non-finite, boolean, or malformed confidence
+  values contribute `0.0`. Join score UDFs must return a finite real number;
+  invalid scores raise `MMDSValidationError`. `torch`/`torchvision` load lazily; the backbone is cached behind
   a lock (thread-safe under the executor pool).
-- A prompt-backed `Map` sends the crop to Gemini with a constrained enum schema for
-  `class` / `color` / `subtype`, so both cameras map to identical hash-join keys.
-- `udfs/attribute_ops.py` `project_labeled_track` promotes Gemini's `class` to `vehicle_class` and
-  keeps the identity/timing fields; `wrap_vehicle_record` wraps each exported trajectory as
-  `{"vehicles": {...}}`.
-- The join uses `on=(vehicle_class, color, subtype)` hash keys, `tracks_temporally_overlap` as the
-  predicate, and `temporal_iou_score` as the one-to-one match score.
 
 ### UDF Contract
 
@@ -523,7 +557,9 @@ The rule optimizer lives in [src/mmds/optimizers/rewriter/rule.py](/Users/chanwu
 
 Current behavior is intentionally conservative:
 
-- recursively rebuild the tree
+- recursively rebuild both unary and binary (`Join`) children
+- preserve shared child identity so canonicalizing a self-join does not disable
+  the executor's single-execution fast path
 - structurally deduplicate equivalent nodes through memoization
 
 It does not yet reorder operators, fold operators, infer safety, or reason about prompt/UDF semantics.
@@ -543,6 +579,8 @@ Flow:
 7. Return normalized rendered Python.
 
 The LLM optimizer is currently a controlled interface, not a production optimizer. It is designed to make later provider integration safe by validating every rewrite against the same parser used elsewhere.
+Its rewrite prompt permits `Split` and `Join` in addition to the original unary
+operator set; `Detect` remains programmatic-only.
 
 ## Invariants
 
@@ -576,10 +614,14 @@ The current suite covers:
 - `Unnest` behavior on scalar, empty, and missing values
 - `Split` behavior on `VideoView` clips, tail chunks, and missing bounds
 - `Detect` behavior, including `VideoView` clip slicing and absolute-frame detection indices
+- public media source/path resolution, including configured-root traversal and symlink rejection
 - video utility behavior for direct downloads, platform downloads via `yt-dlp`, and `VideoView` iteration
 - parser validation for unsupported Python and invalid prompt forms
-- optimizer result preservation and LLM rewrite validation
+- optimizer result preservation, self-join identity preservation, and LLM rewrite validation
 - Gemini prompt compilation for video URI and uploaded local file inputs
+- finite Join score validation and confidence fallback edge cases
+- fragment-filter boundaries and a synthetic Join-to-trajectory integration path
+- batched color/re-ID fallbacks and ordered multi-frame reads
 - UDF catalog discovery for `.py` and `.pyi`
 
 Primary verification command:

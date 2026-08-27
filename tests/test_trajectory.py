@@ -14,7 +14,7 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from mmds import Input, Map, execute  # noqa: E402
-from mmds.join.trajectory import (  # noqa: E402
+from udfs.trajectory_ops import (  # noqa: E402
     join_match_to_trajectory_record,
     parse_iso_timestamp,
     timeline_segment_from_track,

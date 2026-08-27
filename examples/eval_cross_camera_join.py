@@ -2,8 +2,8 @@
 
 Runs ``examples/join_cross_camera_vehicle.py`` (or loads a saved prediction
 dump), scores its cross-camera trajectories against
-``data/i24v_traffic_highway2_highway3_5s_ground_truth.json`` using the shared
-:func:`mmds.join.eval_trajectories.evaluate_trajectories`, and prints
+``data/i24v_traffic_highway2_highway3_5s_ground_truth.json`` using
+``examples.support.trajectory_evaluation.evaluate_trajectories``, and prints
 precision / recall / F1, attribute agreement, and per-match detail — including
 the specific false positives and false negatives — so join-quality changes can
 be measured before/after. Each run also reports its wall time and (for
@@ -50,11 +50,12 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from mmds import GeminiPromptExecutor, execute  # noqa: E402
-from mmds.join.eval_trajectories import (  # noqa: E402
+from examples.support.trajectory_evaluation import (  # noqa: E402
     CostReport,
     evaluate_trajectories,
     normalize_trajectory_rows,
 )
+from examples._media_preflight import require_local_media  # noqa: E402
 
 DEFAULT_QUERY = ROOT / "examples" / "join_cross_camera_vehicle.py"
 DEFAULT_SEMANTIC_QUERY = (
@@ -96,6 +97,7 @@ def _run_pipeline(
     report 0 prompt calls / tokens.
     """
     output = _load_query_output(query_path)
+    require_local_media(output, ROOT)
     prompt_executor = GeminiPromptExecutor() if use_gemini else None
     if prompt_executor is not None:
         prompt_executor.reset_usage()
@@ -336,8 +338,8 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    # Resolve relative video / data paths against the repo root regardless of
-    # the caller's working directory (matches compare_cross_camera_joins.py).
+    # Resolve relative video/data paths against the repository root regardless
+    # of the caller's working directory.
     os.chdir(ROOT)
 
     ref_rows = _load_json_array(args.ground_truth)

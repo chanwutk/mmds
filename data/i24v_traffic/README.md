@@ -1,6 +1,10 @@
 # I24V selected highway clips
 
-Eight 1080p MP4 clips from the **I24V** interstate video dataset (Gloudemans et al., WACV 2024 — *So you think you can track?*). They are a small **selected** subset of the full 234-camera release, named `highway1.mp4` … `highway8.mp4`, laid out as a linear corridor for future cross-camera / MTMC-style MMDS examples.
+The MMDS manifests describe eight selected 1080p clips from the **I24V**
+interstate video dataset (Gloudemans et al., WACV 2024 — *So you think you can
+track?*). `highway2.mp4` and `highway3.mp4` are committed so the cross-camera
+examples run without a separate dataset download. Install authorized local
+copies of the other clips only when using the full eight-camera corridor feed.
 
 ## Layout
 
@@ -8,8 +12,11 @@ Eight 1080p MP4 clips from the **I24V** interstate video dataset (Gloudemans et 
 data/i24v_traffic/
   README.md
   videos/
-    highway1.mp4 … highway8.mp4
+    .gitkeep
+    highway2.mp4, highway3.mp4  # committed example inputs
+    highway1.mp4, highway4.mp4 … highway8.mp4  # optional local inputs
 data/i24v_traffic_feed.jsonl   # one row per camera (Input target for examples)
+data/i24v_traffic_highway2_highway3_5s.jsonl  # two-camera example manifest
 ```
 
 ## Feed manifest
@@ -27,10 +34,18 @@ Clips 1–3 are ~80 s (~2411 frames); clips 4–8 are ~60 s (~1812 frames) at ~2
 
 The complete dataset (~1 TB, `.mkv` per camera) requires a free account at [i24motion.org/data](https://i24motion.org/data). Utilities live in [I24-MOTION/i24-video-dataset-utils](https://github.com/I24-MOTION/i24-video-dataset-utils).
 
-If you need to re-import from a local download folder:
+After obtaining the data under its terms, copy or symlink any optional clips
+needed by the full corridor manifest:
 
 ```bash
 cp "/path/to/I24V dataset (WACV 2024)-selected"/highway*.mp4 data/i24v_traffic/videos/
+```
+
+The bundled example files can be verified with:
+
+```bash
+test -f data/i24v_traffic/videos/highway2.mp4
+test -f data/i24v_traffic/videos/highway3.mp4
 ```
 
 ## Citation
@@ -47,4 +62,7 @@ cp "/path/to/I24V dataset (WACV 2024)-selected"/highway*.mp4 data/i24v_traffic/v
 
 ## Git
 
-Video files under `data/i24v_traffic/videos/` are gitignored (~350 MB total). Clone this repo and copy the clips locally, or symlink from your I24V download directory.
+Optional video files under `data/i24v_traffic/videos/` are gitignored.
+`highway2.mp4` and `highway3.mp4` are explicit tracked exceptions. Keep the
+manifests and hand-labeled ground truth committed, but do not add other media or
+generated detection dumps to Git.

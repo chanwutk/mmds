@@ -1,8 +1,48 @@
+"""UDF wrappers for reusable cross-camera trajectory helpers."""
+
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
-from mmds.join.trajectory import join_match_to_trajectory_record
+from mmds.case_studies import trajectory as _impl
+
+Track = dict[str, Any]
+TimelineSegment = dict[str, Any]
+TrajectoryRecord = dict[str, Any]
+
+
+def parse_iso_timestamp(value: Any) -> datetime | None:
+    return _impl.parse_iso_timestamp(value)
+
+
+def track_time_to_seconds(track: Track, *, field: str) -> float | None:
+    return _impl.track_time_to_seconds(track, field=field)
+
+
+def timeline_segment_from_track(track: Track) -> TimelineSegment | None:
+    return _impl.timeline_segment_from_track(track)
+
+
+def trajectory_attributes_from_track(track: Track) -> dict[str, str]:
+    return _impl.trajectory_attributes_from_track(track)
+
+
+def vehicle_id_from_match(upstream: Track, downstream: Track) -> str:
+    return _impl.vehicle_id_from_match(upstream, downstream)
+
+
+def join_match_to_trajectory_record(
+    left: Track,
+    right: Track,
+    *,
+    match_score: float | None = None,
+) -> TrajectoryRecord | None:
+    return _impl.join_match_to_trajectory_record(
+        left,
+        right,
+        match_score=match_score,
+    )
 
 
 def join_match_to_trajectory(row: dict[str, Any]) -> dict[str, Any]:
@@ -21,12 +61,4 @@ def join_match_to_trajectory(row: dict[str, Any]) -> dict[str, Any]:
           "match_score": <float>  # when present on the join row
         }
     """
-    left = row.get("left")
-    right = row.get("right")
-    if not isinstance(left, dict) or not isinstance(right, dict):
-        return {}
-
-    match_score = row.get("match_score")
-    score = float(match_score) if isinstance(match_score, (int, float)) else None
-    record = join_match_to_trajectory_record(left, right, match_score=score)
-    return record if record is not None else {}
+    return _impl.join_match_to_trajectory(row)

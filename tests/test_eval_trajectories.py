@@ -11,7 +11,7 @@ if str(ROOT) not in sys.path:
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from mmds.join.eval_trajectories import (  # noqa: E402
+from examples.support.trajectory_evaluation import (  # noqa: E402
     attribute_agreement,
     canonicalize_class,
     canonicalize_color,

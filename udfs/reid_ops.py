@@ -12,9 +12,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from udfs.detection_ops import crop_from_track_row
+from udfs.detection_ops import (
+    _crop_from_frame,
+    _video_path_from_row,
+    crop_from_track_row,
+)
 from udfs.join_ops import vehicle_match_score
-from udfs.vehicle_reid_model import cosine_similarity, embed_crop
+from udfs.vehicle_reid_model import cosine_similarity, embed_crop, embed_crops
 
 
 def attach_track_embedding(
@@ -34,6 +38,65 @@ def attach_track_embedding(
     crop = crop_from_track_row(row, video_field=video_field)
     embedding = embed_crop(crop) if crop is not None else None
     result[output_field] = embedding if embedding is not None else []
+    return result
+
+
+def attach_track_summary_embeddings(
+    row: dict[str, Any],
+    *,
+    video_field: str = "video",
+    summaries_field: str = "track_summaries",
+    output_field: str = "embedding",
+    batch_size: int = 32,
+) -> dict[str, Any]:
+    """Embed all track summaries in one camera row before ``Unnest``.
+
+    Representative frames are deduplicated and read through one capture, then
+    all resulting crops are embedded in bounded model batches.
+    """
+    result = dict(row)
+    summaries = row.get(summaries_field)
+    if not isinstance(summaries, list):
+        result[summaries_field] = []
+        return result
+
+    copied_summaries = [
+        dict(summary) if isinstance(summary, dict) else summary
+        for summary in summaries
+    ]
+    valid_summaries = [
+        summary for summary in copied_summaries if isinstance(summary, dict)
+    ]
+    frame_ids = [
+        summary["rep_frame_id"]
+        for summary in valid_summaries
+        if isinstance(summary.get("rep_frame_id"), int)
+    ]
+
+    frames: dict[int, Any] = {}
+    video_path = _video_path_from_row(row, video_field=video_field)
+    if video_path and frame_ids:
+        from mmds.utilities.video import read_frames_at_indices
+
+        frames = read_frames_at_indices(video_path, frame_ids)
+
+    crops: list[Any | None] = []
+    for summary in valid_summaries:
+        frame_id = summary.get("rep_frame_id")
+        bbox = summary.get("rep_bbox")
+        frame = frames.get(frame_id) if isinstance(frame_id, int) else None
+        crop = (
+            _crop_from_frame(frame, bbox)
+            if frame is not None and isinstance(bbox, list) and len(bbox) == 4
+            else None
+        )
+        crops.append(crop)
+
+    embeddings = embed_crops(crops, batch_size=batch_size)
+    for summary, embedding in zip(valid_summaries, embeddings):
+        summary[output_field] = embedding if embedding is not None else []
+
+    result[summaries_field] = copied_summaries
     return result
 
 

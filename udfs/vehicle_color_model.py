@@ -160,36 +160,65 @@ def _load_classifier(path: str) -> Any:
         return None
 
 
-def predict_color_from_crop(crop: Any, *, path: str | None = None) -> str | None:
-    """Classify a BGR vehicle crop's color, mapped to the project vocabulary.
+def predict_colors_from_crops(
+    crops: list[Any],
+    *,
+    path: str | None = None,
+    batch_size: int = 32,
+) -> list[str | None]:
+    """Classify BGR vehicle crops in bounded batches.
 
-    Returns ``None`` (signalling the caller to fall back to the RGB heuristic)
-    whenever the weights are missing, the ML stack is unavailable, the crop is
-    unusable, or inference fails. Never raises.
+    Each result is ``None`` when its crop is unusable or model inference is
+    unavailable, signalling the caller to use its HSV fallback. Model loading
+    and inference remain serialized behind ``_model_lock``.
     """
+    if isinstance(batch_size, bool) or not isinstance(batch_size, int) or batch_size <= 0:
+        raise ValueError("batch_size must be a positive integer.")
+    if not crops:
+        return []
+
     resolved = path or weights_path()
     # Cheap no-model path: if there is no checkpoint, skip importing torch.
     if resolved not in _classifier_cache and not os.path.exists(resolved):
-        return None
+        return [None] * len(crops)
 
+    results: list[str | None] = [None] * len(crops)
     with _model_lock:
         model = _load_classifier(resolved)
         if model is None:
-            return None
-        try:
-            import torch
+            return results
 
-            tensor = _preprocess_crop(crop)
-            if tensor is None:
-                return None
-            with torch.no_grad():
-                logits = model(tensor)
-            index = int(logits.argmax(dim=1).item())
-            if not 0 <= index < len(CHEN_COLOR_CLASSES):
-                return None
-            return vocab_color_for_chen_label(CHEN_COLOR_CLASSES[index])
-        except Exception:
-            return None
+        for start in range(0, len(crops), batch_size):
+            batch = crops[start : start + batch_size]
+            try:
+                import torch
+
+                valid = [
+                    (offset, tensor)
+                    for offset, crop in enumerate(batch)
+                    if (tensor := _preprocess_crop(crop)) is not None
+                ]
+                if not valid:
+                    continue
+                tensors = torch.cat([tensor for _, tensor in valid], dim=0)
+                with torch.no_grad():
+                    logits = model(tensors)
+                indices = logits.argmax(dim=1).tolist()
+                for (offset, _), index in zip(valid, indices):
+                    index = int(index)
+                    if 0 <= index < len(CHEN_COLOR_CLASSES):
+                        results[start + offset] = vocab_color_for_chen_label(
+                            CHEN_COLOR_CLASSES[index]
+                        )
+            except Exception:
+                # Leave this batch as ``None`` so callers can use HSV.
+                continue
+    return results
+
+
+def predict_color_from_crop(crop: Any, *, path: str | None = None) -> str | None:
+    """Classify one crop, preserving the original single-item API."""
+    return predict_colors_from_crops([crop], path=path, batch_size=1)[0]
 
 
 def _reset_cache_for_tests() -> None:

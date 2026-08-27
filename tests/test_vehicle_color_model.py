@@ -22,6 +22,7 @@ from udfs.vehicle_color_model import (  # noqa: E402
     _reset_cache_for_tests,
     build_color_model,
     predict_color_from_crop,
+    predict_colors_from_crops,
     vocab_color_for_chen_label,
     weights_path,
 )
@@ -102,6 +103,20 @@ class _FakeModel:
         return logits
 
 
+class _FakeBatchModel:
+    def __init__(self, index: int) -> None:
+        self._index = index
+        self.batch_sizes: list[int] = []
+
+    def __call__(self, tensor):  # noqa: ANN001
+        import torch
+
+        self.batch_sizes.append(len(tensor))
+        logits = torch.full((len(tensor), len(CHEN_COLOR_CLASSES)), -10.0)
+        logits[:, self._index] = 10.0
+        return logits
+
+
 class PredictColorTests(unittest.TestCase):
     def setUp(self) -> None:
         _reset_cache_for_tests()
@@ -151,6 +166,36 @@ class PredictColorTests(unittest.TestCase):
             ):
                 self.assertIsNone(predict_color_from_crop(None))
 
+    def test_batch_matches_single_predictions_and_is_bounded(self) -> None:
+        crops = [
+            np.full((20, 20, 3), value, dtype=np.uint8)
+            for value in (10, 20, 30, 40, 50)
+        ]
+        batch_model = _FakeBatchModel(5)
+        with patch("udfs.vehicle_color_model.os.path.exists", return_value=True):
+            with patch(
+                "udfs.vehicle_color_model._load_classifier",
+                return_value=batch_model,
+            ):
+                batched = predict_colors_from_crops(crops, batch_size=2)
+        self.assertEqual(batched, ["red"] * len(crops))
+        self.assertEqual(batch_model.batch_sizes, [2, 2, 1])
+
+        with patch("udfs.vehicle_color_model.os.path.exists", return_value=True):
+            with patch(
+                "udfs.vehicle_color_model._load_classifier",
+                return_value=_FakeModel(5),
+            ):
+                singles = [predict_color_from_crop(crop) for crop in crops]
+        self.assertEqual(batched, singles)
+
+    def test_batch_missing_weights_returns_aligned_fallback_markers(self) -> None:
+        crops = [np.full((10, 10, 3), 100, dtype=np.uint8), None]
+        self.assertEqual(
+            predict_colors_from_crops(crops, path="/definitely/not/here.pt"),
+            [None, None],
+        )
+
 
 class PredictVehicleAttributesIntegrationTests(unittest.TestCase):
     def test_uses_classifier_when_available(self) -> None:
@@ -177,6 +222,24 @@ class PredictVehicleAttributesIntegrationTests(unittest.TestCase):
             {"silver", "white", "gray", "black", "beige", "yellow",
              "red", "blue", "green", "brown"},
         )
+
+    def test_batch_falls_back_to_hsv_per_crop(self) -> None:
+        from udfs.detection_ops import predict_vehicle_attributes_batch
+
+        red = np.zeros((20, 20, 3), dtype=np.uint8)
+        red[:, :] = (0, 0, 220)
+        blue = np.zeros((20, 20, 3), dtype=np.uint8)
+        blue[:, :] = (220, 0, 0)
+        with patch(
+            "udfs.detection_ops.predict_colors_from_crops",
+            return_value=[None, None],
+        ):
+            attrs = predict_vehicle_attributes_batch(
+                ["sedan", "suv"],
+                [[0, 0, 40, 20], [0, 0, 40, 20]],
+                [red, blue],
+            )
+        self.assertEqual([item["vehicle_color"] for item in attrs], ["red", "blue"])
 
 
 if __name__ == "__main__":

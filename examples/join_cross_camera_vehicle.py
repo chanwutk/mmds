@@ -49,32 +49,32 @@ Run:
   uv run python examples/run_expr.py examples/join_cross_camera_vehicle.py
 [
   {
-    "vehicle_id": "join_unique_df442575",
+    "vehicle_id": "join_unique_074f20c7",
     "attributes": {
       "class": "sedan",
-      "color": "blue",
-      "subtype": "suv"
+      "color": "silver",
+      "subtype": "sedan"
     },
     "timeline": [
       {
         "camera_id": "cam-i24v-highway2",
-        "entered": 3.670333,
+        "entered": 3.9039,
         "exited": 4.938267
       },
       {
         "camera_id": "cam-i24v-highway3",
-        "entered": 3.9039,
+        "entered": 4.004,
         "exited": 4.938267
       }
     ],
-    "match_score": 0.9107320735240723
+    "match_score": 0.9111949592939887
   },
   {
-    "vehicle_id": "join_unique_b7398975",
+    "vehicle_id": "join_unique_918572af",
     "attributes": {
-      "class": "suv",
-      "color": "gray",
-      "subtype": "suv"
+      "class": "sedan",
+      "color": "white",
+      "subtype": "sedan"
     },
     "timeline": [
       {
@@ -85,78 +85,162 @@ Run:
       {
         "camera_id": "cam-i24v-highway3",
         "entered": 0.0,
-        "exited": 3.9039
+        "exited": 2.168833
       }
     ],
-    "match_score": 0.8830857152455046
+    "match_score": 0.9091881328974148
   },
   {
-    "vehicle_id": "join_unique_de9a7406",
+    "vehicle_id": "join_unique_de055e30",
     "attributes": {
-      "class": "suv",
-      "color": "gray",
+      "class": "sedan",
+      "color": "silver",
       "subtype": "suv"
     },
     "timeline": [
       {
         "camera_id": "cam-i24v-highway2",
+        "entered": 0.0,
+        "exited": 1.534867
+      },
+      {
+        "camera_id": "cam-i24v-highway3",
         "entered": 0.166833,
-        "exited": 3.370033
-      },
-      {
-        "camera_id": "cam-i24v-highway3",
-        "entered": 1.034367,
-        "exited": 4.938267
+        "exited": 1.7017
       }
     ],
-    "match_score": 0.857392891585414
+    "match_score": 0.9054222791578828
   },
   {
-    "vehicle_id": "join_unique_c8af37e6",
-    "attributes": {
-      "class": "suv",
-      "color": "gray",
-      "subtype": "suv"
-    },
-    "timeline": [
-      {
-        "camera_id": "cam-i24v-highway2",
-        "entered": 0.0,
-        "exited": 1.9019
-      },
-      {
-        "camera_id": "cam-i24v-highway3",
-        "entered": 0.0,
-        "exited": 4.938267
-      }
-    ],
-    "match_score": 0.854265808173901
-  },
-  {
-    "vehicle_id": "join_unique_3ac60960",
+    "vehicle_id": "join_unique_212bfca7",
     "attributes": {
       "class": "truck",
-      "color": "gray",
-      "subtype": "pickup"
+      "color": "silver",
+      "subtype": "tractor trailer"
     },
     "timeline": [
       {
         "camera_id": "cam-i24v-highway2",
-        "entered": 0.0,
-        "exited": 0.3003
+        "entered": 3.370033,
+        "exited": 4.9049
       },
       {
         "camera_id": "cam-i24v-highway3",
-        "entered": 0.0,
-        "exited": 0.133467
+        "entered": 3.336667,
+        "exited": 4.938267
+      }
+    ],
+    "match_score": 0.8935604166881397
+  },
+  {
+    "vehicle_id": "join_unique_f8784a15",
+    "attributes": {
+      "class": "sedan",
+      "color": "black",
+      "subtype": "suv"
+    },
+    "timeline": [
+      {
+        "camera_id": "cam-i24v-highway2",
+        "entered": 3.3033,
+        "exited": 4.938267
+      },
+      {
+        "camera_id": "cam-i24v-highway3",
+        "entered": 3.4034,
+        "exited": 4.938267
+      }
+    ],
+    "match_score": 0.8621495394387985
+  },
+  {
+    "vehicle_id": "join_unique_c321b9bd",
+    "attributes": {
+      "class": "suv",
+      "color": "blue",
+      "subtype": "suv"
+    },
+    "timeline": [
+      {
+        "camera_id": "cam-i24v-highway2",
+        "entered": 0.2002,
+        "exited": 3.2032
+      },
+      {
+        "camera_id": "cam-i24v-highway3",
+        "entered": 1.2012,
+        "exited": 4.3043
+      }
+    ],
+    "match_score": 0.8580926744224155
+  },
+  {
+    "vehicle_id": "join_unique_a47bdb7c",
+    "attributes": {
+      "class": "sedan",
+      "color": "black",
+      "subtype": "suv"
+    },
+    "timeline": [
+      {
+        "camera_id": "cam-i24v-highway2",
+        "entered": 0.033367,
+        "exited": 3.2032
+      },
+      {
+        "camera_id": "cam-i24v-highway3",
+        "entered": 0.867533,
+        "exited": 3.670333
+      }
+    ],
+    "match_score": 0.8542719867675412
+  },
+  {
+    "vehicle_id": "join_unique_redpickup26",
+    "attributes": {
+      "class": "truck",
+      "color": "red",
+      "subtype": "flatbed"
+    },
+    "timeline": [
+      {
+        "camera_id": "cam-i24v-highway2",
+        "entered": 0.867533,
+        "exited": 0.967633
+      },
+      {
+        "camera_id": "cam-i24v-highway3",
+        "entered": 0.867533,
+        "exited": 0.967633
       }
     ],
     "match_score": 0.8485770863825516
   },
   {
-    "vehicle_id": "join_unique_309e0cb9",
+    "vehicle_id": "join_unique_afc0460c",
     "attributes": {
-      "class": "suv",
+      "class": "sedan",
+      "color": "white",
+      "subtype": "sedan"
+    },
+    "timeline": [
+      {
+        "camera_id": "cam-i24v-highway2",
+        "entered": 0.734067,
+        "exited": 3.069733
+      },
+      {
+        "camera_id": "cam-i24v-highway3",
+        "entered": 0.767433,
+        "exited": 2.669333
+      }
+    ],
+    "match_score": 0.8449244530356607
+  },
+  {
+    "vehicle_id": "join_unique_21f13705",
+    "attributes": {
+      "class": "sedan",
       "color": "gray",
       "subtype": "suv"
     },
@@ -164,15 +248,57 @@ Run:
       {
         "camera_id": "cam-i24v-highway2",
         "entered": 0.0,
-        "exited": 0.567233
+        "exited": 0.4004
       },
       {
         "camera_id": "cam-i24v-highway3",
         "entered": 0.0,
-        "exited": 0.333667
+        "exited": 0.233567
       }
     ],
-    "match_score": 0.8106446811683293
+    "match_score": 0.8373454628992413
+  },
+  {
+    "vehicle_id": "join_unique_309e0cb9",
+    "attributes": {
+      "class": "sedan",
+      "color": "black",
+      "subtype": "sedan"
+    },
+    "timeline": [
+      {
+        "camera_id": "cam-i24v-highway2",
+        "entered": 0.0,
+        "exited": 1.735067
+      },
+      {
+        "camera_id": "cam-i24v-highway3",
+        "entered": 0.0,
+        "exited": 2.469133
+      }
+    ],
+    "match_score": 0.8317100914639672
+  },
+  {
+    "vehicle_id": "join_unique_984e4ae4",
+    "attributes": {
+      "class": "truck",
+      "color": "white",
+      "subtype": "pickup"
+    },
+    "timeline": [
+      {
+        "camera_id": "cam-i24v-highway2",
+        "entered": 2.769433,
+        "exited": 4.8048
+      },
+      {
+        "camera_id": "cam-i24v-highway3",
+        "entered": 3.470133,
+        "exited": 4.938267
+      }
+    ],
+    "match_score": 0.8184057283186698
   },
   {
     "vehicle_id": "join_unique_3b314f83",
@@ -196,109 +322,25 @@ Run:
     "match_score": 0.8029128891312
   },
   {
-    "vehicle_id": "join_unique_8550930d",
-    "attributes": {
-      "class": "sedan",
-      "color": "silver",
-      "subtype": "suv"
-    },
-    "timeline": [
-      {
-        "camera_id": "cam-i24v-highway2",
-        "entered": 0.0,
-        "exited": 1.8018
-      },
-      {
-        "camera_id": "cam-i24v-highway3",
-        "entered": 0.0,
-        "exited": 4.938267
-      }
-    ],
-    "match_score": 0.735242618498014
-  },
-  {
-    "vehicle_id": "join_unique_0d2a20f6",
-    "attributes": {
-      "class": "suv",
-      "color": "blue",
-      "subtype": "suv"
-    },
-    "timeline": [
-      {
-        "camera_id": "cam-i24v-highway2",
-        "entered": 1.968633,
-        "exited": 4.938267
-      },
-      {
-        "camera_id": "cam-i24v-highway3",
-        "entered": 3.269933,
-        "exited": 4.938267
-      }
-    ],
-    "match_score": 0.7334414300027923
-  },
-  {
-    "vehicle_id": "join_unique_036e1113",
-    "attributes": {
-      "class": "suv",
-      "color": "blue",
-      "subtype": "suv"
-    },
-    "timeline": [
-      {
-        "camera_id": "cam-i24v-highway2",
-        "entered": 0.0,
-        "exited": 3.370033
-      },
-      {
-        "camera_id": "cam-i24v-highway3",
-        "entered": 0.834167,
-        "exited": 4.938267
-      }
-    ],
-    "match_score": 0.6950238039666103
-  },
-  {
-    "vehicle_id": "join_unique_8aebf622",
+    "vehicle_id": "join_unique_3767633e",
     "attributes": {
       "class": "sedan",
       "color": "white",
-      "subtype": "suv"
+      "subtype": "sedan"
     },
     "timeline": [
       {
         "camera_id": "cam-i24v-highway2",
-        "entered": 4.637967,
-        "exited": 4.938267
+        "entered": 3.3033,
+        "exited": 4.6046
       },
       {
         "camera_id": "cam-i24v-highway3",
-        "entered": 2.8028,
-        "exited": 4.938267
+        "entered": 2.369033,
+        "exited": 4.4044
       }
     ],
-    "match_score": 0.6883508573419033
-  },
-  {
-    "vehicle_id": "join_unique_311de449",
-    "attributes": {
-      "class": "sedan",
-      "color": "white",
-      "subtype": "hatchback"
-    },
-    "timeline": [
-      {
-        "camera_id": "cam-i24v-highway2",
-        "entered": 0.0,
-        "exited": 0.9009
-      },
-      {
-        "camera_id": "cam-i24v-highway3",
-        "entered": 2.168833,
-        "exited": 4.938267
-      }
-    ],
-    "match_score": 0.6414128231195493
+    "match_score": 0.7833206389990407
   }
 ]
 """
@@ -306,7 +348,7 @@ Run:
 from mmds import Detect, Input, Join, Map, Unnest
 from udfs.detection_ops import build_vehicle_frame_detections, nms_vehicle_detections
 from udfs.join_ops import same_vehicle
-from udfs.reid_ops import appearance_match_score, attach_track_embedding
+from udfs.reid_ops import appearance_match_score, attach_track_summary_embeddings
 from udfs.tracking_ops import (
     project_track_summary_row,
     promote_track_summary_row,
@@ -335,18 +377,18 @@ framed = Map(nmsed, build_vehicle_frame_detections)
 
 tracked = Map(framed, strongsort_track_frame_detections)
 
+# Read representative frames once per camera and embed all track crops in
+# bounded batches before exploding the summaries into individual rows.
+embedded = Map(tracked, attach_track_summary_embeddings, replace=True)
+
 # Unnest track_summaries to one row per track
-unnested = Unnest(tracked, "track_summaries")
+unnested = Unnest(embedded, "track_summaries")
 
 # Flatten track_summaries to the row top level for joining
 promoted = Map(unnested, promote_track_summary_row, replace=True)
 
-# Attach a per-track appearance embedding (from the representative crop) for
-# re-identification across cameras.
-embedded = Map(promoted, attach_track_embedding, replace=True)
-
 # Keep only fields needed for cross-camera join and trajectory export
-track_rows = Map(embedded, project_track_summary_row, replace=True)
+track_rows = Map(promoted, project_track_summary_row, replace=True)
 
 # Self-join across camera feeds. Candidate pairs are pruned by same_vehicle
 # (different cameras, corridor order, travel-time / direction / speed) and

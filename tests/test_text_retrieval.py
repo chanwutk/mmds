@@ -11,7 +11,7 @@ if str(ROOT) not in sys.path:
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from mmds.join.text_retrieval import (  # noqa: E402
+from udfs.retrieval_ops import (  # noqa: E402
     format_gt_caption_clip,
     group_gt_clips_by_video,
     tag_gallery_video,
