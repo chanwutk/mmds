@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
@@ -50,6 +50,34 @@ def _execute_node(
         yield from _load_input_rows(node.input_path, base_path=base_path)
         return
 
+    if node.kind == "join":
+        if node.source is None or node.right_source is None:
+            raise MMDSValidationError("Join nodes require left and right sources.")
+        from .ops.join import _apply_join
+
+        if node.source is node.right_source:
+            # Self-join: both inputs are the *same* plan node (e.g. the
+            # cross-camera vehicle join feeds one track stream to both sides).
+            # Execute the shared subtree once and reuse the materialized rows for
+            # both sides so the (often expensive) upstream pipeline — Detect,
+            # tracking, appearance embedding — is not evaluated twice. The join
+            # helpers only read rows and copy them via ``dict(...)`` before
+            # emitting, so sharing the row objects across both sides is safe.
+            shared_rows = list(
+                _execute_node(node.source, prompt_executor, base_path=base_path)
+            )
+            left_rows: Iterable[Row] = shared_rows
+            right_rows: Iterable[Row] = shared_rows
+        else:
+            left_rows = _execute_node(
+                node.source, prompt_executor, base_path=base_path
+            )
+            right_rows = _execute_node(
+                node.right_source, prompt_executor, base_path=base_path
+            )
+        yield from _apply_join(node, left_rows, right_rows)
+        return
+
     source = _execute_node(node.source, prompt_executor, base_path=base_path)
     if node.kind == "map":
         with ThreadPoolExecutor() as ex:
@@ -63,6 +91,10 @@ def _execute_node(
         yield from _apply_reduce(node, list(source), prompt_executor)
     elif node.kind == "unnest":
         yield from _apply_unnest(node, source)
+    elif node.kind == "split":
+        from .ops.split import _apply_split
+
+        yield from _apply_split(node, source)
     elif node.kind == "detect":
         from .ops.detect import _apply_detect  # lazy: pulls OpenCV/NumPy only when used
 

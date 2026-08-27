@@ -13,6 +13,12 @@ top-level [GET_START.md](../GET_START.md) for setup and [README.md](../README.md
 | [`twelvelabs_search_and_discover.py`](twelvelabs_search_and_discover.py) | `Map` (video prompt) → `Filter` | Gemini API key; `data/clips.jsonl` |
 | [`twelvelabs_brand_safety.py`](twelvelabs_brand_safety.py) | `Map` (video prompt) → `Filter` | Gemini API key; `data/clips.jsonl` |
 | [`twelvelabs_highlight_candidates.py`](twelvelabs_highlight_candidates.py) | `Map` (video prompt) → `Filter` | Gemini API key; `data/nba_knicks.jsonl` |
+| [`split_highlight_videos.py`](split_highlight_videos.py) | `Split` → `Map` → `Reduce` + `ForEach` | Gemini API key; `data/nba_warriors.jsonl` |
+| [`flare_text_video_join.py`](flare_text_video_join.py) | `Map` → `Join` → `Map` → `Reduce` | UCA metadata + GT captions only; output grouped by video like `annotation_excerpt.json` (no video reads or Gemini) |
+| [`semantic_flare_text_video_join.py`](semantic_flare_text_video_join.py) | `Map` (video + captions prompt) | Gemini API key and local UCA Abuse001/002/003 videos; Gemini temporal-grounding baseline for `flare_text_video_join.py` |
+| [`join_cross_camera_vehicle.py`](join_cross_camera_vehicle.py) | `Detect` → `Map` → `Unnest` → `Map` (promote/embed/project) → `Join` → `Map` | Local I24V 5s highway2/3; motion-aware tracking + appearance re-ID one-to-one join trajectories (no Gemini; ResNet50 weights auto-download, histogram fallback) |
+| [`semantic_join_cross_camera_vehicle.py`](semantic_join_cross_camera_vehicle.py) | `Reduce` + `ForEach` → `Unnest` | Same I24V clips; Gemini soft-reference stitch |
+| [`eval_cross_camera_join.py`](eval_cross_camera_join.py) | driver (not a DSL query) | Scores the UDF join against `data/i24v_..._ground_truth.json`: P/R/F1, attribute agreement, per-match FP/FN diagnostics, and wall time/tokens; `--compare-semantic` adds a side-by-side UDF vs semantic table |
 | [`twelvelabs_map_reduce.py`](twelvelabs_map_reduce.py) | `Map` → `Unnest` → `Reduce` + `ForEach` | Gemini API key; `data/animals.jsonl` |
 | [`wildlife_detection.py`](wildlife_detection.py) | `Detect` (local YOLOE) → `Unnest` | no API key; downloads weights + video |
 | [`detect_multi_species.py`](detect_multi_species.py) | `Detect` → `Unnest` | no API key; downloads weights + video |
@@ -37,6 +43,10 @@ top-level [GET_START.md](../GET_START.md) for setup and [README.md](../README.md
 
 - Set `GEMINI_API_KEY` (or `GOOGLE_API_KEY`) before running any prompt-backed example.
   `Detect` examples need no key.
+- The I24V `highway2.mp4` and `highway3.mp4` clips are committed for the
+  cross-camera examples. Full-corridor I24V, UCA, and campus media is optional
+  and can be installed using [`data/README.md`](../data/README.md). Drivers
+  inspect manifests before execution and report any missing paths.
 - Video fields are ordinary record fields. The Gemini executor treats values whose `type`
   is case-insensitively `"video"`/`"videoview"` as video parts; the canonical shapes are
   `{"type": "Video", ...}` and `{"type": "VideoView", ...}`. A public `https://` `source`

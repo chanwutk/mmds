@@ -4,6 +4,7 @@ import threading
 from typing import Any
 
 from ...model import DatasetExpr, DetectSpec, MMDSValidationError, Row
+from ...utilities.media import resolve_video_source
 from ...utilities.video import Video, VideoView, open_video
 
 # ---------------------------------------------------------------------------
@@ -60,32 +61,6 @@ def _get_model(model_name: str) -> Any:
 
 
 # ---------------------------------------------------------------------------
-# Video source resolution
-# ---------------------------------------------------------------------------
-
-
-def _resolve_video_source(value: Any) -> str:
-    """Extract a path/URL string from a row field value.
-
-    Accepted forms:
-    - a plain string (file path or URL)
-    - a dict with a ``"source"``, ``"path"``, or ``"uri"`` key
-    """
-    if isinstance(value, str):
-        return value
-    if isinstance(value, dict):
-        for key in ("source", "path", "uri"):
-            if key in value and isinstance(value[key], str):
-                return value[key]
-        raise MMDSValidationError(
-            "Detect: video dict must contain a 'source', 'path', or 'uri' string key."
-        )
-    raise MMDSValidationError(
-        f"Detect: video field must be a string path/URL or a dict, got {type(value).__name__!r}."
-    )
-
-
-# ---------------------------------------------------------------------------
 # Core apply function
 # ---------------------------------------------------------------------------
 
@@ -101,7 +76,7 @@ def _apply_detect(node: DatasetExpr, row: Row) -> Row:
             f"Detect: field {spec.video_field!r} is missing from the row."
         )
 
-    source = _resolve_video_source(raw)
+    source = resolve_video_source(raw)
     video = open_video(source)
     if isinstance(video, list):
         raise MMDSValidationError(
@@ -117,7 +92,14 @@ def _apply_detect(node: DatasetExpr, row: Row) -> Row:
         if start is not None and end is not None:
             iterable = VideoView(video, float(start), float(end))
 
-    detections = _detect_in_video(iterable, list(spec.classes), spec.model)
+    detections = _detect_in_video(
+        iterable,
+        list(spec.classes),
+        spec.model,
+        frame_stride=spec.frame_stride,
+        conf=spec.conf,
+        imgsz=spec.imgsz,
+    )
 
     result = dict(row)
     result[spec.output_field] = detections
@@ -128,18 +110,41 @@ def _detect_in_video(
     video: Video | VideoView,
     classes: list[str],
     model_name: str,
+    *,
+    frame_stride: int = 1,
+    conf: float | None = None,
+    imgsz: int | None = None,
 ) -> list[dict[str, Any]]:
-    """Run detection on every frame and group bboxes by detected class.
+    """Run detection on sampled frames and group bboxes by detected class.
 
     *video* may be a :class:`Video` (processes all frames) or a
     :class:`VideoView` (processes only the view's frame range). Detection
     records always use absolute frame indices from the underlying source
     video, even when iterating a :class:`VideoView`.
 
+    *frame_stride* controls how densely frames are sampled for inference:
+    ``1`` (the default) runs every frame through the model; ``N > 1`` only
+    runs inference on every ``N``-th frame (frame ``0``, ``N``, ``2N``, ...),
+    skipping the model call entirely on the rest. This trades temporal
+    resolution for lower inference cost and is most appropriate when the
+    detected objects (and their attributes) do not change meaningfully
+    between consecutive frames.
+
     Returns a list of::
 
         {"type": <class_name>, "bboxes": [{"frame_idx": int, "bbox": [x1,y1,x2,y2], "confidence": float}, ...]}
     """
+    if frame_stride < 1:
+        raise MMDSValidationError("_detect_in_video frame_stride must be >= 1.")
+
+    # Only forward predict kwargs the caller actually set, so unset values keep
+    # the model's own defaults rather than being pinned to None.
+    predict_kwargs: dict[str, Any] = {}
+    if conf is not None:
+        predict_kwargs["conf"] = conf
+    if imgsz is not None:
+        predict_kwargs["imgsz"] = imgsz
+
     model = _get_model(model_name)
 
     with _model_lock:
@@ -150,9 +155,13 @@ def _detect_in_video(
 
     by_class: dict[str, list[dict[str, Any]]] = {}
     for relative_frame_idx, frame in enumerate(video):
+        if relative_frame_idx % frame_stride != 0:
+            continue
         frame_idx = base_frame_idx + relative_frame_idx
         with _model_lock:
-            results = model.predict(frame, verbose=False, device=_get_device())
+            results = model.predict(
+                frame, verbose=False, device=_get_device(), **predict_kwargs
+            )
         for result in results:
             boxes = result.boxes
             if boxes is None:

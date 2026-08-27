@@ -8,12 +8,15 @@ from .model import (
     DetectSpec,
     ForEachPrompt,
     JsonValue,
+    JoinSpec,
     MMDSValidationError,
     PromptPart,
     PromptSpec,
     Record,
     RecordPath,
     SemanticSpec,
+    SplitSpec,
+    normalize_join_keys,
     normalize_output_schema,
     normalize_group_by,
     udf_spec_from_callable,
@@ -35,12 +38,14 @@ def Map(
     spec: str | Sequence[PromptInputPart] | Callable[..., Any],
     *,
     schema: JsonValue | None = None,
+    replace: bool = False,
     name: str | None = None,
 ) -> DatasetExpr:
     return DatasetExpr(
         kind="map",
         source=_normalize_source(data),
         spec=_normalize_spec(spec, op_kind="map", schema=schema),
+        replace=bool(replace),
         name=name,
     )
 
@@ -94,6 +99,107 @@ def Unnest(
     )
 
 
+def Split(
+    data: DatasetExpr,
+    video_field: str,
+    *,
+    chunk_sec: float = 30.0,
+    doc_id_key: str = "camera_id",
+    output_prefix: str = "split_video",
+    name: str | None = None,
+) -> DatasetExpr:
+    """Fan out each row into fixed-duration video chunks.
+
+    Reads ``video_field`` as a ``VideoView`` (``start``/``end`` seconds) or a
+    string path plus row ``duration_sec``. Each output row keeps parent fields
+    and adds:
+
+    - ``{output_prefix}_id`` — value of ``doc_id_key``
+    - ``{output_prefix}_chunk_num`` — 0-based chunk index
+    - ``{output_prefix}_chunk_start`` / ``{output_prefix}_chunk_end`` — absolute seconds
+    - ``video_field`` — narrowed ``VideoView`` for that chunk
+    """
+    if not isinstance(video_field, str) or not video_field:
+        raise TypeError("Split video_field must be a non-empty string.")
+    if not isinstance(chunk_sec, (int, float)) or chunk_sec <= 0:
+        raise TypeError("Split chunk_sec must be a positive number.")
+    if not isinstance(doc_id_key, str) or not doc_id_key:
+        raise TypeError("Split doc_id_key must be a non-empty string.")
+    if not isinstance(output_prefix, str) or not output_prefix:
+        raise TypeError("Split output_prefix must be a non-empty string.")
+    return DatasetExpr(
+        kind="split",
+        source=_normalize_source(data),
+        spec=SplitSpec(
+            video_field=video_field,
+            chunk_sec=float(chunk_sec),
+            doc_id_key=doc_id_key,
+            output_prefix=output_prefix,
+        ),
+        name=name,
+    )
+
+
+def Join(
+    left: DatasetExpr,
+    right: DatasetExpr,
+    predicate: Callable[..., Any] | None = None,
+    *,
+    on: str | Sequence[str] | None = None,
+    one_to_one: bool = False,
+    score: Callable[..., Any] | None = None,
+    min_score: float | None = None,
+    left_key: str | Sequence[str] | None = None,
+    right_key: str | Sequence[str] | None = None,
+    name: str | None = None,
+) -> DatasetExpr:
+    """Pair-wise join over two row collections.
+
+    When ``on`` names one or more fields, the executor builds a hash index on
+    the right rows and probes by key — ``O(|left| + |right|)`` instead of a
+    nested loop. An optional ``predicate`` UDF further filters candidate pairs.
+
+    When ``one_to_one=True``, the executor keeps at most one match per left and
+    right track identity (``left_key`` / ``right_key``). Candidate pairs must
+    pass ``predicate`` and have ``score(left, right) >= min_score`` when
+    ``min_score`` is set. Pairs are taken in descending score order; unmatched
+    tracks are omitted.
+
+    At least one of ``on`` or ``predicate`` is required. Output rows are
+    ``{"left": <left row>, "right": <right row>}``, plus ``match_score`` when
+    ``one_to_one=True``.
+    """
+    keys = normalize_join_keys(on) if on is not None else ()
+    predicate_spec = None
+    if predicate is not None:
+        if not callable(predicate):
+            raise TypeError("Join predicates must be imported UDF callables.")
+        predicate_spec = udf_spec_from_callable(predicate)
+    score_spec = None
+    if score is not None:
+        if not callable(score):
+            raise TypeError("Join score functions must be imported UDF callables.")
+        score_spec = udf_spec_from_callable(score)
+    left_key_fields = normalize_join_keys(left_key) if left_key is not None else ()
+    right_key_fields = normalize_join_keys(right_key) if right_key is not None else ()
+    join_spec = JoinSpec(
+        keys=keys,
+        predicate=predicate_spec,
+        one_to_one=bool(one_to_one),
+        score=score_spec,
+        min_score=min_score,
+        left_key=left_key_fields,
+        right_key=right_key_fields,
+    )
+    return DatasetExpr(
+        kind="join",
+        source=_normalize_source(left),
+        right_source=_normalize_source(right),
+        spec=join_spec,
+        name=name,
+    )
+
+
 def Detect(
     data: DatasetExpr,
     video_field: str,
@@ -101,6 +207,9 @@ def Detect(
     *,
     model: str = "yoloe-11s-seg.pt",
     output_field: str = "detections",
+    frame_stride: int = 1,
+    conf: float | None = None,
+    imgsz: int | None = None,
     name: str | None = None,
 ) -> DatasetExpr:
     """Run YOLOE object detection on every frame of a video field.
@@ -114,11 +223,31 @@ def Detect(
         model: YOLOE weights file.  Defaults to ``"yoloe-11s-seg.pt"``.
         output_field: Name of the output field that receives the detection
             list.  Defaults to ``"detections"``.
+        frame_stride: Run inference on every ``frame_stride``-th frame
+            (``1`` = every frame, the default). Frames that are skipped are
+            not sent through the model, trading temporal density for lower
+            inference cost; use this when detections are expected to be
+            consistent across a few consecutive frames (e.g. slow-moving or
+            already-tracked objects).
+        conf: Minimum detection confidence passed to the model. ``None``
+            (the default) uses the model's own default threshold. Lower it
+            (e.g. ``0.1``) to recover small or low-contrast objects that the
+            default threshold discards.
+        imgsz: Inference image size passed to the model. ``None`` (the
+            default) uses the model's own default (typically ``640``). Raise
+            it (e.g. ``1280``) so that small objects—vehicles in high-mounted
+            traffic footage, for example—survive downscaling.
         name: Optional operator label.
 
     The output field contains a list of objects, one per detected class::
 
         [{"type": "dog", "bboxes": [{"frame_idx": 0, "bbox": [x1,y1,x2,y2], "confidence": 0.9}, ...]}, ...]
+
+    Only frames actually sampled under ``frame_stride`` contribute ``bboxes``;
+    their ``frame_idx`` values remain absolute indices into the source video.
+    Detection cost grows linearly with the number of decoded frames and input
+    rows; ``frame_stride=1`` with a large ``imgsz`` is a quality-first,
+    demo-scale configuration rather than a production throughput default.
     """
     if not isinstance(video_field, str) or not video_field:
         raise TypeError("Detect video_field must be a non-empty string.")
@@ -130,6 +259,18 @@ def Detect(
         raise TypeError("Detect model must be a non-empty string.")
     if not isinstance(output_field, str) or not output_field:
         raise TypeError("Detect output_field must be a non-empty string.")
+    if isinstance(frame_stride, bool) or not isinstance(frame_stride, int) or frame_stride < 1:
+        raise TypeError("Detect frame_stride must be an integer >= 1.")
+    if conf is not None and (
+        isinstance(conf, bool)
+        or not isinstance(conf, (int, float))
+        or not (0.0 <= float(conf) <= 1.0)
+    ):
+        raise TypeError("Detect conf must be a number in [0.0, 1.0] or None.")
+    if imgsz is not None and (
+        isinstance(imgsz, bool) or not isinstance(imgsz, int) or imgsz < 1
+    ):
+        raise TypeError("Detect imgsz must be a positive integer or None.")
     return DatasetExpr(
         kind="detect",
         source=_normalize_source(data),
@@ -138,6 +279,9 @@ def Detect(
             classes=tuple(classes),
             model=model,
             output_field=output_field,
+            frame_stride=frame_stride,
+            conf=conf,
+            imgsz=imgsz,
         ),
         name=name,
     )

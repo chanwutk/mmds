@@ -9,17 +9,19 @@ from .model import (
     Assignment,
     DatasetExpr,
     ForEachPrompt,
+    JoinSpec,
     JsonValue,
     PromptSpec,
     QueryProgram,
     RecordPath,
+    SplitSpec,
     UdfSpec,
 )
 
 
 def render_query(plan_or_query: DatasetExpr | QueryProgram) -> str:
     program = plan_or_query if isinstance(plan_or_query, QueryProgram) else program_from_plan(plan_or_query)
-    lines = ["from mmds import Input, Map, Filter, Reduce, Unnest, Record, ForEach"]
+    lines = ["from mmds import Input, Map, Filter, Reduce, Unnest, Split, Join, Record, ForEach"]
 
     grouped_udfs: dict[str, list[str]] = defaultdict(list)
     for spec in program.used_udfs():
@@ -64,10 +66,20 @@ def _render_expr(expr: DatasetExpr, node_names: dict[DatasetExpr, str]) -> str:
     if expr.kind == "input":
         return f"Input({_quote(expr.input_path)})"
 
+    if expr.kind == "join":
+        if expr.source is None or expr.right_source is None:
+            raise ValueError("Join nodes require left and right sources.")
+        if not isinstance(expr.spec, JoinSpec):
+            raise ValueError("Join nodes require a JoinSpec.")
+        left_name = node_names[expr.source]
+        right_name = node_names[expr.right_source]
+        name_suffix = _render_name_suffix(expr.name)
+        return _render_join_call(left_name, right_name, expr.spec, name_suffix)
+
     source_name = node_names[expr.source]
     name_suffix = _render_name_suffix(expr.name)
     if expr.kind == "map":
-        return f"Map({source_name}, {_render_spec(expr.spec, include_schema=True)}{name_suffix})"
+        return _render_map_call(source_name, expr.spec, expr.replace, expr.name)
     if expr.kind == "filter":
         return f"Filter({source_name}, {_render_spec(expr.spec, include_schema=False)}{name_suffix})"
     if expr.kind == "reduce":
@@ -80,7 +92,66 @@ def _render_expr(expr: DatasetExpr, node_names: dict[DatasetExpr, str]) -> str:
         if expr.name is not None:
             flags.append(f"name={_quote(expr.name)}")
         return f"Unnest({source_name}, {', '.join(flags)})"
+    if expr.kind == "split":
+        if not isinstance(expr.spec, SplitSpec):
+            raise ValueError("Split nodes require a SplitSpec.")
+        return _render_split_call(source_name, expr.spec, expr.name)
     raise ValueError(f"Unsupported operator kind {expr.kind!r}.")
+
+
+def _render_split_call(
+    source_name: str,
+    spec: SplitSpec,
+    name: str | None,
+) -> str:
+    flags: list[str] = []
+    if spec.chunk_sec != 30.0:
+        flags.append(f"chunk_sec={spec.chunk_sec}")
+    if spec.doc_id_key != "camera_id":
+        flags.append(f"doc_id_key={_quote(spec.doc_id_key)}")
+    if spec.output_prefix != "split_video":
+        flags.append(f"output_prefix={_quote(spec.output_prefix)}")
+    if name is not None:
+        flags.append(f"name={_quote(name)}")
+    if flags:
+        return f"Split({source_name}, {_quote(spec.video_field)}, {', '.join(flags)})"
+    return f"Split({source_name}, {_quote(spec.video_field)})"
+
+
+def _render_join_call(
+    left_name: str,
+    right_name: str,
+    spec: JoinSpec,
+    name_suffix: str,
+) -> str:
+    flags: list[str] = []
+    if spec.keys:
+        flags.append(f"on={_render_join_keys(spec.keys)}")
+    if spec.one_to_one:
+        flags.append("one_to_one=True")
+    if spec.score is not None:
+        flags.append(f"score={spec.score.name}")
+    if spec.min_score is not None:
+        flags.append(f"min_score={spec.min_score}")
+    if spec.left_key:
+        flags.append(f"left_key={_render_join_keys(spec.left_key)}")
+    if spec.right_key:
+        flags.append(f"right_key={_render_join_keys(spec.right_key)}")
+    if spec.predicate is None:
+        if not flags:
+            raise ValueError("Join nodes require on= keys and/or a UDF predicate.")
+        return f"Join({left_name}, {right_name}, {', '.join(flags)}{name_suffix})"
+    predicate = spec.predicate.name
+    if flags:
+        return f"Join({left_name}, {right_name}, {predicate}, {', '.join(flags)}{name_suffix})"
+    return f"Join({left_name}, {right_name}, {predicate}{name_suffix})"
+
+
+def _render_join_keys(keys: tuple[str, ...]) -> str:
+    if len(keys) == 1:
+        return _quote(keys[0])
+    rendered = ", ".join(_quote(key) for key in keys)
+    return f"({rendered},)"
 
 
 def _render_spec(spec: PromptSpec | UdfSpec | None, *, include_schema: bool) -> str:
@@ -124,6 +195,24 @@ def _render_group_by(group_by: tuple[str, ...]) -> str:
         return _quote(group_by[0])
     rendered = ", ".join(_quote(field) for field in group_by)
     return f"[{rendered}]"
+
+
+def _render_map_call(
+    source_name: str,
+    spec: PromptSpec | UdfSpec | None,
+    replace: bool,
+    name: str | None,
+) -> str:
+    """Render a Map call with the given source name, spec, replace flag, and name."""
+    flags: list[str] = []
+    if replace:
+        flags.append("replace=True")
+    if name is not None:
+        flags.append(f"name={_quote(name)}")
+    spec_rendered = _render_spec(spec, include_schema=True)
+    if flags:
+        return f"Map({source_name}, {spec_rendered}, {', '.join(flags)})"
+    return f"Map({source_name}, {spec_rendered})"
 
 
 def _render_name_suffix(name: str | None) -> str:

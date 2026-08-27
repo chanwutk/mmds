@@ -149,6 +149,12 @@ UDF-only queries need no key. The Gemini examples pass their public YouTube `sou
 straight to Gemini (which ingests it server-side — no local download). The local `Detect`
 path instead downloads videos via `yt-dlp` and caches them under `~/.cache/mmds/videos/`.
 
+Most research-dataset media is not committed. The I24V `highway2.mp4` and
+`highway3.mp4` clips remain bundled for the cross-camera examples; full-corridor
+I24V, UCA, and campus workflows require local files installed according to
+[`data/README.md`](data/README.md). Example drivers report missing optional
+files before execution instead of failing deep in a pipeline.
+
 ---
 
 ## Architecture
@@ -213,7 +219,7 @@ engine or LLM agent needs to rewrite queries safely. The data model extends
 src/mmds/        core DSL, plan model, parser, renderer, execution, optimizers
 udfs/            user-defined functions (.py = implemented, .pyi = declared-only)
 examples/        runnable query examples + run_expr.py / run_text.py drivers
-data/            small JSON/JSONL fixtures used by the examples
+data/            small manifests/ground truth + local-media setup guides
 tests/           unit tests (hermetic — mock cv2/yt-dlp/YOLOE)
 DESIGN.md        authoritative architecture document
 AGENTS.md        contribution rules and invariants
@@ -242,5 +248,6 @@ Early-stage **research prototype** — APIs and semantics may change.
 ## Learn more
 
 - **[GET_START.md](GET_START.md)** — set up the project and run your first example.
+- **[`data/README.md`](data/README.md)** — acquire and install optional local datasets.
 - **[DESIGN.md](DESIGN.md)** — architecture, operator semantics, invariants (source of truth).
 - **[AGENTS.md](AGENTS.md)** — required workflow and architectural constraints for contributors.

@@ -10,7 +10,7 @@ JsonValue: TypeAlias = JsonScalar | dict[str, "JsonValue"] | list["JsonValue"]
 FieldSchemaValue: TypeAlias = str | dict[str, JsonValue]
 RecordSchema: TypeAlias = dict[str, FieldSchemaValue]
 OperatorKind: TypeAlias = Literal[
-    "input", "map", "filter", "reduce", "unnest", "detect"
+    "input", "map", "filter", "reduce", "unnest", "split", "detect", "join"
 ]
 
 
@@ -89,6 +89,92 @@ class UdfSpec:
 
 
 @dataclass(frozen=True)
+class JoinSpec:
+    """Join operator spec: optional equi-join keys and/or a binary UDF predicate."""
+
+    keys: tuple[str, ...] = ()
+    predicate: UdfSpec | None = None
+    one_to_one: bool = False
+    score: UdfSpec | None = None
+    min_score: float | None = None
+    left_key: tuple[str, ...] = ()
+    right_key: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not self.keys and self.predicate is None:
+            raise MMDSValidationError(
+                "Join requires on= keys, a UDF predicate, or both."
+            )
+        if any(not isinstance(key, str) or not key for key in self.keys):
+            raise MMDSValidationError(
+                "Join on= field names must all be non-empty strings."
+            )
+        if self.one_to_one:
+            if self.score is None:
+                raise MMDSValidationError(
+                    "Join one_to_one=True requires a score= UDF callable as score(left, right) -> number."
+                )
+            if not self.left_key or not self.right_key:
+                raise MMDSValidationError(
+                    "Join one_to_one=True requires non-empty left_key= and right_key= field tuples."
+                )
+            if any(
+                not isinstance(key, str) or not key
+                for key in self.left_key + self.right_key
+            ):
+                raise MMDSValidationError(
+                    "Join left_key= and right_key= field names must all be non-empty strings."
+                )
+        elif (
+            self.score is not None
+            or self.min_score is not None
+            or self.left_key
+            or self.right_key
+        ):
+            raise MMDSValidationError(
+                "Join score=, min_score=, left_key=, and right_key= require one_to_one=True."
+            )
+        if self.min_score is not None and not isinstance(self.min_score, (int, float)):
+            raise MMDSValidationError("Join min_score= must be numeric when provided.")
+
+    def load_predicate(self) -> Callable[..., Any] | None:
+        if self.predicate is None:
+            return None
+        return self.predicate.load()
+
+    def load_score(self) -> Callable[..., Any] | None:
+        if self.score is None:
+            return None
+        return self.score.load()
+
+
+@dataclass(frozen=True)
+class SplitSpec:
+    """Spec for the Split operator: fan out rows into fixed-duration video chunks."""
+
+    video_field: str
+    chunk_sec: float = 30.0
+    doc_id_key: str = "camera_id"
+    output_prefix: str = "split_video"
+
+    def __post_init__(self) -> None:
+        if not self.video_field:
+            raise MMDSValidationError(
+                "SplitSpec video_field must be a non-empty string."
+            )
+        if not isinstance(self.chunk_sec, (int, float)) or self.chunk_sec <= 0:
+            raise MMDSValidationError("SplitSpec chunk_sec must be a positive number.")
+        if not self.doc_id_key:
+            raise MMDSValidationError(
+                "SplitSpec doc_id_key must be a non-empty string."
+            )
+        if not self.output_prefix:
+            raise MMDSValidationError(
+                "SplitSpec output_prefix must be a non-empty string."
+            )
+
+
+@dataclass(frozen=True)
 class DetectSpec:
     """Spec for the Detect operator: runs YOLOE on every frame of a video field."""
 
@@ -96,6 +182,9 @@ class DetectSpec:
     classes: tuple[str, ...]
     model: str = "yoloe-11s-seg.pt"
     output_field: str = "detections"
+    frame_stride: int = 1
+    conf: float | None = None
+    imgsz: int | None = None
 
     def __post_init__(self) -> None:
         if not self.video_field:
@@ -114,20 +203,48 @@ class DetectSpec:
             raise MMDSValidationError(
                 "DetectSpec output_field must be a non-empty string."
             )
+        if (
+            isinstance(self.frame_stride, bool)
+            or not isinstance(self.frame_stride, int)
+            or self.frame_stride < 1
+        ):
+            raise MMDSValidationError(
+                "DetectSpec frame_stride must be an integer >= 1."
+            )
+        if self.conf is not None:
+            if (
+                isinstance(self.conf, bool)
+                or not isinstance(self.conf, (int, float))
+                or not (0.0 <= float(self.conf) <= 1.0)
+            ):
+                raise MMDSValidationError(
+                    "DetectSpec conf must be a number in [0.0, 1.0] or None."
+                )
+        if self.imgsz is not None:
+            if (
+                isinstance(self.imgsz, bool)
+                or not isinstance(self.imgsz, int)
+                or self.imgsz < 1
+            ):
+                raise MMDSValidationError(
+                    "DetectSpec imgsz must be a positive integer or None."
+                )
 
 
-SemanticSpec: TypeAlias = PromptSpec | UdfSpec | DetectSpec
+SemanticSpec: TypeAlias = PromptSpec | UdfSpec | SplitSpec | DetectSpec | JoinSpec
 
 
 @dataclass(frozen=True)
 class DatasetExpr:
     kind: OperatorKind
     source: DatasetExpr | None = None
+    right_source: DatasetExpr | None = None
     input_path: str | None = None
     spec: SemanticSpec | None = None
     group_by: tuple[str, ...] = ()
     field: str | None = None
     keep_empty: bool = False
+    replace: bool = False
     name: str | None = None
 
     def __post_init__(self) -> None:
@@ -137,18 +254,40 @@ class DatasetExpr:
                     "Input nodes require only an input file path."
                 )
             return
+        if self.kind == "join":
+            if self.source is None or self.right_source is None:
+                raise MMDSValidationError(
+                    "Join nodes require left and right source expressions."
+                )
+            if not isinstance(self.spec, JoinSpec):
+                raise MMDSValidationError(
+                    "Join nodes require a JoinSpec with on= keys and/or a UDF predicate."
+                )
+            return
         if self.source is None:
             raise MMDSValidationError(f"{self.kind} nodes require a source expression.")
+        if self.right_source is not None:
+            raise MMDSValidationError(
+                f"{self.kind} nodes do not accept a right_source expression."
+            )
         if self.kind in {"map", "filter", "reduce"} and self.spec is None:
             raise MMDSValidationError(f"{self.kind} nodes require a semantic spec.")
         if self.kind == "reduce" and not self.group_by:
             raise MMDSValidationError("Reduce nodes require one or more grouping keys.")
         if self.kind == "unnest" and self.field is None:
             raise MMDSValidationError("Unnest nodes require a field to expand.")
+        if self.kind == "split" and not isinstance(self.spec, SplitSpec):
+            raise MMDSValidationError("split nodes require a SplitSpec.")
+        if self.replace and self.kind != "map":
+            raise MMDSValidationError("replace=True is only supported on Map nodes.")
         if self.kind == "detect" and not isinstance(self.spec, DetectSpec):
             raise MMDSValidationError("detect nodes require a DetectSpec.")
 
     def children(self) -> tuple[DatasetExpr, ...]:
+        if self.kind == "join":
+            if self.source is None or self.right_source is None:
+                return ()
+            return (self.source, self.right_source)
         if self.source is None:
             return ()
         return (self.source,)
@@ -160,8 +299,8 @@ class DatasetExpr:
             if node in seen:
                 return
             seen.add(node)
-            if node.source is not None:
-                yield from visit(node.source)
+            for child in node.children():
+                yield from visit(child)
             yield node
 
         yield from visit(self)
@@ -212,7 +351,26 @@ class QueryProgram:
             for node in assignment.expr.walk_postorder():
                 if isinstance(node.spec, UdfSpec):
                     specs.add(node.spec)
+                elif isinstance(node.spec, JoinSpec):
+                    if node.spec.predicate is not None:
+                        specs.add(node.spec.predicate)
+                    if node.spec.score is not None:
+                        specs.add(node.spec.score)
         return tuple(sorted(specs, key=lambda spec: (spec.module, spec.name)))
+
+
+def normalize_join_keys(value: str | list[str] | tuple[str, ...]) -> tuple[str, ...]:
+    if isinstance(value, str):
+        if not value:
+            raise TypeError("Join on= field names must be non-empty strings.")
+        return (value,)
+    if isinstance(value, (list, tuple)):
+        if not value:
+            raise MMDSValidationError("Join on= cannot be empty.")
+        if any(not isinstance(field, str) or not field for field in value):
+            raise TypeError("Join on= field names must all be non-empty strings.")
+        return tuple(value)
+    raise TypeError("Join on= must be a field name or sequence of field names.")
 
 
 def normalize_group_by(group_by: str | list[str] | tuple[str, ...]) -> tuple[str, ...]:

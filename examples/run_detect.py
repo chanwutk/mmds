@@ -15,6 +15,7 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from mmds import execute  # noqa: E402
+from examples._media_preflight import require_local_media  # noqa: E402
 
 
 def main() -> None:
@@ -28,6 +29,7 @@ def main() -> None:
         raise RuntimeError(f"Could not load query module from {str(query_path)!r}.")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
+    require_local_media(module.output, ROOT)
     # execute query w/o GeminiPromptExecutor
     rows = execute(module.output)
     print(json.dumps(rows, indent=2, ensure_ascii=False))
