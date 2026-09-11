@@ -14,6 +14,7 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from mmds import (  # noqa: E402
+    ExecutionStats,
     Filter,
     ForEach,
     GeminiPromptExecutor,
@@ -333,6 +334,28 @@ output = Map(docs, annotate)
 
 
 class GeminiExecutorTests(unittest.TestCase):
+    def test_gemini_executor_records_reported_provider_usage(self) -> None:
+        fake_client = _FakeClient('{"summary": "done"}')
+        executor = GeminiPromptExecutor(
+            client=fake_client, types_module=_FakeTypes, poll_interval_seconds=0.0
+        )
+        prompt = PromptSpec(parts=("Summarize",), output_schema={"summary": "string"})
+        resolved = ResolvedPrompt(parts=("Summarize",), output_schema=prompt.output_schema)
+        stats = ExecutionStats()
+
+        executor.execute(
+            "map",
+            prompt,
+            resolved,
+            payload={},
+            context={"operator_name": "summary", "execution_stats": stats},
+        )
+
+        self.assertEqual(len(stats.provider_calls), 1)
+        self.assertEqual(stats.provider_calls[0].prompt_tokens, 11)
+        self.assertEqual(stats.provider_calls[0].output_tokens, 5)
+        self.assertEqual(stats.provider_calls[0].total_tokens, 16)
+
     def test_gemini_executor_builds_video_uri_parts_and_schema(self) -> None:
         fake_client = _FakeClient('{"summary": "done"}')
         executor = GeminiPromptExecutor(client=fake_client, types_module=_FakeTypes, poll_interval_seconds=0.0)
@@ -411,6 +434,80 @@ class GeminiExecutorTests(unittest.TestCase):
             content.parts[1].video_metadata.kwargs,
             {"start_offset": "10s", "end_offset": "20.5s", "fps": 2.0},
         )
+
+    def test_gemini_executor_canonicalizes_videoview_float_artifacts(self) -> None:
+        cases = (
+            (
+                119.19999999999999,
+                179.2,
+                {"start_offset": "119.2s", "end_offset": "179.2s"},
+            ),
+            (
+                4.960000000000001,
+                64.96000000000001,
+                {"start_offset": "4.96s", "end_offset": "64.96s"},
+            ),
+        )
+        for start, end, expected in cases:
+            with self.subTest(start=start, end=end):
+                fake_client = _FakeClient('{"summary": "done"}')
+                executor = GeminiPromptExecutor(
+                    client=fake_client,
+                    types_module=_FakeTypes,
+                    poll_interval_seconds=0.0,
+                )
+                prompt = PromptSpec(
+                    parts=("Watch ", Record["video"]),
+                    output_schema={"summary": "string"},
+                )
+                resolved = ResolvedPrompt(
+                    parts=(
+                        "Watch ",
+                        {
+                            "type": "VideoView",
+                            "source": "https://youtube.com/watch?v=demo",
+                            "start": start,
+                            "end": end,
+                        },
+                    ),
+                    output_schema=prompt.output_schema,
+                )
+
+                executor.execute("map", prompt, resolved, payload={}, context={})
+                content = fake_client.models.calls[0]["contents"]
+                self.assertEqual(content.parts[1].video_metadata.kwargs, expected)
+
+    def test_gemini_executor_rejects_invalid_numeric_videoview_offsets(self) -> None:
+        for value in (-1, float("nan"), float("inf")):
+            with self.subTest(value=value):
+                fake_client = _FakeClient('{"summary": "done"}')
+                executor = GeminiPromptExecutor(
+                    client=fake_client,
+                    types_module=_FakeTypes,
+                    poll_interval_seconds=0.0,
+                )
+                prompt = PromptSpec(
+                    parts=("Watch ", Record["video"]),
+                    output_schema={"summary": "string"},
+                )
+                resolved = ResolvedPrompt(
+                    parts=(
+                        "Watch ",
+                        {
+                            "type": "VideoView",
+                            "source": "https://youtube.com/watch?v=demo",
+                            "start": value,
+                            "end": 10,
+                        },
+                    ),
+                    output_schema=prompt.output_schema,
+                )
+
+                with self.assertRaisesRegex(
+                    MMDSValidationError,
+                    "finite, non-negative seconds",
+                ):
+                    executor.execute("map", prompt, resolved, payload={}, context={})
 
     def test_gemini_executor_uploads_local_videoview_sources(self) -> None:
         fake_client = _FakeClient('{"summary": "done"}')
@@ -581,7 +678,16 @@ class _FakeModels:
 
     def generate_content(self, **kwargs):
         self.calls.append(kwargs)
-        return type("Response", (), {"text": self.text})()
+        usage = type(
+            "Usage",
+            (),
+            {
+                "prompt_token_count": 11,
+                "candidates_token_count": 5,
+                "total_token_count": 16,
+            },
+        )()
+        return type("Response", (), {"text": self.text, "usage_metadata": usage})()
 
 
 class _FakeClient:

@@ -1,23 +1,47 @@
 from typing import TYPE_CHECKING
 
-from .dsl import Detect, Filter, ForEach, Input, Map, Reduce, Unnest
-from .execution import PromptExecutor, StaticPromptExecutor, execute
+from .dsl import (
+    Detect,
+    Filter,
+    ForEach,
+    Input,
+    Map,
+    PadInterval,
+    ReconcileIntervals,
+    Reduce,
+    Resolve,
+    Unnest,
+    View,
+)
+from .execution import (
+    ExecutionContext,
+    ExecutionStats,
+    PromptExecutor,
+    StaticPromptExecutor,
+    execute,
+)
 from .execution.llm.gemini import GeminiPromptExecutor
 from .optimizers.rewriter.agent import LLMClient, StaticLLMClient
+from .optimizers.cross_modal import CrossModalTemporalPushdown, ModalitySubstitution
 from .model import (
     Assignment,
     DatasetExpr,
     DetectSpec,
     ForEachPrompt,
     JsonValue,
+    MMDSExecutionError,
     MMDSValidationError,
+    PadIntervalSpec,
     PromptSpec,
     QueryProgram,
     Record,
     RecordPath,
+    ReconcileIntervalsSpec,
+    ResolveSpec,
     ResolvedPrompt,
     Row,
     UdfSpec,
+    ViewSpec,
 )
 from .parser import load_query, parse_query
 from .render import program_from_plan, render_query
@@ -32,9 +56,12 @@ if TYPE_CHECKING:
 
 __all__ = [
     "Assignment",
+    "CrossModalTemporalPushdown",
     "DatasetExpr",
     "Detect",
     "DetectSpec",
+    "ExecutionContext",
+    "ExecutionStats",
     "Filter",
     "ForEach",
     "ForEachPrompt",
@@ -43,13 +70,21 @@ __all__ = [
     "JsonValue",
     "LLMClient",
     "MMDSValidationError",
+    "MMDSExecutionError",
+    "ModalitySubstitution",
     "Map",
+    "PadInterval",
+    "PadIntervalSpec",
     "PromptExecutor",
     "PromptSpec",
     "QueryProgram",
     "Record",
     "RecordPath",
     "Reduce",
+    "ReconcileIntervals",
+    "ReconcileIntervalsSpec",
+    "Resolve",
+    "ResolveSpec",
     "ResolvedPrompt",
     "Row",
     "StaticLLMClient",
@@ -58,6 +93,8 @@ __all__ = [
     "UdfEntry",
     "UdfSpec",
     "Unnest",
+    "View",
+    "ViewSpec",
     "VideoView",
     "canonicalize",
     "discover_udfs",
@@ -82,5 +119,6 @@ def __getattr__(name: str):
 
 def main() -> None:
     print(
-        "MMDS exposes a Python DSL. Import Input, Map, Filter, Reduce, Unnest, Record, and ForEach from mmds."
+        "MMDS exposes a Python DSL. See README.md for the operator catalog "
+        "and runnable examples."
     )

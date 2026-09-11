@@ -1,0 +1,4 @@
+# Isolated research-tool dependencies; these are not required by the MMDS DSL.
+SoccerNet==0.1.62
+openai-whisper==20250625
+

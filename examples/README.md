@@ -18,6 +18,7 @@ top-level [GET_START.md](../GET_START.md) for setup and [README.md](../README.md
 | [`detect_multi_species.py`](detect_multi_species.py) | `Detect` → `Unnest` | no API key; downloads weights + video |
 | [`detect_filter_bears.py`](detect_filter_bears.py) | `Detect` → `Filter` (UDF) | no API key; downloads weights + video |
 | [`detect_filter_bears_high_confidence.py`](detect_filter_bears_high_confidence.py) | `Detect` → `Map` (UDF prune) → `Filter` (UDF) | no API key; downloads weights + video |
+| [`lecture_event_localization.py`](lecture_event_localization.py) | video-only baseline; O1 transcript substitution; O2 transcript candidates → `Resolve` → materialized `View` → video localization | Gemini API key; ffmpeg/ffprobe; local lecture video and materialized transcript |
 
 ## Drivers
 
@@ -32,6 +33,9 @@ top-level [GET_START.md](../GET_START.md) for setup and [README.md](../README.md
 - [`run_detect.py`](run_detect.py) — same as `run_expr.py` but calls `execute(...)`
   without constructing `GeminiPromptExecutor`. Optional; `run_expr.py` is enough
   for local `Detect` pipelines.
+- [`run_lecture_event_localization.py`](run_lecture_event_localization.py) — selects
+  the video-only, transcript-only, or transcript-to-video lecture query and
+  reports result rows plus operator, materialization, and provider statistics.
 
 ## Notes
 

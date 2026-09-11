@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import time
 from collections.abc import Mapping
 from numbers import Real
@@ -11,6 +12,7 @@ from urllib.parse import urlparse
 from urllib.request import url2pathname
 
 from ...model import MMDSValidationError, PromptSpec, ResolvedPrompt, expand_output_schema
+from ..context import ExecutionStats, ProviderExecutionStat
 
 logger = logging.getLogger(__name__)
 _VIDEO_TYPES = {"video", "videoview"}
@@ -47,6 +49,7 @@ class GeminiPromptExecutor:
     ) -> Any:
         client = self._get_client()
         types = self._get_types()
+        started = time.perf_counter()
         parts = self._build_parts(resolved_prompt.parts, client, types)
         contents = types.Content(parts=parts)
         config = self._build_config(op_type, prompt)
@@ -56,6 +59,30 @@ class GeminiPromptExecutor:
             _format_debug_parts(parts),
         )
         response = client.models.generate_content(model=self.model, contents=contents, config=config)
+        elapsed = time.perf_counter() - started
+        stats = context.get("execution_stats")
+        if isinstance(stats, ExecutionStats):
+            usage = getattr(response, "usage_metadata", None)
+            stats.record_provider_call(
+                ProviderExecutionStat(
+                    provider="gemini",
+                    model=self.model,
+                    operator_kind=op_type,
+                    operator_name=context.get("operator_name")
+                    if isinstance(context.get("operator_name"), str)
+                    else None,
+                    elapsed_seconds=elapsed,
+                    prompt_tokens=_optional_nonnegative_int(
+                        getattr(usage, "prompt_token_count", None)
+                    ),
+                    output_tokens=_optional_nonnegative_int(
+                        getattr(usage, "candidates_token_count", None)
+                    ),
+                    total_tokens=_optional_nonnegative_int(
+                        getattr(usage, "total_token_count", None)
+                    ),
+                )
+            )
         text = getattr(response, "text", None)
         if not text:
             raise MMDSValidationError("Gemini returned an empty response.")
@@ -239,7 +266,17 @@ def _reject_duplicate_video_offset_keys(
 def _format_video_offset_seconds(value: Any, field_name: str) -> str:
     if not isinstance(value, Real) or isinstance(value, bool):
         raise MMDSValidationError(f"VideoView {field_name!r} values must be numeric seconds.")
-    return f"{value}s"
+    seconds = float(value)
+    if not math.isfinite(seconds) or seconds < 0:
+        raise MMDSValidationError(
+            f"VideoView {field_name!r} values must be finite, non-negative seconds."
+        )
+    if seconds == 0:
+        return "0s"
+    # Protobuf Duration accepts at most nanosecond precision. Fixed-point
+    # formatting removes binary-float artifacts such as 119.19999999999999.
+    canonical = f"{seconds:.9f}".rstrip("0").rstrip(".")
+    return f"{canonical}s"
 
 
 def _validate_video_offset_string(value: Any, field_name: str) -> str:
@@ -252,6 +289,12 @@ def _validate_fps(value: Any) -> float:
     if not isinstance(value, Real) or isinstance(value, bool):
         raise MMDSValidationError("Video 'fps' values must be numeric.")
     return float(value)
+
+
+def _optional_nonnegative_int(value: Any) -> int | None:
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+        return value
+    return None
 
 
 def _stringify_prompt_value(value: Any) -> str:

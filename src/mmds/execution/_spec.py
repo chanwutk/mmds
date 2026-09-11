@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from typing import Any, Protocol
 
 from ..model import (
+    BuiltinSpec,
     DatasetExpr,
     ForEachPrompt,
     MMDSValidationError,
@@ -13,6 +14,8 @@ from ..model import (
     Row,
     UdfSpec,
 )
+from ..temporal import execute_builtin
+from .context import ExecutionStats
 
 
 class PromptExecutor(Protocol):
@@ -53,6 +56,7 @@ def _execute_spec(
     node: DatasetExpr,
     payload: Any,
     prompt_executor: PromptExecutor | None,
+    execution_stats: ExecutionStats | None = None,
 ) -> Any:
     spec = node.spec
     if isinstance(spec, PromptSpec):
@@ -66,11 +70,18 @@ def _execute_spec(
             spec,
             resolved_prompt,
             payload,
-            {"operator_name": node.name, "group_by": node.group_by, "field": node.field},
+            {
+                "operator_name": node.name,
+                "group_by": node.group_by,
+                "field": node.field,
+                "execution_stats": execution_stats,
+            },
         )
     if isinstance(spec, UdfSpec):
         udf = spec.load()
         return udf(payload)
+    if isinstance(spec, BuiltinSpec):
+        return execute_builtin(spec, payload)
     raise MMDSValidationError(f"{node.kind} requires a semantic spec.")
 
 

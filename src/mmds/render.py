@@ -7,19 +7,44 @@ from typing import Any
 
 from .model import (
     Assignment,
+    BuiltinSpec,
     DatasetExpr,
     ForEachPrompt,
     JsonValue,
+    PadIntervalSpec,
     PromptSpec,
     QueryProgram,
     RecordPath,
+    ReconcileIntervalsSpec,
+    ResolveSpec,
     UdfSpec,
+    ViewSpec,
 )
 
 
 def render_query(plan_or_query: DatasetExpr | QueryProgram) -> str:
     program = plan_or_query if isinstance(plan_or_query, QueryProgram) else program_from_plan(plan_or_query)
-    lines = ["from mmds import Input, Map, Filter, Reduce, Unnest, Record, ForEach"]
+    imports = ["Input", "Map", "Filter", "Reduce", "Unnest", "Record", "ForEach"]
+    node_kinds = {
+        node.kind
+        for assignment in program.assignments
+        for node in assignment.expr.walk_postorder()
+    }
+    specs = {
+        type(node.spec)
+        for assignment in program.assignments
+        for node in assignment.expr.walk_postorder()
+        if node.spec is not None
+    }
+    if "resolve" in node_kinds:
+        imports.append("Resolve")
+    if "view" in node_kinds:
+        imports.append("View")
+    if PadIntervalSpec in specs:
+        imports.append("PadInterval")
+    if ReconcileIntervalsSpec in specs:
+        imports.append("ReconcileIntervals")
+    lines = [f"from mmds import {', '.join(imports)}"]
 
     grouped_udfs: dict[str, list[str]] = defaultdict(list)
     for spec in program.used_udfs():
@@ -80,10 +105,40 @@ def _render_expr(expr: DatasetExpr, node_names: dict[DatasetExpr, str]) -> str:
         if expr.name is not None:
             flags.append(f"name={_quote(expr.name)}")
         return f"Unnest({source_name}, {', '.join(flags)})"
+    if expr.kind == "resolve":
+        spec = expr.spec
+        if not isinstance(spec, ResolveSpec):
+            raise ValueError("Resolve nodes require a ResolveSpec.")
+        flags = [
+            _render_group_by(spec.group_by),
+            _quote(spec.start_field),
+            _quote(spec.end_field),
+        ]
+        if spec.strategy != "overlap":
+            flags.append(f"strategy={_quote(spec.strategy)}")
+        if not spec.merge_touching:
+            flags.append("merge_touching=False")
+        if expr.name is not None:
+            flags.append(f"name={_quote(expr.name)}")
+        return f"Resolve({source_name}, {', '.join(flags)})"
+    if expr.kind == "view":
+        spec = expr.spec
+        if not isinstance(spec, ViewSpec):
+            raise ValueError("View nodes require a ViewSpec.")
+        flags = [
+            _quote(spec.video_field),
+            _quote(spec.start_field),
+            _quote(spec.end_field),
+        ]
+        if spec.output_field != "view":
+            flags.append(f"output_field={_quote(spec.output_field)}")
+        if expr.name is not None:
+            flags.append(f"name={_quote(expr.name)}")
+        return f"View({source_name}, {', '.join(flags)})"
     raise ValueError(f"Unsupported operator kind {expr.kind!r}.")
 
 
-def _render_spec(spec: PromptSpec | UdfSpec | None, *, include_schema: bool) -> str:
+def _render_spec(spec: PromptSpec | UdfSpec | BuiltinSpec | None, *, include_schema: bool) -> str:
     if isinstance(spec, PromptSpec):
         prompt = _render_prompt_spec(spec)
         if include_schema:
@@ -93,6 +148,43 @@ def _render_spec(spec: PromptSpec | UdfSpec | None, *, include_schema: bool) -> 
         return prompt
     if isinstance(spec, UdfSpec):
         return spec.name
+    if isinstance(spec, PadIntervalSpec):
+        flags = [
+            _quote(spec.interval_field),
+            _quote(spec.duration_field),
+            repr(float(spec.padding_seconds)),
+        ]
+        defaults = {
+            "input_start_field": "start_seconds",
+            "input_end_field": "end_seconds",
+            "output_start_field": "window_start_seconds",
+            "output_end_field": "window_end_seconds",
+        }
+        for field, default in defaults.items():
+            value = getattr(spec, field)
+            if value != default:
+                flags.append(f"{field}={_quote(value)}")
+        return f"PadInterval({', '.join(flags)})"
+    if isinstance(spec, ReconcileIntervalsSpec):
+        flags = [
+            _quote(spec.events_field),
+            _quote(spec.window_start_field),
+            _quote(spec.window_end_field),
+        ]
+        if spec.output_field != "events":
+            flags.append(f"output_field={_quote(spec.output_field)}")
+        if spec.event_start_field != "start_seconds":
+            flags.append(f"event_start_field={_quote(spec.event_start_field)}")
+        if spec.event_end_field != "end_seconds":
+            flags.append(f"event_end_field={_quote(spec.event_end_field)}")
+        if spec.preserve_fields:
+            flags.append(f"preserve_fields={_render_string_tuple(spec.preserve_fields)}")
+        if spec.deduplication_tiou_threshold != 0.8:
+            flags.append(
+                "deduplication_tiou_threshold="
+                f"{spec.deduplication_tiou_threshold!r}"
+            )
+        return f"ReconcileIntervals({', '.join(flags)})"
     raise ValueError("Expected a prompt or UDF spec.")
 
 
@@ -124,6 +216,13 @@ def _render_group_by(group_by: tuple[str, ...]) -> str:
         return _quote(group_by[0])
     rendered = ", ".join(_quote(field) for field in group_by)
     return f"[{rendered}]"
+
+
+def _render_string_tuple(values: tuple[str, ...]) -> str:
+    rendered = ", ".join(_quote(value) for value in values)
+    if len(values) == 1:
+        rendered += ","
+    return f"({rendered})"
 
 
 def _render_name_suffix(name: str | None) -> str:

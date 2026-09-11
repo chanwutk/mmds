@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from importlib import import_module
 from typing import Any, Callable, Iterator, Literal, TypeAlias
@@ -10,12 +11,16 @@ JsonValue: TypeAlias = JsonScalar | dict[str, "JsonValue"] | list["JsonValue"]
 FieldSchemaValue: TypeAlias = str | dict[str, JsonValue]
 RecordSchema: TypeAlias = dict[str, FieldSchemaValue]
 OperatorKind: TypeAlias = Literal[
-    "input", "map", "filter", "reduce", "unnest", "detect"
+    "input", "map", "filter", "reduce", "unnest", "resolve", "view", "detect"
 ]
 
 
 class MMDSValidationError(ValueError):
     """Raised when a query or plan violates the supported MMDS subset."""
+
+
+class MMDSExecutionError(RuntimeError):
+    """Raised when a valid query cannot be executed safely."""
 
 
 @dataclass(frozen=True)
@@ -88,6 +93,123 @@ class UdfSpec:
         return value
 
 
+class BuiltinSpec:
+    """Marker base class for serializable deterministic MMDS functions."""
+
+
+@dataclass(frozen=True)
+class PadIntervalSpec(BuiltinSpec):
+    """Pad one nested source-time interval and clamp it to the source duration."""
+
+    interval_field: str
+    duration_field: str
+    padding_seconds: float
+    input_start_field: str = "start_seconds"
+    input_end_field: str = "end_seconds"
+    output_start_field: str = "window_start_seconds"
+    output_end_field: str = "window_end_seconds"
+
+    def __post_init__(self) -> None:
+        _validate_field_names(
+            self.interval_field,
+            self.duration_field,
+            self.input_start_field,
+            self.input_end_field,
+            self.output_start_field,
+            self.output_end_field,
+            label="PadIntervalSpec",
+        )
+        if (
+            isinstance(self.padding_seconds, bool)
+            or not isinstance(self.padding_seconds, (int, float))
+            or not math.isfinite(float(self.padding_seconds))
+            or self.padding_seconds < 0
+        ):
+            raise MMDSValidationError(
+                "PadIntervalSpec padding_seconds must be a non-negative number."
+            )
+
+
+@dataclass(frozen=True)
+class ReconcileIntervalsSpec(BuiltinSpec):
+    """Translate clip-relative events to source time and reconcile duplicates."""
+
+    events_field: str
+    window_start_field: str
+    window_end_field: str
+    output_field: str = "events"
+    event_start_field: str = "start_seconds"
+    event_end_field: str = "end_seconds"
+    preserve_fields: tuple[str, ...] = ()
+    deduplication_tiou_threshold: float = 0.8
+
+    def __post_init__(self) -> None:
+        _validate_field_names(
+            self.events_field,
+            self.window_start_field,
+            self.window_end_field,
+            self.output_field,
+            self.event_start_field,
+            self.event_end_field,
+            *self.preserve_fields,
+            label="ReconcileIntervalsSpec",
+        )
+        threshold = self.deduplication_tiou_threshold
+        if (
+            isinstance(threshold, bool)
+            or not isinstance(threshold, (int, float))
+            or not math.isfinite(float(threshold))
+            or not 0 < threshold <= 1
+        ):
+            raise MMDSValidationError(
+                "ReconcileIntervalsSpec deduplication_tiou_threshold must be in (0, 1]."
+            )
+
+
+@dataclass(frozen=True)
+class ResolveSpec:
+    """Configuration for a set-level interval resolution operator."""
+
+    group_by: tuple[str, ...]
+    start_field: str
+    end_field: str
+    strategy: Literal["overlap"] = "overlap"
+    merge_touching: bool = True
+
+    def __post_init__(self) -> None:
+        if not self.group_by:
+            raise MMDSValidationError("ResolveSpec requires one or more grouping keys.")
+        _validate_field_names(
+            *self.group_by,
+            self.start_field,
+            self.end_field,
+            label="ResolveSpec",
+        )
+        if self.strategy != "overlap":
+            raise MMDSValidationError("ResolveSpec currently supports only 'overlap'.")
+        if not isinstance(self.merge_touching, bool):
+            raise MMDSValidationError("ResolveSpec merge_touching must be a boolean.")
+
+
+@dataclass(frozen=True)
+class ViewSpec:
+    """Configuration for deriving a bounded video value from each input tuple."""
+
+    video_field: str
+    start_field: str
+    end_field: str
+    output_field: str
+
+    def __post_init__(self) -> None:
+        _validate_field_names(
+            self.video_field,
+            self.start_field,
+            self.end_field,
+            self.output_field,
+            label="ViewSpec",
+        )
+
+
 @dataclass(frozen=True)
 class DetectSpec:
     """Spec for the Detect operator: runs YOLOE on every frame of a video field."""
@@ -116,7 +238,8 @@ class DetectSpec:
             )
 
 
-SemanticSpec: TypeAlias = PromptSpec | UdfSpec | DetectSpec
+SemanticSpec: TypeAlias = PromptSpec | UdfSpec | BuiltinSpec | DetectSpec
+OperatorSpec: TypeAlias = SemanticSpec | ResolveSpec | ViewSpec
 
 
 @dataclass(frozen=True)
@@ -124,7 +247,7 @@ class DatasetExpr:
     kind: OperatorKind
     source: DatasetExpr | None = None
     input_path: str | None = None
-    spec: SemanticSpec | None = None
+    spec: OperatorSpec | None = None
     group_by: tuple[str, ...] = ()
     field: str | None = None
     keep_empty: bool = False
@@ -145,6 +268,10 @@ class DatasetExpr:
             raise MMDSValidationError("Reduce nodes require one or more grouping keys.")
         if self.kind == "unnest" and self.field is None:
             raise MMDSValidationError("Unnest nodes require a field to expand.")
+        if self.kind == "resolve" and not isinstance(self.spec, ResolveSpec):
+            raise MMDSValidationError("resolve nodes require a ResolveSpec.")
+        if self.kind == "view" and not isinstance(self.spec, ViewSpec):
+            raise MMDSValidationError("view nodes require a ViewSpec.")
         if self.kind == "detect" and not isinstance(self.spec, DetectSpec):
             raise MMDSValidationError("detect nodes require a DetectSpec.")
 
@@ -227,6 +354,11 @@ def normalize_group_by(group_by: str | list[str] | tuple[str, ...]) -> tuple[str
     if any(not isinstance(field, str) for field in normalized):
         raise TypeError("group_by fields must all be strings.")
     return normalized
+
+
+def _validate_field_names(*values: str, label: str) -> None:
+    if any(not isinstance(value, str) or not value for value in values):
+        raise MMDSValidationError(f"{label} field names must be non-empty strings.")
 
 
 def udf_spec_from_callable(value: Callable[..., Any]) -> UdfSpec:

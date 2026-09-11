@@ -6,12 +6,16 @@ from typing import Any
 
 from ...model import DatasetExpr, MMDSValidationError, Row
 from .._spec import PromptExecutor, _execute_spec
+from ..context import ExecutionStats
 
 
 def _apply_reduce(
     node: DatasetExpr,
     rows: list[Row],
     prompt_executor: PromptExecutor | None,
+    *,
+    max_workers: int | None = None,
+    execution_stats: ExecutionStats | None = None,
 ) -> Iterator[Row]:
     groups: dict[tuple[Any, ...], list[Row]] = {}
     if node.group_by == ("_all",):
@@ -23,7 +27,7 @@ def _apply_reduce(
 
     def process_group(item: tuple[tuple[Any, ...], list[Row]]) -> Row:
         key, group_rows = item
-        aggregate = _execute_spec(node, group_rows, prompt_executor)
+        aggregate = _execute_spec(node, group_rows, prompt_executor, execution_stats)
         if not isinstance(aggregate, Mapping):
             raise MMDSValidationError("Reduce operations must return mapping-like aggregate rows.")
         output: Row = {}
@@ -32,5 +36,5 @@ def _apply_reduce(
         output.update(dict(aggregate))
         return output
 
-    with ThreadPoolExecutor() as ex:
+    with ThreadPoolExecutor(max_workers=max_workers) as ex:
         yield from ex.map(process_group, groups.items())

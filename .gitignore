@@ -5,6 +5,11 @@ __pycache__/
 .mypy_cache/
 .pytest_cache/
 .ruff_cache/
+.env
+
+# Large, reproducible research datasets and generated transcripts.
+data/soccernet/
+data/lectures/
 
 # YOLOE / Ultralytics artifacts (downloaded when running Detect examples)
 mobileclip_blt.ts

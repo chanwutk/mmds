@@ -79,6 +79,9 @@ output = Reduce(
 
 More examples: a [Map → Filter video pipeline](examples/video_map_then_filter.py) and
 local [YOLOE object detection](examples/wildlife_detection.py) (no API key required).
+The [lecture event-localization workload](examples/lecture_event_localization.py)
+contains the paper-aligned video-only, O1 transcript-only, and O2
+transcript-to-video queries.
 
 ---
 
@@ -93,11 +96,16 @@ A query is a sequence of top-level assignments; the **last assignment is the out
 | `Filter` | `Filter(data, spec)` | Keep rows where the prompt/UDF result is truthy. |
 | `Reduce` | `Reduce(data, group_by, reducer, *, schema=…)` | Group rows, run the reducer once per group, merge the aggregate with the group key. |
 | `Unnest` | `Unnest(data, field, *, keep_empty=False)` | Explode a list/tuple field into one row per item. |
+| `Resolve` | `Resolve(data, group_by, start_field, end_field)` | Coalesce overlapping source-time intervals within explicit groups. |
+| `View` | `View(data, video_field, start_field, end_field, …)` | Materialize each source-time interval as a validated standalone video clip. |
 | `Detect` | `Detect(data, video_field, classes, …)` | Frame-level YOLOE object detection on a video field (programmatic-only; not parsed/rendered as DSL text). |
 
 Helpers: `Record["field"]["nested"]` references a row field inside a prompt; `ForEach([...])`
 repeats a prompt fragment once per grouped row (only at the top level of a `Reduce`);
 `VideoView(video, start, end)` is a seek-based clip-range view used by `Detect`.
+`PadInterval(...)` and `ReconcileIntervals(...)` are serializable deterministic
+functions used by `Map` and `Reduce` in cross-modal temporal pushdown.
+`View` requires `ffmpeg` and `ffprobe` on `PATH`.
 
 ---
 
@@ -140,6 +148,10 @@ PYTHONPATH=src:. ./.venv/bin/python examples/run_expr.py examples/wildlife_speci
 # Parse + run a query written as DSL *text* (restricted-Python source):
 PYTHONPATH=src:. ./.venv/bin/python examples/run_text.py path/to/query.py
 
+# Run the lecture workload (O2 requires a writable materialization workspace):
+PYTHONPATH=src:. ./.venv/bin/python examples/run_lecture_event_localization.py \
+  --input path/to/lecture_pairs.jsonl --mode transcript-to-video
+
 # Run the full test suite (the project's primary verification command):
 PYTHONPATH=src:. ./.venv/bin/python -m unittest discover -s tests -t .
 ```
@@ -181,8 +193,9 @@ Components (all under [`src/mmds/`](src/mmds/)):
 - **`render.py`** — renders a plan/program back to *normalized* Python.
 - **`execution/`** — the local interpreter; `execution/llm/gemini.py` is the Gemini executor;
   `execution/ops/` holds per-operator logic including `Detect`.
-- **`optimizers/rewriter/`** — `rule.py` (conservative structural canonicalization) and
-  `agent.py` (validation-heavy LLM rewrite scaffold).
+- **`optimizers/`** — explicit O1/O2 cross-modal rewrites plus `rewriter/rule.py`
+  (conservative structural canonicalization) and `rewriter/agent.py`
+  (validation-heavy LLM rewrite scaffold).
 - **`udf_catalog.py`** — discovers UDFs from `udfs/*.py` (implemented) and `*.pyi` (declared-only).
 
 **[DESIGN.md](DESIGN.md) is the authoritative architecture document** — read it before

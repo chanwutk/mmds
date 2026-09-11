@@ -7,19 +7,27 @@ from typing import Any
 from .dsl import ForEach
 from .model import (
     Assignment,
+    BuiltinSpec,
     DatasetExpr,
     JsonValue,
     MMDSValidationError,
+    PadIntervalSpec,
     PromptSpec,
     QueryProgram,
     Record,
     RecordPath,
+    ReconcileIntervalsSpec,
+    ResolveSpec,
     UdfSpec,
+    ViewSpec,
     normalize_output_schema,
     normalize_group_by,
 )
 
-_MMDS_IMPORTS = {"Input", "Map", "Filter", "Reduce", "Unnest", "Record", "ForEach"}
+_MMDS_IMPORTS = {
+    "Input", "Map", "Filter", "Reduce", "Unnest", "Resolve", "View",
+    "PadInterval", "ReconcileIntervals", "Record", "ForEach",
+}
 
 
 def load_query(source: str | Path) -> QueryProgram:
@@ -162,6 +170,57 @@ def _parse_call(
             name=_parse_optional_name(keywords),
         )
 
+    if operator == "Resolve":
+        _expect_args(
+            operator,
+            node.args,
+            4,
+            keywords,
+            allowed_keywords={"strategy", "merge_touching", "name"},
+        )
+        return DatasetExpr(
+            kind="resolve",
+            source=_parse_source(node.args[0], bindings),
+            spec=ResolveSpec(
+                group_by=_parse_group_by(node.args[1]),
+                start_field=_parse_string(node.args[2], "Resolve start field"),
+                end_field=_parse_string(node.args[3], "Resolve end field"),
+                strategy=_parse_string_keyword(
+                    keywords.get("strategy"),
+                    "Resolve strategy",
+                    default="overlap",
+                ),
+                merge_touching=_parse_bool(
+                    keywords.get("merge_touching"), default=True
+                ),
+            ),
+            name=_parse_optional_name(keywords),
+        )
+
+    if operator == "View":
+        _expect_args(
+            operator,
+            node.args,
+            4,
+            keywords,
+            allowed_keywords={"output_field", "name"},
+        )
+        return DatasetExpr(
+            kind="view",
+            source=_parse_source(node.args[0], bindings),
+            spec=ViewSpec(
+                video_field=_parse_string(node.args[1], "View video field"),
+                start_field=_parse_string(node.args[2], "View start field"),
+                end_field=_parse_string(node.args[3], "View end field"),
+                output_field=_parse_string_keyword(
+                    keywords.get("output_field"),
+                    "View output field",
+                    default="view",
+                ),
+            ),
+            name=_parse_optional_name(keywords),
+        )
+
     raise MMDSValidationError(f"Unsupported operator {operator!r}.")
 
 
@@ -179,8 +238,22 @@ def _parse_spec(
     udf_imports: dict[str, UdfSpec],
     *,
     schema_node: ast.AST | None,
-) -> PromptSpec | UdfSpec:
+) -> PromptSpec | UdfSpec | BuiltinSpec:
     schema = _parse_schema(schema_node)
+
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+        if schema is not None:
+            raise MMDSValidationError(
+                "schema= is not valid for built-in deterministic functions."
+            )
+        if op_kind == "filter":
+            raise MMDSValidationError(
+                "Filter does not currently accept built-in deterministic functions."
+            )
+        if node.func.id == "PadInterval":
+            return _parse_pad_interval(node)
+        if node.func.id == "ReconcileIntervals":
+            return _parse_reconcile_intervals(node)
 
     if isinstance(node, ast.Name) and node.id in udf_imports:
         if schema is not None:
@@ -201,7 +274,106 @@ def _parse_spec(
         return PromptSpec(parts=parts, output_schema=schema)
 
     raise MMDSValidationError(
-        "Operator semantic specs must be prompt strings, prompt-part lists, or imported UDF names."
+        "Operator semantic specs must be prompt strings, prompt-part lists, "
+        "built-in deterministic functions, or imported UDF names."
+    )
+
+
+def _parse_pad_interval(node: ast.Call) -> PadIntervalSpec:
+    keywords = _keyword_nodes(node)
+    _expect_args(
+        "PadInterval",
+        node.args,
+        3,
+        keywords,
+        allowed_keywords={
+            "input_start_field",
+            "input_end_field",
+            "output_start_field",
+            "output_end_field",
+        },
+    )
+    return PadIntervalSpec(
+        interval_field=_parse_string(node.args[0], "PadInterval interval field"),
+        duration_field=_parse_string(node.args[1], "PadInterval duration field"),
+        padding_seconds=_parse_number(node.args[2], "PadInterval padding"),
+        input_start_field=_parse_string_keyword(
+            keywords.get("input_start_field"),
+            "PadInterval input start field",
+            default="start_seconds",
+        ),
+        input_end_field=_parse_string_keyword(
+            keywords.get("input_end_field"),
+            "PadInterval input end field",
+            default="end_seconds",
+        ),
+        output_start_field=_parse_string_keyword(
+            keywords.get("output_start_field"),
+            "PadInterval output start field",
+            default="window_start_seconds",
+        ),
+        output_end_field=_parse_string_keyword(
+            keywords.get("output_end_field"),
+            "PadInterval output end field",
+            default="window_end_seconds",
+        ),
+    )
+
+
+def _parse_reconcile_intervals(node: ast.Call) -> ReconcileIntervalsSpec:
+    keywords = _keyword_nodes(node)
+    _expect_args(
+        "ReconcileIntervals",
+        node.args,
+        3,
+        keywords,
+        allowed_keywords={
+            "output_field",
+            "event_start_field",
+            "event_end_field",
+            "preserve_fields",
+            "deduplication_tiou_threshold",
+        },
+    )
+    preserve_node = keywords.get("preserve_fields")
+    threshold_node = keywords.get("deduplication_tiou_threshold")
+    return ReconcileIntervalsSpec(
+        events_field=_parse_string(node.args[0], "ReconcileIntervals events field"),
+        window_start_field=_parse_string(
+            node.args[1], "ReconcileIntervals window start field"
+        ),
+        window_end_field=_parse_string(
+            node.args[2], "ReconcileIntervals window end field"
+        ),
+        output_field=_parse_string_keyword(
+            keywords.get("output_field"),
+            "ReconcileIntervals output field",
+            default="events",
+        ),
+        event_start_field=_parse_string_keyword(
+            keywords.get("event_start_field"),
+            "ReconcileIntervals event start field",
+            default="start_seconds",
+        ),
+        event_end_field=_parse_string_keyword(
+            keywords.get("event_end_field"),
+            "ReconcileIntervals event end field",
+            default="end_seconds",
+        ),
+        preserve_fields=(
+            ()
+            if preserve_node is None
+            else _parse_string_sequence(
+                preserve_node, "ReconcileIntervals preserve_fields"
+            )
+        ),
+        deduplication_tiou_threshold=(
+            0.8
+            if threshold_node is None
+            else _parse_number(
+                threshold_node, "ReconcileIntervals tIoU threshold"
+            )
+        ),
     )
 
 
@@ -296,6 +468,29 @@ def _parse_bool(node: ast.AST | None, *, default: bool) -> bool:
     if not isinstance(node, ast.Constant) or not isinstance(node.value, bool):
         raise MMDSValidationError("Boolean operator flags must be literal True/False values.")
     return node.value
+
+
+def _parse_number(node: ast.AST, label: str) -> float:
+    if not isinstance(node, ast.Constant) or isinstance(node.value, bool) or not isinstance(node.value, (int, float)):
+        raise MMDSValidationError(f"{label} must be a numeric literal.")
+    return float(node.value)
+
+
+def _parse_string_keyword(node: ast.AST | None, label: str, *, default: str) -> str:
+    return default if node is None else _parse_string(node, label)
+
+
+def _parse_string_sequence(node: ast.AST, label: str) -> tuple[str, ...]:
+    if not isinstance(node, (ast.List, ast.Tuple)):
+        raise MMDSValidationError(f"{label} must be a list or tuple of strings.")
+    return tuple(_parse_string(item, label) for item in node.elts)
+
+
+def _keyword_nodes(node: ast.Call) -> dict[str, ast.AST]:
+    keywords = {keyword.arg: keyword.value for keyword in node.keywords}
+    if None in keywords:
+        raise MMDSValidationError("**kwargs are not supported in MMDS queries.")
+    return keywords
 
 
 def _parse_optional_name(keywords: dict[str, ast.AST]) -> str | None:
