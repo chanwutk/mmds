@@ -10,7 +10,7 @@ JsonValue: TypeAlias = JsonScalar | dict[str, "JsonValue"] | list["JsonValue"]
 FieldSchemaValue: TypeAlias = str | dict[str, JsonValue]
 RecordSchema: TypeAlias = dict[str, FieldSchemaValue]
 OperatorKind: TypeAlias = Literal[
-    "input", "map", "filter", "reduce", "unnest", "detect", "window"
+    "input", "map", "filter", "reduce", "unnest", "detect", "window", "coalesce"
 ]
 
 
@@ -180,6 +180,15 @@ class DatasetExpr:
             raise MMDSValidationError("detect nodes require a DetectSpec.")
         if self.kind == "window" and not isinstance(self.spec, WindowSpec):
             raise MMDSValidationError("window nodes require a WindowSpec.")
+        if self.kind == "coalesce":
+            if not self.group_by:
+                raise MMDSValidationError(
+                    "Coalesce nodes require one or more grouping fields."
+                )
+            if self.field is None:
+                raise MMDSValidationError(
+                    "Coalesce nodes require an interval field."
+                )
 
     def children(self) -> tuple[DatasetExpr, ...]:
         if self.source is None:

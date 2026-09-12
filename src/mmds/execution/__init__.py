@@ -13,6 +13,7 @@ from ..model import (
     Row,
 )
 from ._spec import PromptExecutor, StaticPromptExecutor
+from .ops.coalesce import _apply_coalesce
 from .ops.filter import _apply_filter
 from .ops.map import _apply_map
 from .ops.reduce import _apply_reduce
@@ -71,6 +72,8 @@ def _execute_node(
     elif node.kind == "window":
         for row in source:
             yield _apply_window(node, row)
+    elif node.kind == "coalesce":
+        yield from _apply_coalesce(node, source)
     else:
         raise MMDSValidationError(f"Unsupported operator kind {node.kind!r}.")
 

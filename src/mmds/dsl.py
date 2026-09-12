@@ -155,6 +155,24 @@ def Window(data: DatasetExpr, video_field, candidate_field, output_field, paddin
     return DatasetExpr(kind="window", source=_normalize_source(data), spec=WindowSpec(video_field=video_field, candidate_field=candidate_field, output_field=output_field, padding_time=float(padding_time)), name=name)
 
 
+def Coalesce(
+    data: DatasetExpr,
+    group_by: str | list[str] | tuple[str, ...],
+    field: str,
+    *,
+    name: str | None = None,
+) -> DatasetExpr:
+    if not isinstance(field, str) or not field:
+        raise TypeError("Coalesce field must be a non-empty string.")
+    return DatasetExpr(
+        kind="coalesce",
+        source=_normalize_source(data),
+        group_by=normalize_group_by(group_by),
+        field=field,
+        name=name,
+    )
+
+
 def ForEach(parts: Sequence[PromptInputPart]) -> ForEachPrompt:
     normalized_parts = _normalize_prompt_parts(
         parts, allow_foreach=False, allow_record=True

@@ -1,5 +1,5 @@
 from typing import TYPE_CHECKING
-from .dsl import Detect, Filter, ForEach, Input, Map, Reduce, Unnest, Window
+from .dsl import Coalesce, Detect, Filter, ForEach, Input, Map, Reduce, Unnest, Window
 from .execution import PromptExecutor, StaticPromptExecutor, execute
 from .execution.llm.gemini import GeminiPromptExecutor
 from .optimizers.rewriter.agent import LLMClient, StaticLLMClient
@@ -32,6 +32,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "Assignment",
+    "Coalesce",
     "DatasetExpr",
     "Detect",
     "DetectSpec",
