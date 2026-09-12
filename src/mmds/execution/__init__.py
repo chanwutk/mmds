@@ -17,6 +17,7 @@ from .ops.filter import _apply_filter
 from .ops.map import _apply_map
 from .ops.reduce import _apply_reduce
 from .ops.unnest import _apply_unnest
+from .ops.window import _apply_window
 
 # NOTE: `.ops.detect` is intentionally NOT imported here. It pulls in the
 # OpenCV/NumPy (and, at run time, torch/ultralytics) stack via
@@ -65,9 +66,11 @@ def _execute_node(
         yield from _apply_unnest(node, source)
     elif node.kind == "detect":
         from .ops.detect import _apply_detect  # lazy: pulls OpenCV/NumPy only when used
-
         for row in source:
             yield _apply_detect(node, row)
+    elif node.kind == "window":
+        for row in source:
+            yield _apply_window(node, row)
     else:
         raise MMDSValidationError(f"Unsupported operator kind {node.kind!r}.")
 

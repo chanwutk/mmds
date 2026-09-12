@@ -6,6 +6,7 @@ from typing import Any, Callable, TypeAlias
 from .model import (
     DatasetExpr,
     DetectSpec,
+    WindowSpec,
     ForEachPrompt,
     JsonValue,
     MMDSValidationError,
@@ -141,6 +142,17 @@ def Detect(
         ),
         name=name,
     )
+
+def Window(data: DatasetExpr, video_field, candidate_field, output_field, padding_time: int, name: str | None = None) -> DatasetExpr:
+    if not isinstance(video_field, str) or not video_field:
+        raise TypeError("Window video_field must be a non-empty string")
+    if not isinstance(candidate_field, str) or not candidate_field:
+        raise TypeError("Window candidate_field must be a non-empty string")
+    if not isinstance(output_field, str) or not output_field:
+        raise TypeError("Window output_field must be a non-empty string")
+    if padding_time < 0:
+        raise TypeError("padding_time needs to be non-negative")
+    return DatasetExpr(kind="window", source=_normalize_source(data), spec=WindowSpec(video_field=video_field, candidate_field=candidate_field, output_field=output_field, padding_time=float(padding_time)), name=name)
 
 
 def ForEach(parts: Sequence[PromptInputPart]) -> ForEachPrompt:

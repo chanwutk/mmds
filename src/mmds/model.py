@@ -10,7 +10,7 @@ JsonValue: TypeAlias = JsonScalar | dict[str, "JsonValue"] | list["JsonValue"]
 FieldSchemaValue: TypeAlias = str | dict[str, JsonValue]
 RecordSchema: TypeAlias = dict[str, FieldSchemaValue]
 OperatorKind: TypeAlias = Literal[
-    "input", "map", "filter", "reduce", "unnest", "detect"
+    "input", "map", "filter", "reduce", "unnest", "detect", "window"
 ]
 
 
@@ -116,7 +116,38 @@ class DetectSpec:
             )
 
 
-SemanticSpec: TypeAlias = PromptSpec | UdfSpec | DetectSpec
+@dataclass(frozen=True)
+class WindowSpec:
+    video_field: str
+    candidate_field: str
+    output_field: str = "clip"
+    padding_time: float = 0.0
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.video_field, str) or not self.video_field:
+            raise MMDSValidationError(
+                "WindowSpec video_field must be a non-empty string."
+            )
+
+        if not isinstance(self.candidate_field, str) or not self.candidate_field:
+            raise MMDSValidationError(
+                "WindowSpec candidate_field must be a non-empty string."
+            )
+
+        if not isinstance(self.output_field, str) or not self.output_field:
+            raise MMDSValidationError(
+                "WindowSpec output_field must be a non-empty string."
+            )
+
+        padding = self.padding_time
+        if padding < 0:
+            raise MMDSValidationError(
+                "WindowSpec padding_time must be a finite non-negative number."
+            )
+
+        object.__setattr__(self, "padding_time", float(padding))
+
+SemanticSpec: TypeAlias = PromptSpec | UdfSpec | DetectSpec | WindowSpec
 
 
 @dataclass(frozen=True)
@@ -147,6 +178,8 @@ class DatasetExpr:
             raise MMDSValidationError("Unnest nodes require a field to expand.")
         if self.kind == "detect" and not isinstance(self.spec, DetectSpec):
             raise MMDSValidationError("detect nodes require a DetectSpec.")
+        if self.kind == "window" and not isinstance(self.spec, WindowSpec):
+            raise MMDSValidationError("window nodes require a WindowSpec.")
 
     def children(self) -> tuple[DatasetExpr, ...]:
         if self.source is None:
