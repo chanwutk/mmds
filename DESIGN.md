@@ -244,6 +244,15 @@ Prompt execution flow:
 
 `StaticPromptExecutor` exists for deterministic tests and local development.
 
+Windowed video queries use two deterministic UDFs from
+`udfs.temporal_ops`. `rebase_clip_events` converts `clip_events` from offsets
+relative to the beginning of `clip` into source-time `events` by adding
+`clip.start`. `reconcile_events` is used by `Reduce(..., "source_id", ...)` to
+flatten and sort source-time event collections. Interval merging remains the
+responsibility of `Coalesce`; reconciliation only restores one result
+collection per source. Keeping `clip_events` and `events` as separate fields
+makes their coordinate systems explicit.
+
 Relative path handling:
 
 - when executing a parsed query file, relative `Input(...)` paths resolve from that query file’s directory
