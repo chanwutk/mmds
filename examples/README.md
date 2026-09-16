@@ -18,6 +18,9 @@ top-level [GET_START.md](../GET_START.md) for setup and [README.md](../README.md
 | [`detect_multi_species.py`](detect_multi_species.py) | `Detect` → `Unnest` | no API key; downloads weights + video |
 | [`detect_filter_bears.py`](detect_filter_bears.py) | `Detect` → `Filter` (UDF) | no API key; downloads weights + video |
 | [`detect_filter_bears_high_confidence.py`](detect_filter_bears_high_confidence.py) | `Detect` → `Map` (UDF prune) → `Filter` (UDF) | no API key; downloads weights + video |
+| [`lecture_event_localization_video_only.py`](lecture_event_localization_video_only.py) | full-video `Map` → `Reduce` → `Unnest` | Gemini API key; `data/lectures.jsonl` |
+| [`lecture_event_localization_transcript_only.py`](lecture_event_localization_transcript_only.py) | transcript `Map` → `Reduce` → `Unnest` | Gemini API key; `data/lectures.jsonl` |
+| [`lecture_event_localization.py`](lecture_event_localization.py) | transcript `Map` → `Unnest` → `Window` → `Coalesce` → video `Map` → UDF `Map` → `Reduce` → `Unnest` | Gemini API key; `data/lectures.jsonl` |
 
 ## Drivers
 
@@ -32,6 +35,24 @@ top-level [GET_START.md](../GET_START.md) for setup and [README.md](../README.md
 - [`run_detect.py`](run_detect.py) — same as `run_expr.py` but calls `execute(...)`
   without constructing `GeminiPromptExecutor`. Optional; `run_expr.py` is enough
   for local `Detect` pipelines.
+
+## Lecture event localization data
+
+[`data/lectures.jsonl`](../data/lectures.jsonl) is the single self-contained
+lecture dataset. Each of its three rows includes video metadata, timestamped
+transcript cues, a localization query, and evaluation annotations. The local MP4
+paths in those rows must exist before a video-backed query can run.
+
+All three query variants consume the same `data/lectures.jsonl` rows:
+
+```bash
+./run examples/lecture_event_localization_video_only.py
+./run examples/lecture_event_localization_transcript_only.py
+./run examples/lecture_event_localization.py
+```
+
+`Window` and `Coalesce` are programmatic-only today, so the two-stage example
+cannot yet run through `examples/run_text.py`.
 
 ## Notes
 
