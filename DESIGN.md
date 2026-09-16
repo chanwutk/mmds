@@ -40,7 +40,7 @@ The design goal is to keep those representations close enough that:
 
 The current implementation supports:
 
-- operators: `Input`, `Map`, `Filter`, `Reduce`, `Unnest`, `Split`, `Detect`, `Join`
+- operators: `Input`, `Map`, `Filter`, `Reduce`, `Unnest`, `Detect`, `Window`, `Coalesce`
 - public video utility: `VideoView(video, start, end)` for seek-based clip-range iteration
 - file-backed `Input(...)` roots over `.json` and `.jsonl`
 - prompt-backed semantics as either:
@@ -56,6 +56,8 @@ The current implementation supports:
 - UDF discovery from `.py` and `.pyi`
 - a conservative rule optimizer and a validation-heavy LLM optimizer scaffold
 - `Detect` operator for frame-level YOLOE object detection on video fields
+- programmatic `Window` and `Coalesce` operators for constructing padded
+  source-time video views and merging overlapping candidate intervals
 
 The current implementation intentionally does not support:
 
@@ -82,6 +84,8 @@ The main entrypoints are exported from [src/mmds/__init__.py](/Users/chanwutk/Do
 - `Split(data, video_field, *, chunk_sec=30, doc_id_key="camera_id", output_prefix="split_video", name=None)`
 - `Join(left, right, predicate?, *, on=..., one_to_one=..., score=..., min_score=..., left_key=..., right_key=..., name=None)`
 - `Detect(data, video_field, classes, *, model="yoloe-11s-seg.pt", output_field="detections", frame_stride=1, conf=None, imgsz=None, name=None)`
+- `Window(data, video_field, candidate_field, output_field, padding_time, name=None)`
+- `Coalesce(data, group_by, field, *, name=None)`
 - `VideoView(video, start, end)`
 - `Record[...]`
 - `ForEach([...])`
@@ -104,14 +108,17 @@ The core model lives in [src/mmds/model.py](/Users/chanwutk/Documents/mmds/src/m
 - `SplitSpec` stores fixed-duration video chunking parameters: `video_field`, `chunk_sec`, `doc_id_key`, `output_prefix`.
 - `DetectSpec` stores the parameters for a `Detect` node: `video_field`, `classes`, `model`, `output_field`, `frame_stride`, `conf`, `imgsz`.
 - `JoinSpec` stores hash-join keys, optional predicate/score UDFs, and one-to-one matching options.
+- `WindowSpec` stores the parameters for a `Window` node: `video_field`,
+  `candidate_field`, `output_field`, and `padding_time`.
 - `Assignment` and `QueryProgram` represent a parsed query file.
 - `MMDSValidationError` is the shared validation failure type.
 
 `DatasetExpr` uses a unary tree shape today:
 
 - `Input` has no source.
-- `Map`, `Filter`, `Reduce`, `Unnest`, `Split`, and `Detect` each have one `source`.
 - `Join` has `source` (left) and `right_source` (right).
+- `Map`, `Filter`, `Reduce`, `Unnest`, `Detect`, `Window`, and `Coalesce`
+  each have one `source`.
 
 That shape is sufficient for the first operator set and keeps rendering and execution simple. If future operators introduce multiple inputs, `DatasetExpr` will need a general child list instead of a single `source`.
 
@@ -179,6 +186,9 @@ Parser rules:
 - `Filter` does not accept `schema=`
 - `Reduce` prompt lists may only use `Record[...]` inside `ForEach([...])`
 
+`Window`, `Coalesce`, and `Detect` are currently programmatic-only operators;
+the restricted source parser does not accept them yet.
+
 The canonical output variable is the last assignment in the file.
 
 ### Renderer
@@ -202,6 +212,9 @@ Normalization behavior:
 
 This is semantic round-tripping, not source-fidelity round-tripping. Comments, whitespace, and original local variable names are not preserved unless they naturally match the normalized output.
 
+`Window`, `Coalesce`, and `Detect` plans are not currently supported by the
+renderer.
+
 ### Execution
 
 Local execution lives in the [src/mmds/execution/](/Users/chanwutk/Documents/mmds/src/mmds/execution/) package (entrypoint in [execution/__init__.py](/Users/chanwutk/Documents/mmds/src/mmds/execution/__init__.py); per-operator logic under [execution/ops/](/Users/chanwutk/Documents/mmds/src/mmds/execution/ops/)).
@@ -223,6 +236,12 @@ Operator semantics:
 - `Split`: reads the `VideoView` (or string path plus row `duration_sec`) at `video_field`, slices the clip into contiguous `chunk_sec` intervals, and fans out one output row per chunk; each chunk row adds `{output_prefix}_id`, `{output_prefix}_chunk_num`, `{output_prefix}_chunk_start`, `{output_prefix}_chunk_end`, and narrows `video_field` to the chunk's absolute `start`/`end`
 - `Detect`: reads the video pointed to by `video_field`; if the value is a `VideoView`-shaped dict with `start`/`end`, wraps the source in a `VideoView`, runs YOLOE detection on the selected frames (every frame by default, or every `frame_stride`-th frame when `frame_stride > 1`), and merges a detection list with absolute source-video `frame_idx` values into `output_field`
 - `Join`: executes the left (`source`) and right (`right_source`) inputs and applies the join. As a **self-join optimization**, when `source is right_source` (the exact same plan node feeds both sides, as in the cross-camera vehicle join) the shared subtree is executed **once** and the materialized rows are reused for both sides, so an expensive upstream pipeline (e.g. `Detect` → tracking → appearance embedding) is not evaluated twice. The join helpers only read rows and copy them via `dict(...)` before emitting, so sharing row objects across both sides is safe. Distinct left/right nodes are still executed independently.
+- `Window`: reads one `{start, end}` candidate interval per row, applies
+  symmetric padding, clamps the start to zero, and stores a non-materialized
+  `VideoView` descriptor in `output_field` while preserving the input row
+- `Coalesce`: groups rows by `group_by`, sorts the mappings in `field` by
+  `start`, merges overlapping or touching intervals, and emits one row per
+  merged interval containing only the grouping fields and `field`
 
 Prompt execution flow:
 
@@ -232,6 +251,15 @@ Prompt execution flow:
 4. Delegate to `PromptExecutor.execute(op_type, prompt_spec, resolved_prompt, payload, context)`.
 
 `StaticPromptExecutor` exists for deterministic tests and local development.
+
+Windowed video queries use two deterministic UDFs from
+`udfs.temporal_ops`. `rebase_clip_events` converts `clip_events` from offsets
+relative to the beginning of `clip` into source-time `events` by adding
+`clip.start`. `reconcile_events` is used by `Reduce(..., "source_id", ...)` to
+flatten and sort source-time event collections. Interval merging remains the
+responsibility of `Coalesce`; reconciliation only restores one result
+collection per source. Keeping `clip_events` and `events` as separate fields
+makes their coordinate systems explicit.
 
 Relative path handling:
 

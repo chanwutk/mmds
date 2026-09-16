@@ -1,0 +1,34 @@
+{
+  "dataset": {
+    "total": 230,
+    "goals": 21,
+    "non_goals": 209
+  },
+  "model": "gemini-2.5-flash",
+  "baseline": {
+    "llm_calls": 230,
+    "wall_time_s": 84.85,
+    "clips_passed": 46,
+    "cost_usd": 0.599992,
+    "precision": 0.45652173913043476,
+    "recall": 1.0,
+    "f1": 0.626865671641791,
+    "tp": 21,
+    "fp": 25,
+    "fn": 0
+  },
+  "optimized": {
+    "llm_calls": 127,
+    "wall_time_s": 47.71,
+    "clips_passed": 39,
+    "cost_usd": 0.329468,
+    "precision": 0.5384615384615384,
+    "recall": 1.0,
+    "f1": 0.7000000000000001,
+    "tp": 21,
+    "fp": 18,
+    "fn": 0
+  },
+  "llm_call_savings_pct": 44.78,
+  "cost_savings_pct": 45.09
+}

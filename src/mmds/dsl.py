@@ -6,6 +6,7 @@ from typing import Any, Callable, TypeAlias
 from .model import (
     DatasetExpr,
     DetectSpec,
+    WindowSpec,
     ForEachPrompt,
     JsonValue,
     JoinSpec,
@@ -283,6 +284,35 @@ def Detect(
             conf=conf,
             imgsz=imgsz,
         ),
+        name=name,
+    )
+
+def Window(data: DatasetExpr, video_field, candidate_field, output_field, padding_time: int, name: str | None = None) -> DatasetExpr:
+    if not isinstance(video_field, str) or not video_field:
+        raise TypeError("Window video_field must be a non-empty string")
+    if not isinstance(candidate_field, str) or not candidate_field:
+        raise TypeError("Window candidate_field must be a non-empty string")
+    if not isinstance(output_field, str) or not output_field:
+        raise TypeError("Window output_field must be a non-empty string")
+    if padding_time < 0:
+        raise TypeError("padding_time needs to be non-negative")
+    return DatasetExpr(kind="window", source=_normalize_source(data), spec=WindowSpec(video_field=video_field, candidate_field=candidate_field, output_field=output_field, padding_time=float(padding_time)), name=name)
+
+
+def Coalesce(
+    data: DatasetExpr,
+    group_by: str | list[str] | tuple[str, ...],
+    field: str,
+    *,
+    name: str | None = None,
+) -> DatasetExpr:
+    if not isinstance(field, str) or not field:
+        raise TypeError("Coalesce field must be a non-empty string.")
+    return DatasetExpr(
+        kind="coalesce",
+        source=_normalize_source(data),
+        group_by=normalize_group_by(group_by),
+        field=field,
         name=name,
     )
 
