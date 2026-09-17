@@ -10,7 +10,10 @@ def optimize(plan: DatasetExpr) -> DatasetExpr:
 
     def visit(node: DatasetExpr) -> DatasetExpr:
         source = visit(node.source) if node.source is not None else None
-        rebuilt = replace(node, source=source)
+        right_source = (
+            visit(node.right_source) if node.right_source is not None else None
+        )
+        rebuilt = replace(node, source=source, right_source=right_source)
         cached = memo.get(rebuilt)
         if cached is not None:
             return cached

@@ -45,7 +45,9 @@ def build_rewrite_prompt(query_text: str, objective: str | None = None) -> str:
         "- Output only Python code.\n"
         "- Stay within the straight-line MMDS DSL subset.\n"
         "- Preserve the same Input(...) file paths.\n"
-        "- Use only Input, Map, Filter, Reduce, Unnest, Record, and ForEach.\n"
+        "- Use only the supported operators and helpers Input, Map, Filter, Reduce, Unnest, Join, Detect, Window, Coalesce, Record, and ForEach.\n"
+        "- Import every referenced operator from mmds and every referenced UDF explicitly from its udfs.* module; do not define inline lambdas or helper functions.\n"
+        "- The rewritten query must pass MMDS parser validation; Join predicates and score functions must be imported UDF names, and operator sources must reference earlier assignments.\n"
         '- Prompt-backed Map/Reduce operators must include schema=... using the concise field-map form, for example schema={"summary": "string"}.\n\n'
         f"{query_text.strip()}\n"
     )

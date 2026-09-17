@@ -21,6 +21,8 @@ top-level [GET_START.md](../GET_START.md) for setup and [README.md](../README.md
 | [`lecture_event_localization_video_only.py`](lecture_event_localization_video_only.py) | full-video `Map` → `Reduce` → `Unnest` | Gemini API key; `data/lectures.jsonl` |
 | [`lecture_event_localization_transcript_only.py`](lecture_event_localization_transcript_only.py) | transcript `Map` → `Reduce` → `Unnest` | Gemini API key; `data/lectures.jsonl` |
 | [`lecture_event_localization.py`](lecture_event_localization.py) | transcript `Map` → `Unnest` → `Window` → `Coalesce` → video `Map` → UDF `Map` → `Reduce` → `Unnest` | Gemini API key; `data/lectures.jsonl` |
+| [`semantic_join_cross_camera_vehicle.py`](semantic_join_cross_camera_vehicle.py) | `Reduce` + `ForEach` → `Unnest` → promote `Map` | Gemini API key; local I24V highway2/3 clips |
+| [`join_cross_camera_vehicle.py`](join_cross_camera_vehicle.py) | `Detect` → tracking/re-ID `Map`s → `Unnest` → one-to-one `Join` → trajectory `Map` | local I24V highway2/3 clips; YOLOE and re-ID model weights |
 
 ## Drivers
 
@@ -51,8 +53,25 @@ All three query variants consume the same `data/lectures.jsonl` rows:
 ./run examples/lecture_event_localization.py
 ```
 
-`Window` and `Coalesce` are programmatic-only today, so the two-stage example
-cannot yet run through `examples/run_text.py`.
+`Window` and `Coalesce` can be rendered and parsed through the restricted DSL,
+so the two-stage plan can also be inspected as normalized query text.
+
+## Cross-camera vehicle data
+
+The cross-camera example defaults to the adjacent highway2/3 manifest at
+[`data/i24v_traffic_highway2_highway3_5s.jsonl`](../data/i24v_traffic_highway2_highway3_5s.jsonl).
+The licensed MP4 inputs are intentionally not committed. Follow
+[`data/i24v_traffic/README.md`](../data/i24v_traffic/README.md) to install them
+locally before running:
+
+```bash
+./run examples/semantic_join_cross_camera_vehicle.py
+./run examples/join_cross_camera_vehicle.py
+```
+
+The semantic query is the Gemini Reduce–Unnest baseline. The Detect–Track–Join
+query is the rewritten UDF plan. Both emit the same final row fields:
+`vehicle_id`, `attributes`, `timeline`, and `match_score`.
 
 ## Notes
 

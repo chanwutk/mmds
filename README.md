@@ -89,11 +89,14 @@ A query is a sequence of top-level assignments; the **last assignment is the out
 | Operator | Signature | What it does |
 |----------|-----------|--------------|
 | `Input`  | `Input(path)` | Load rows from a `.json` (top-level list) or `.jsonl` file. |
-| `Map`    | `Map(data, spec, *, schema=…)` | Run the prompt/UDF once per row; **merge** returned fields into the row. |
+| `Map`    | `Map(data, spec, *, schema=…, replace=False)` | Run the prompt/UDF once per row; merge returned fields, or replace the row when `replace=True`. |
 | `Filter` | `Filter(data, spec)` | Keep rows where the prompt/UDF result is truthy. |
 | `Reduce` | `Reduce(data, group_by, reducer, *, schema=…)` | Group rows, run the reducer once per group, merge the aggregate with the group key. |
 | `Unnest` | `Unnest(data, field, *, keep_empty=False)` | Explode a list/tuple field into one row per item. |
-| `Detect` | `Detect(data, video_field, classes, …)` | Frame-level YOLOE object detection on a video field (programmatic-only; not parsed/rendered as DSL text). |
+| `Join`   | `Join(left, right, predicate=None, *, on=…)` | Emit `{"left", "right"}` pairs by keys and/or a binary UDF predicate; optional greedy one-to-one scoring. |
+| `Detect` | `Detect(data, video_field, classes, …)` | Frame-level YOLOE object detection on a video field. |
+| `Window` | `Window(data, video_field, candidate_field, output_field, padding_time)` | Build a padded source-time `VideoView` from a candidate interval. |
+| `Coalesce` | `Coalesce(data, group_by, field)` | Merge overlapping interval fields within each group. |
 
 Helpers: `Record["field"]["nested"]` references a row field inside a prompt; `ForEach([...])`
 repeats a prompt fragment once per grouped row (only at the top level of a `Reduce`);
