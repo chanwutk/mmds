@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from importlib import import_module
+from math import isfinite
 from typing import Any, Callable, Iterator, Literal, TypeAlias
 
 Row: TypeAlias = dict[str, Any]
@@ -10,7 +11,18 @@ JsonValue: TypeAlias = JsonScalar | dict[str, "JsonValue"] | list["JsonValue"]
 FieldSchemaValue: TypeAlias = str | dict[str, JsonValue]
 RecordSchema: TypeAlias = dict[str, FieldSchemaValue]
 OperatorKind: TypeAlias = Literal[
-    "input", "map", "filter", "reduce", "unnest", "detect", "window", "coalesce"
+    "input",
+    "map",
+    "filter",
+    "reduce",
+    "unnest",
+    "detect",
+    "window",
+    "coalesce",
+    "drop_fields",
+    "video_map",
+    "video_map_each",
+    "view_budget",
 ]
 
 
@@ -140,14 +152,151 @@ class WindowSpec:
             )
 
         padding = self.padding_time
-        if padding < 0:
+        if (
+            not isinstance(padding, (int, float))
+            or isinstance(padding, bool)
+            or not isfinite(padding)
+            or padding < 0
+        ):
             raise MMDSValidationError(
                 "WindowSpec padding_time must be a finite non-negative number."
             )
 
         object.__setattr__(self, "padding_time", float(padding))
 
-SemanticSpec: TypeAlias = PromptSpec | UdfSpec | DetectSpec | WindowSpec
+
+@dataclass(frozen=True)
+class DropFieldsSpec:
+    fields: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.fields, (list, tuple)):
+            raise MMDSValidationError(
+                "DropFieldsSpec fields must be a sequence of strings."
+            )
+        fields = tuple(self.fields)
+        if not fields:
+            raise MMDSValidationError("DropFieldsSpec requires at least one field.")
+        if any(not isinstance(field, str) or not field for field in fields):
+            raise MMDSValidationError(
+                "DropFieldsSpec fields must be non-empty strings."
+            )
+        if len(set(fields)) != len(fields):
+            raise MMDSValidationError("DropFieldsSpec fields must be unique.")
+        object.__setattr__(self, "fields", fields)
+
+
+@dataclass(frozen=True)
+class VideoMapSpec:
+    video_field: str
+    views_field: str
+    group_by: tuple[str, ...]
+    map_spec: PromptSpec | UdfSpec
+    padding_time: float = 0.0
+    max_views: int = 8
+    max_total_video_seconds: float = 600.0
+    clip_field: str = "clip"
+
+    def __post_init__(self) -> None:
+        for label, value in (
+            ("video_field", self.video_field),
+            ("views_field", self.views_field),
+            ("clip_field", self.clip_field),
+        ):
+            if not isinstance(value, str) or not value:
+                raise MMDSValidationError(
+                    f"VideoMapSpec {label} must be a non-empty string."
+                )
+        if len({self.video_field, self.views_field, self.clip_field}) != 3:
+            raise MMDSValidationError(
+                "VideoMapSpec video, views, and clip fields must be distinct."
+            )
+        object.__setattr__(self, "group_by", normalize_group_by(self.group_by))
+        if not isinstance(self.map_spec, (PromptSpec, UdfSpec)):
+            raise MMDSValidationError(
+                "VideoMapSpec map_spec must be a PromptSpec or UdfSpec."
+            )
+        if isinstance(self.map_spec, PromptSpec) and self.map_spec.output_schema is None:
+            raise MMDSValidationError(
+                "Prompt-backed VideoMap operations require an output schema."
+            )
+        padding = self.padding_time
+        if (
+            not isinstance(padding, (int, float))
+            or isinstance(padding, bool)
+            or not isfinite(padding)
+            or padding < 0
+        ):
+            raise MMDSValidationError(
+                "VideoMapSpec padding_time must be a finite non-negative number."
+            )
+        if (
+            not isinstance(self.max_views, int)
+            or isinstance(self.max_views, bool)
+            or self.max_views <= 0
+        ):
+            raise MMDSValidationError(
+                "VideoMapSpec max_views must be a positive integer."
+            )
+        total_seconds = self.max_total_video_seconds
+        if (
+            not isinstance(total_seconds, (int, float))
+            or isinstance(total_seconds, bool)
+            or not isfinite(total_seconds)
+            or total_seconds <= 0
+        ):
+            raise MMDSValidationError(
+                "VideoMapSpec max_total_video_seconds must be a finite positive number."
+            )
+        object.__setattr__(self, "padding_time", float(padding))
+        object.__setattr__(
+            self, "max_total_video_seconds", float(total_seconds)
+        )
+
+
+@dataclass(frozen=True)
+class ViewBudgetSpec:
+    group_by: tuple[str, ...]
+    field: str
+    max_views: int
+    max_total_video_seconds: float
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "group_by", normalize_group_by(self.group_by))
+        if not isinstance(self.field, str) or not self.field:
+            raise MMDSValidationError(
+                "ViewBudgetSpec field must be a non-empty string."
+            )
+        if (
+            not isinstance(self.max_views, int)
+            or isinstance(self.max_views, bool)
+            or self.max_views <= 0
+        ):
+            raise MMDSValidationError(
+                "ViewBudgetSpec max_views must be a positive integer."
+            )
+        seconds = self.max_total_video_seconds
+        if (
+            not isinstance(seconds, (int, float))
+            or isinstance(seconds, bool)
+            or not isfinite(seconds)
+            or seconds <= 0
+        ):
+            raise MMDSValidationError(
+                "ViewBudgetSpec max_total_video_seconds must be a finite positive number."
+            )
+        object.__setattr__(self, "max_total_video_seconds", float(seconds))
+
+
+SemanticSpec: TypeAlias = (
+    PromptSpec
+    | UdfSpec
+    | DetectSpec
+    | WindowSpec
+    | DropFieldsSpec
+    | VideoMapSpec
+    | ViewBudgetSpec
+)
 
 
 @dataclass(frozen=True)
@@ -189,6 +338,24 @@ class DatasetExpr:
                 raise MMDSValidationError(
                     "Coalesce nodes require an interval field."
                 )
+        if self.kind == "drop_fields" and not isinstance(
+            self.spec, DropFieldsSpec
+        ):
+            raise MMDSValidationError(
+                "drop_fields nodes require a DropFieldsSpec."
+            )
+        if self.kind in {"video_map", "video_map_each"} and not isinstance(
+            self.spec, VideoMapSpec
+        ):
+            raise MMDSValidationError(
+                f"{self.kind} nodes require a VideoMapSpec."
+            )
+        if self.kind == "view_budget" and not isinstance(
+            self.spec, ViewBudgetSpec
+        ):
+            raise MMDSValidationError(
+                "view_budget nodes require a ViewBudgetSpec."
+            )
 
     def children(self) -> tuple[DatasetExpr, ...]:
         if self.source is None:
@@ -254,6 +421,10 @@ class QueryProgram:
             for node in assignment.expr.walk_postorder():
                 if isinstance(node.spec, UdfSpec):
                     specs.add(node.spec)
+                elif isinstance(node.spec, VideoMapSpec) and isinstance(
+                    node.spec.map_spec, UdfSpec
+                ):
+                    specs.add(node.spec.map_spec)
         return tuple(sorted(specs, key=lambda spec: (spec.module, spec.name)))
 
 

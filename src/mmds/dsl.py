@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from math import isfinite
 from typing import Any, Callable, TypeAlias
 
 from .model import (
     DatasetExpr,
     DetectSpec,
+    DropFieldsSpec,
     WindowSpec,
+    VideoMapSpec,
     ForEachPrompt,
     JsonValue,
     MMDSValidationError,
@@ -143,16 +146,38 @@ def Detect(
         name=name,
     )
 
-def Window(data: DatasetExpr, video_field, candidate_field, output_field, padding_time: int, name: str | None = None) -> DatasetExpr:
+def Window(
+    data: DatasetExpr,
+    video_field: str,
+    candidate_field: str,
+    output_field: str,
+    padding_time: float,
+    name: str | None = None,
+) -> DatasetExpr:
     if not isinstance(video_field, str) or not video_field:
         raise TypeError("Window video_field must be a non-empty string")
     if not isinstance(candidate_field, str) or not candidate_field:
         raise TypeError("Window candidate_field must be a non-empty string")
     if not isinstance(output_field, str) or not output_field:
         raise TypeError("Window output_field must be a non-empty string")
-    if padding_time < 0:
-        raise TypeError("padding_time needs to be non-negative")
-    return DatasetExpr(kind="window", source=_normalize_source(data), spec=WindowSpec(video_field=video_field, candidate_field=candidate_field, output_field=output_field, padding_time=float(padding_time)), name=name)
+    if (
+        not isinstance(padding_time, (int, float))
+        or isinstance(padding_time, bool)
+        or not isfinite(padding_time)
+        or padding_time < 0
+    ):
+        raise TypeError("Window padding_time must be a finite non-negative number")
+    return DatasetExpr(
+        kind="window",
+        source=_normalize_source(data),
+        spec=WindowSpec(
+            video_field=video_field,
+            candidate_field=candidate_field,
+            output_field=output_field,
+            padding_time=padding_time,
+        ),
+        name=name,
+    )
 
 
 def Coalesce(
@@ -169,6 +194,118 @@ def Coalesce(
         source=_normalize_source(data),
         group_by=normalize_group_by(group_by),
         field=field,
+        name=name,
+    )
+
+
+def DropFields(
+    data: DatasetExpr,
+    fields: str | list[str] | tuple[str, ...],
+    *,
+    name: str | None = None,
+) -> DatasetExpr:
+    if isinstance(fields, str):
+        normalized = (fields,)
+    elif isinstance(fields, (list, tuple)):
+        normalized = tuple(fields)
+    else:
+        raise TypeError("DropFields fields must be a string or sequence of strings.")
+    return DatasetExpr(
+        kind="drop_fields",
+        source=_normalize_source(data),
+        spec=DropFieldsSpec(fields=normalized),
+        name=name,
+    )
+
+
+def VideoMap(
+    data: DatasetExpr,
+    spec: str | Sequence[PromptInputPart] | Callable[..., Any],
+    *,
+    video_field: str,
+    views_field: str,
+    group_by: str | list[str] | tuple[str, ...],
+    schema: JsonValue | None = None,
+    padding_time: float = 0.0,
+    max_views: int = 8,
+    max_total_video_seconds: float = 600.0,
+    clip_field: str = "clip",
+    name: str | None = None,
+) -> DatasetExpr:
+    return _video_map(
+        "video_map",
+        data,
+        spec,
+        video_field=video_field,
+        views_field=views_field,
+        group_by=group_by,
+        schema=schema,
+        padding_time=padding_time,
+        max_views=max_views,
+        max_total_video_seconds=max_total_video_seconds,
+        clip_field=clip_field,
+        name=name,
+    )
+
+
+def VideoMapEach(
+    data: DatasetExpr,
+    spec: str | Sequence[PromptInputPart] | Callable[..., Any],
+    *,
+    video_field: str,
+    views_field: str,
+    group_by: str | list[str] | tuple[str, ...],
+    schema: JsonValue | None = None,
+    padding_time: float = 0.0,
+    max_views: int = 8,
+    max_total_video_seconds: float = 600.0,
+    clip_field: str = "clip",
+    name: str | None = None,
+) -> DatasetExpr:
+    return _video_map(
+        "video_map_each",
+        data,
+        spec,
+        video_field=video_field,
+        views_field=views_field,
+        group_by=group_by,
+        schema=schema,
+        padding_time=padding_time,
+        max_views=max_views,
+        max_total_video_seconds=max_total_video_seconds,
+        clip_field=clip_field,
+        name=name,
+    )
+
+
+def _video_map(
+    kind: str,
+    data: DatasetExpr,
+    spec: str | Sequence[PromptInputPart] | Callable[..., Any],
+    *,
+    video_field: str,
+    views_field: str,
+    group_by: str | list[str] | tuple[str, ...],
+    schema: JsonValue | None,
+    padding_time: float,
+    max_views: int,
+    max_total_video_seconds: float,
+    clip_field: str,
+    name: str | None,
+) -> DatasetExpr:
+    return DatasetExpr(
+        kind=kind,
+        source=_normalize_source(data),
+        spec=VideoMapSpec(
+            video_field=video_field,
+            views_field=views_field,
+            group_by=normalize_group_by(group_by),
+            map_spec=_normalize_spec(spec, op_kind="map", schema=schema),
+            padding_time=padding_time,
+            max_views=max_views,
+            max_total_video_seconds=max_total_video_seconds,
+            clip_field=clip_field,
+        ),
         name=name,
     )
 

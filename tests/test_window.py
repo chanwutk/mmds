@@ -71,12 +71,14 @@ class WindowSpecTests(unittest.TestCase):
                     WindowSpec(**values)
 
     def test_negative_padding_raises(self) -> None:
-        with self.assertRaises(MMDSValidationError):
-            WindowSpec(
-                video_field="video",
-                candidate_field="candidate",
-                padding_time=-1,
-            )
+        for padding in (-1, float("inf"), float("nan"), True):
+            with self.subTest(padding=padding):
+                with self.assertRaises(MMDSValidationError):
+                    WindowSpec(
+                        video_field="video",
+                        candidate_field="candidate",
+                        padding_time=padding,
+                    )
 
 
 class WindowDSLTests(unittest.TestCase):
@@ -109,6 +111,9 @@ class WindowDSLTests(unittest.TestCase):
             ("video", "", "clip", 5),
             ("video", "candidate", "", 5),
             ("video", "candidate", "clip", -1),
+            ("video", "candidate", "clip", float("inf")),
+            ("video", "candidate", "clip", float("nan")),
+            ("video", "candidate", "clip", True),
         )
 
         for video_field, candidate_field, output_field, padding_time in cases:

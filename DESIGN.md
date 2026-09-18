@@ -40,7 +40,8 @@ The design goal is to keep those representations close enough that:
 
 The current implementation supports:
 
-- operators: `Input`, `Map`, `Filter`, `Reduce`, `Unnest`, `Detect`, `Window`, `Coalesce`
+- operators: `Input`, `Map`, `Filter`, `Reduce`, `Unnest`, `Detect`, `Window`,
+  `Coalesce`, `DropFields`, `VideoMap`, and `VideoMapEach`
 - public video utility: `VideoView(video, start, end)` for seek-based clip-range iteration
 - file-backed `Input(...)` roots over `.json` and `.jsonl`
 - prompt-backed semantics as either:
@@ -54,10 +55,15 @@ The current implementation supports:
 - local execution with an injected prompt executor
 - Gemini-backed prompt execution with executor-side video translation
 - UDF discovery from `.py` and `.pyi`
-- a conservative rule optimizer and a validation-heavy LLM optimizer scaffold
+- a conservative rule optimizer, the legacy whole-query LLM rewrite scaffold,
+  and a typed directive rewriter over immutable plans
 - `Detect` operator for frame-level YOLOE object detection on video fields
 - programmatic `Window` and `Coalesce` operators for constructing padded
   source-time video views and merging overlapping candidate intervals
+- bounded one-hop rewrite search with deterministic plan fingerprints,
+  structured rejection records, and baseline retention
+- optional measured execution for prompt calls, prompt latency, submitted video
+  seconds, input rows, output rows, and end-to-end latency
 
 The current implementation intentionally does not support:
 
@@ -84,14 +90,20 @@ The main entrypoints are exported from [src/mmds/__init__.py](/Users/chanwutk/Do
 - `Detect(data, video_field, classes, *, model="yoloe-11s-seg.pt", output_field="detections", name=None)`
 - `Window(data, video_field, candidate_field, output_field, padding_time, name=None)`
 - `Coalesce(data, group_by, field, *, name=None)`
+- `DropFields(data, fields, *, name=None)`
+- `VideoMap(data, spec, *, video_field, views_field, group_by, schema=None, ...)`
+- `VideoMapEach(data, spec, *, video_field, views_field, group_by, schema=None, ...)`
 - `VideoView(video, start, end)`
 - `Record[...]`
 - `ForEach([...])`
 - `execute(plan_or_query, prompt_executor=None)`
+- `execute_measured(plan_or_query, prompt_executor=None)`
 - `GeminiPromptExecutor(...)`
 - `load_query(source)` / `parse_query(source)`
 - `render_query(plan_or_query)`
 - `optimize(plan)` / `canonicalize(plan)`
+- `rewrite_once(program, *, agent, directives)`
+- `search_rewrites(program, *, agent, directives, max_candidates=8)`
 
 ### Logical Plan Model
 
@@ -106,13 +118,20 @@ The core model lives in [src/mmds/model.py](/Users/chanwutk/Documents/mmds/src/m
 - `DetectSpec` stores the parameters for a `Detect` node: `video_field`, `classes`, `model`, `output_field`.
 - `WindowSpec` stores the parameters for a `Window` node: `video_field`,
   `candidate_field`, `output_field`, and `padding_time`.
+- `DropFieldsSpec` stores the non-empty, unique fields removed by a
+  `DropFields` node.
+- `VideoMapSpec` stores a video field, candidate-view field, grouping fields,
+  semantic map specification, padding, and hard view-count/duration budgets.
+- `ViewBudgetSpec` is an internal physical specification introduced by video
+  lowering.
 - `Assignment` and `QueryProgram` represent a parsed query file.
 - `MMDSValidationError` is the shared validation failure type.
 
 `DatasetExpr` uses a unary tree shape today:
 
 - `Input` has no source.
-- `Map`, `Filter`, `Reduce`, `Unnest`, `Detect`, `Window`, and `Coalesce`
+- `Map`, `Filter`, `Reduce`, `Unnest`, `Detect`, `Window`, `Coalesce`,
+  `DropFields`, `VideoMap`, and `VideoMapEach`
   each have one `source`.
 
 That shape is sufficient for the first operator set and keeps rendering and execution simple. If future operators introduce multiple inputs, `DatasetExpr` will need a general child list instead of a single `source`.
@@ -181,8 +200,9 @@ Parser rules:
 - `Filter` does not accept `schema=`
 - `Reduce` prompt lists may only use `Record[...]` inside `ForEach([...])`
 
-`Window`, `Coalesce`, and `Detect` are currently programmatic-only operators;
-the restricted source parser does not accept them yet.
+`Window`, `Coalesce`, `DropFields`, `VideoMap`, and `VideoMapEach` are accepted
+by the restricted parser. `Detect` and the internal `ViewBudget` physical node
+remain programmatic-only.
 
 The canonical output variable is the last assignment in the file.
 
@@ -197,7 +217,7 @@ It has two jobs:
 
 Normalization behavior:
 
-- always emits `from mmds import Input, Map, Filter, Reduce, Unnest, Record, ForEach`
+- emits the source-visible operators and prompt helpers actually used by the plan
 - emits grouped `from udfs... import ...` lines for referenced UDFs
 - uses double-quoted string literals
 - renders structured prompt lists explicitly
@@ -206,8 +226,8 @@ Normalization behavior:
 
 This is semantic round-tripping, not source-fidelity round-tripping. Comments, whitespace, and original local variable names are not preserved unless they naturally match the normalized output.
 
-`Window`, `Coalesce`, and `Detect` plans are not currently supported by the
-renderer.
+`Window`, `Coalesce`, `DropFields`, `VideoMap`, and `VideoMapEach` plans render
+to normalized Python. `Detect` and internal physical-only nodes do not.
 
 ### Execution
 
@@ -234,6 +254,23 @@ Operator semantics:
 - `Coalesce`: groups rows by `group_by`, sorts the mappings in `field` by
   `start`, merges overlapping or touching intervals, and emits one row per
   merged interval containing only the grouping fields and `field`
+- `DropFields`: copies a row and explicitly removes the configured fields;
+  missing fields are validation errors
+- `VideoMap`: logical operator lowered to candidate expansion, padding,
+  coalescing, budgeting, and one grouped prompt call over the selected views
+- `VideoMapEach`: logical operator lowered through the same view planner and a
+  prompt call for each selected view
+
+`VideoMap` and `VideoMapEach` never materialize video files. Lowering constructs
+`VideoView` values over the original source. It applies `max_views` and
+`max_total_video_seconds` per group after coalescing; a final view is clipped if
+needed to respect the duration budget.
+
+`execute_measured` wraps the supplied prompt executor without changing operator
+semantics. It returns rows plus an `ExecutionMetrics` snapshot containing
+end-to-end time, prompt calls/time, submitted `VideoView` seconds, input rows,
+and output rows. Provider token or monetary cost is not inferred when the
+provider does not expose it.
 
 Prompt execution flow:
 
@@ -247,11 +284,34 @@ Prompt execution flow:
 Windowed video queries use two deterministic UDFs from
 `udfs.temporal_ops`. `rebase_clip_events` converts `clip_events` from offsets
 relative to the beginning of `clip` into source-time `events` by adding
-`clip.start`. `reconcile_events` is used by `Reduce(..., "source_id", ...)` to
-flatten and sort source-time event collections. Interval merging remains the
+`clip.start`. `reconcile_events` is used by a source-grouped `Reduce` to flatten
+and sort source-time event collections. Interval merging remains the
 responsibility of `Coalesce`; reconciliation only restores one result
 collection per source. Keeping `clip_events` and `events` as separate fields
 makes their coordinate systems explicit.
+
+The lecture event localization example applies that contract as an explicit
+O2-style plan:
+
+1. A transcript-backed `Map` returns broad source-time candidate intervals.
+2. `Unnest` creates one row per candidate.
+3. `Window` pads candidates into lazy `VideoView` values.
+4. `Coalesce` merges overlapping views for the same lecture and query.
+5. A video-backed `Map` returns clip-relative verified event intervals.
+6. A UDF-backed `Map` rebases those intervals to source time.
+7. `Reduce` flattens and sorts results per lecture, then `Unnest` emits events.
+
+Three lecture query variants read the same generic `data/lectures.jsonl` input:
+
+- video-only localization over each complete lecture
+- transcript-only localization over timestamped cues
+- transcript-gated localization followed by windowed video verification
+
+Each variant reduces and unnests its predictions into the same
+`{lecture_id, events}` output shape so evaluation can compare plans directly.
+The dataset is self-contained: each lecture row carries its timestamped
+`{start, end, text}` transcript cues inline, so query execution performs no
+transcript acquisition or preprocessing.
 
 Relative path handling:
 
@@ -386,6 +446,81 @@ Flow:
 
 The LLM optimizer is currently a controlled interface, not a production optimizer. It is designed to make later provider integration safe by validating every rewrite against the same parser used elsewhere.
 
+#### Directive Rewriter
+
+The directive rewriter lives under
+`src/mmds/optimizers/rewriter/`. It does not accept model-generated Python.
+Instead, a `RewriteAgent` proposes a registered directive, one of the exact
+matches offered by the system, and JSON-compatible parameters. Strict frozen
+Pydantic models validate the parameters before deterministic directive code
+changes the plan.
+
+`program.output_expr` is the canonical rewrite root and the only operator-tree
+representation. `NodePath` is an address through immutable `source` edges, not
+a second node representation. `PlanEntry` binds an address to the existing
+`DatasetExpr` and its derived field effects. A request-scoped `PlanIndex` owns
+those entries and is shared by directive matching, lookup, and immutable
+replacement. Replacing a node rebuilds only the path back to the output,
+leaving the original plan unchanged. Rewritten assignments are regenerated as
+normalized Python.
+
+The initial directives are:
+
+- `modality_substitution`: replace a video field reference with a transcript
+  field reference while preserving the map prompt and schema
+- `projection_before_map`: insert a text projection map, retarget the original
+  map to the reserved intermediate field, and remove that field with
+  `DropFields`
+- `temporal_pushdown_joint`: create transcript candidates and use `VideoMap`
+  to answer once over bounded lazy views
+- `temporal_pushdown_per_view`: create transcript candidates, use
+  `VideoMapEach`, rebase clip-relative events, and reconcile source-time events
+
+Temporal agents provide only semantic parameters: the video, transcript, and
+query fields plus the candidate-generation instruction. Grouping is derived
+deterministically from ancestor grouping operators, configured identity fields,
+and non-video fields used by the matched prompt. Padding, view-count limits,
+and duration limits are experiment settings configured on the directive rather
+than model-generated plan structure.
+
+Before model selection, the engine builds one ephemeral `RewriteContext` from
+the existing `DatasetExpr` plan and its file-backed inputs. The query portion is
+a flat path-addressed summary containing operator kinds, prompt templates,
+field effects, grouping, UDF names, and output schemas. The dataset portion
+profiles field shapes and semantic roles from at most 32 JSON/JSONL rows while
+never including row values. Evaluation-looking fields such as ground truth,
+labels, and annotations are excluded unless the original query reads them.
+Missing input files are reported as unavailable context rather than blocking a
+structurally valid rewrite; existing malformed inputs fail explicitly.
+
+`RewriteContext` is model input only, not another plan representation. The
+system supplies a fixed rewrite policy that requests lower-cost or lower-latency
+alternatives while preserving query semantics, outputs, inputs, modalities,
+and temporal coordinates. Typed directive rewriting therefore does not require
+a caller-authored, workload-specific objective.
+
+The full context is not serialized into both model calls. Selection receives a
+compact plan outline, detailed task templates only for matched nodes, relevant
+field roles, and directive choices grouped by node. Instantiation receives only
+the selected nodes, compatible fields, and simplified parameter contracts.
+Strict Pydantic validation remains local and uses the complete schemas.
+
+Expected rewrite failures use `MMDSRewriteError`. `rewrite_once` surfaces them;
+`search_rewrites` records them as `RewriteRejection` values while allowing
+other candidates to continue. Unexpected exceptions are never swallowed.
+
+The first search implementation is intentionally bounded to one rewrite hop.
+It always retains the original plan, applies an explicit candidate limit, and
+deduplicates rewritten plans using normalized-code fingerprints. A
+`StaticRewriteAgent` supports deterministic tests and replay.
+`ModelRewriteAgent` uses progressive disclosure: one model call selects from
+applicable directive/match pairs using the compact selection context, and a
+second call sees selected-node context plus parameter contracts only for those
+selections.
+Prompts and raw responses are stored in `RewriteTrace`.
+The legacy whole-query LLM rewriter remains available separately for
+compatibility.
+
 ## Invariants
 
 The following invariants are part of the current design and should not change silently:
@@ -401,6 +536,10 @@ The following invariants are part of the current design and should not change si
 - prompt-backed execution always requires an injected executor
 - `.pyi` discovery does not imply executability
 - provider-specific media handling belongs in executors, not DSL syntax
+- model output for directive rewriting is untrusted structured data and cannot
+  directly replace Python source
+- fields created only by rewrites use the reserved `_mmds_` prefix and are
+  removed explicitly when they are no longer part of the observable result
 - `Reduce` row access must go through `ForEach([...])`
 - importing `mmds` must not require the optional computer-vision stack (OpenCV/NumPy/`torch`/`ultralytics`); `Detect` and `VideoView` load those dependencies lazily on use
 
@@ -420,13 +559,24 @@ The current suite covers:
 - video utility behavior for direct downloads, platform downloads via `yt-dlp`, and `VideoView` iteration
 - parser validation for unsupported Python and invalid prompt forms
 - optimizer result preservation and LLM rewrite validation
+- immutable node-path lookup and replacement
+- automatic plan summarization, dataset shape profiling, semantic field roles,
+  evaluation-field exclusion, and missing/malformed input handling
+- typed directive parameters, applicability, structural output, and rejection paths
+- baseline-preserving, deduplicated, bounded one-hop search
+- two-call model selection and typed parameter instantiation, including invalid
+  and unoffered response rejection
+- `DropFields` execution and source round trips
+- logical video lowering, view budgets, joint execution, per-view timestamp
+  rebasing, and reconciliation
+- execution metric collection without live provider calls
 - Gemini prompt compilation for video URI and uploaded local file inputs
 - UDF catalog discovery for `.py` and `.pyi`
 
 Primary verification command:
 
 ```bash
-PYTHONPATH=src:. ./.venv/bin/python -m unittest discover -s tests -t .
+uv run --locked python -m unittest discover -s tests -t .
 ```
 
 ## Near-Term Extension Points

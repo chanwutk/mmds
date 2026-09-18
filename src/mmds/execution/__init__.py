@@ -4,6 +4,7 @@ import json
 from collections.abc import Iterator, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from time import monotonic
 from typing import Any
 
 from ..model import (
@@ -13,12 +14,20 @@ from ..model import (
     Row,
 )
 from ._spec import PromptExecutor, StaticPromptExecutor
+from .metrics import (
+    ExecutionMetrics,
+    MeasuredExecution,
+    MeasuringPromptExecutor,
+    MetricsCollector,
+)
 from .ops.coalesce import _apply_coalesce
+from .ops.drop_fields import _apply_drop_fields
 from .ops.filter import _apply_filter
 from .ops.map import _apply_map
 from .ops.reduce import _apply_reduce
 from .ops.unnest import _apply_unnest
 from .ops.window import _apply_window
+from .ops.view_budget import _apply_view_budget
 
 # NOTE: `.ops.detect` is intentionally NOT imported here. It pulls in the
 # OpenCV/NumPy (and, at run time, torch/ultralytics) stack via
@@ -30,6 +39,55 @@ def execute(
     plan_or_query: DatasetExpr | QueryProgram,
     prompt_executor: PromptExecutor | None = None,
 ) -> list[Row]:
+    plan, base_path = _prepare_execution(plan_or_query)
+    from ..optimizers.lowering import lower_video_ops
+
+    plan = lower_video_ops(plan)
+    return list(
+        _execute_node(
+            plan,
+            prompt_executor,
+            base_path=base_path,
+            metrics=None,
+        )
+    )
+
+
+def execute_measured(
+    plan_or_query: DatasetExpr | QueryProgram,
+    prompt_executor: PromptExecutor | None = None,
+) -> MeasuredExecution:
+    plan, base_path = _prepare_execution(plan_or_query)
+    from ..optimizers.lowering import lower_video_ops
+
+    plan = lower_video_ops(plan)
+    collector = MetricsCollector()
+    measured_executor = (
+        MeasuringPromptExecutor(prompt_executor, collector)
+        if prompt_executor is not None
+        else None
+    )
+    started = monotonic()
+    rows = list(
+        _execute_node(
+            plan,
+            measured_executor,
+            base_path=base_path,
+            metrics=collector,
+        )
+    )
+    return MeasuredExecution(
+        rows=rows,
+        metrics=collector.snapshot(
+            elapsed_seconds=monotonic() - started,
+            output_rows=len(rows),
+        ),
+    )
+
+
+def _prepare_execution(
+    plan_or_query: DatasetExpr | QueryProgram,
+) -> tuple[DatasetExpr, Path | None]:
     base_path: Path | None = None
     if isinstance(plan_or_query, QueryProgram):
         plan = plan_or_query.output_expr
@@ -39,7 +97,7 @@ def execute(
         plan = plan_or_query
     else:
         raise TypeError("execute() expects a DatasetExpr or QueryProgram.")
-    return list(_execute_node(plan, prompt_executor, base_path=base_path))
+    return plan, base_path
 
 
 def _execute_node(
@@ -47,12 +105,21 @@ def _execute_node(
     prompt_executor: PromptExecutor | None,
     *,
     base_path: Path | None,
+    metrics: MetricsCollector | None,
 ) -> Iterator[Row]:
     if node.kind == "input":
-        yield from _load_input_rows(node.input_path, base_path=base_path)
+        rows = _load_input_rows(node.input_path, base_path=base_path)
+        if metrics is not None:
+            metrics.observe_input_rows(len(rows))
+        yield from rows
         return
 
-    source = _execute_node(node.source, prompt_executor, base_path=base_path)
+    source = _execute_node(
+        node.source,
+        prompt_executor,
+        base_path=base_path,
+        metrics=metrics,
+    )
     if node.kind == "map":
         with ThreadPoolExecutor() as ex:
             yield from ex.map(lambda row: _apply_map(node, row, prompt_executor), source)
@@ -74,6 +141,11 @@ def _execute_node(
             yield _apply_window(node, row)
     elif node.kind == "coalesce":
         yield from _apply_coalesce(node, source)
+    elif node.kind == "drop_fields":
+        for row in source:
+            yield _apply_drop_fields(node, row)
+    elif node.kind == "view_budget":
+        yield from _apply_view_budget(node, source)
     else:
         raise MMDSValidationError(f"Unsupported operator kind {node.kind!r}.")
 
@@ -127,6 +199,9 @@ def _coerce_row(value: Mapping[str, Any]) -> Row:
 
 __all__ = [
     "execute",
+    "execute_measured",
+    "ExecutionMetrics",
+    "MeasuredExecution",
     "PromptExecutor",
     "StaticPromptExecutor",
 ]

@@ -8,18 +8,29 @@ from typing import Any
 from .model import (
     Assignment,
     DatasetExpr,
+    DropFieldsSpec,
     ForEachPrompt,
     JsonValue,
     PromptSpec,
     QueryProgram,
     RecordPath,
     UdfSpec,
+    VideoMapSpec,
+    WindowSpec,
 )
+from .operator_catalog import OPERATOR_DEFINITIONS, operator_name
 
 
 def render_query(plan_or_query: DatasetExpr | QueryProgram) -> str:
     program = plan_or_query if isinstance(plan_or_query, QueryProgram) else program_from_plan(plan_or_query)
-    lines = ["from mmds import Input, Map, Filter, Reduce, Unnest, Record, ForEach"]
+    used_kinds = {assignment.expr.kind for assignment in program.assignments}
+    operator_imports = [
+        definition.name
+        for definition in OPERATOR_DEFINITIONS
+        if definition.source_visible and definition.kind in used_kinds
+    ]
+    helper_imports = _used_prompt_helpers(program)
+    lines = ["from mmds import " + ", ".join([*operator_imports, *helper_imports])]
 
     grouped_udfs: dict[str, list[str]] = defaultdict(list)
     for spec in program.used_udfs():
@@ -80,6 +91,47 @@ def _render_expr(expr: DatasetExpr, node_names: dict[DatasetExpr, str]) -> str:
         if expr.name is not None:
             flags.append(f"name={_quote(expr.name)}")
         return f"Unnest({source_name}, {', '.join(flags)})"
+    if expr.kind == "window":
+        if not isinstance(expr.spec, WindowSpec):
+            raise ValueError("Window nodes require a WindowSpec.")
+        args = [
+            source_name,
+            _quote(expr.spec.video_field),
+            _quote(expr.spec.candidate_field),
+            _quote(expr.spec.output_field),
+            repr(expr.spec.padding_time),
+        ]
+        if expr.name is not None:
+            args.append(f"name={_quote(expr.name)}")
+        return f"Window({', '.join(args)})"
+    if expr.kind == "coalesce":
+        args = [source_name, _render_group_by(expr.group_by), _quote(expr.field)]
+        if expr.name is not None:
+            args.append(f"name={_quote(expr.name)}")
+        return f"Coalesce({', '.join(args)})"
+    if expr.kind == "drop_fields":
+        if not isinstance(expr.spec, DropFieldsSpec):
+            raise ValueError("DropFields nodes require a DropFieldsSpec.")
+        fields = _render_string_sequence(expr.spec.fields)
+        return f"DropFields({source_name}, {fields}{name_suffix})"
+    if expr.kind in {"video_map", "video_map_each"}:
+        if not isinstance(expr.spec, VideoMapSpec):
+            raise ValueError("VideoMap nodes require a VideoMapSpec.")
+        call = operator_name(expr.kind)
+        args = [
+            source_name,
+            _render_spec(expr.spec.map_spec, include_schema=True),
+            f"video_field={_quote(expr.spec.video_field)}",
+            f"views_field={_quote(expr.spec.views_field)}",
+            f"group_by={_render_group_by(expr.spec.group_by)}",
+            f"padding_time={expr.spec.padding_time!r}",
+            f"max_views={expr.spec.max_views!r}",
+            f"max_total_video_seconds={expr.spec.max_total_video_seconds!r}",
+            f"clip_field={_quote(expr.spec.clip_field)}",
+        ]
+        if expr.name is not None:
+            args.append(f"name={_quote(expr.name)}")
+        return f"{call}({', '.join(args)})"
     raise ValueError(f"Unsupported operator kind {expr.kind!r}.")
 
 
@@ -119,11 +171,47 @@ def _render_prompt_part(part: str | RecordPath | ForEachPrompt) -> str:
     raise ValueError(f"Unsupported prompt part {part!r}.")
 
 
+def _used_prompt_helpers(program: QueryProgram) -> list[str]:
+    uses_record = False
+    uses_foreach = False
+
+    def inspect(parts: tuple[str | RecordPath | ForEachPrompt, ...]) -> None:
+        nonlocal uses_record, uses_foreach
+        for part in parts:
+            if isinstance(part, RecordPath):
+                uses_record = True
+            elif isinstance(part, ForEachPrompt):
+                uses_foreach = True
+                inspect(part.parts)
+
+    for assignment in program.assignments:
+        spec = assignment.expr.spec
+        if isinstance(spec, PromptSpec):
+            inspect(spec.parts)
+        elif isinstance(spec, VideoMapSpec) and isinstance(
+            spec.map_spec, PromptSpec
+        ):
+            inspect(spec.map_spec.parts)
+
+    helpers: list[str] = []
+    if uses_record:
+        helpers.append("Record")
+    if uses_foreach:
+        helpers.append("ForEach")
+    return helpers
+
+
 def _render_group_by(group_by: tuple[str, ...]) -> str:
     if len(group_by) == 1:
         return _quote(group_by[0])
     rendered = ", ".join(_quote(field) for field in group_by)
     return f"[{rendered}]"
+
+
+def _render_string_sequence(values: tuple[str, ...]) -> str:
+    if len(values) == 1:
+        return _quote(values[0])
+    return "[" + ", ".join(_quote(value) for value in values) + "]"
 
 
 def _render_name_suffix(name: str | None) -> str:

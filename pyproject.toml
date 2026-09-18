@@ -9,6 +9,7 @@ authors = [
 requires-python = ">=3.12"
 dependencies = [
     "google-genai",
+    "pydantic>=2.11",
     "ultralytics",
     "yt-dlp>=2026.3.3",
     "clip @ git+https://github.com/ultralytics/CLIP.git",
