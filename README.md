@@ -43,7 +43,7 @@ output = Unnest(mapped, "animal_types")
 uv sync
 
 # 2. Smoke-test the install (no API key, no network):
-PYTHONPATH=src:. ./.venv/bin/python -m unittest discover -s tests -t .
+uv run --locked python -m unittest discover -s tests -t .
 
 # 3. Run your first real query (needs a free Gemini API key):
 export GEMINI_API_KEY="…"        # https://aistudio.google.com/apikey
@@ -94,6 +94,11 @@ A query is a sequence of top-level assignments; the **last assignment is the out
 | `Reduce` | `Reduce(data, group_by, reducer, *, schema=…)` | Group rows, run the reducer once per group, merge the aggregate with the group key. |
 | `Unnest` | `Unnest(data, field, *, keep_empty=False)` | Explode a list/tuple field into one row per item. |
 | `Detect` | `Detect(data, video_field, classes, …)` | Frame-level YOLOE object detection on a video field (programmatic-only; not parsed/rendered as DSL text). |
+| `Window` | `Window(data, video_field, candidate_field, output_field, padding_time)` | Build a lazy padded `VideoView` from an interval. |
+| `Coalesce` | `Coalesce(data, group_by, field)` | Merge overlapping or touching intervals within each group. |
+| `DropFields` | `DropFields(data, fields)` | Explicitly remove intermediate fields from output rows. |
+| `VideoMap` | `VideoMap(data, spec, *, video_field, views_field, group_by, …)` | Answer once over bounded lazy views selected from a video. |
+| `VideoMapEach` | `VideoMapEach(data, spec, *, video_field, views_field, group_by, …)` | Apply a semantic map independently to every selected lazy view. |
 
 Helpers: `Record["field"]["nested"]` references a row field inside a prompt; `ForEach([...])`
 repeats a prompt fragment once per grouped row (only at the top level of a `Reduce`);
@@ -141,7 +146,7 @@ PYTHONPATH=src:. ./.venv/bin/python examples/run_expr.py examples/wildlife_speci
 PYTHONPATH=src:. ./.venv/bin/python examples/run_text.py path/to/query.py
 
 # Run the full test suite (the project's primary verification command):
-PYTHONPATH=src:. ./.venv/bin/python -m unittest discover -s tests -t .
+uv run --locked python -m unittest discover -s tests -t .
 ```
 
 Set `GEMINI_API_KEY` (or `GOOGLE_API_KEY`) for any prompt-backed run; `Detect` and
@@ -167,8 +172,8 @@ flowchart TD
     QP -->|"render_query (normalized)"| PY
     QP -->|".output_expr"| PLAN
     RT -->|"program_from_plan"| QP
-    PLAN -->|"optimize / canonicalize (rule rewriter)"| PLAN
-    PY -->|"LLM rewrite (agent, re-parsed and validated)"| PY
+    PLAN -->|"rule or directive rewriter"| PLAN
+    PY -->|"legacy whole-query LLM rewrite"| PY
     PLAN -->|"execute(plan, prompt_executor)"| ROWS
 ```
 
@@ -181,8 +186,9 @@ Components (all under [`src/mmds/`](src/mmds/)):
 - **`render.py`** — renders a plan/program back to *normalized* Python.
 - **`execution/`** — the local interpreter; `execution/llm/gemini.py` is the Gemini executor;
   `execution/ops/` holds per-operator logic including `Detect`.
-- **`optimizers/rewriter/`** — `rule.py` (conservative structural canonicalization) and
-  `agent.py` (validation-heavy LLM rewrite scaffold).
+- **`optimizers/rewriter/`** — conservative canonicalization, deterministic
+  plan directives, automatic query/dataset rewrite context, bounded candidate
+  search, and static or model-backed directive selection.
 - **`udf_catalog.py`** — discovers UDFs from `udfs/*.py` (implemented) and `*.pyi` (declared-only).
 
 **[DESIGN.md](DESIGN.md) is the authoritative architecture document** — read it before
@@ -231,8 +237,9 @@ Early-stage **research prototype** — APIs and semantics may change.
   **Intel macOS is unsupported** because `ultralytics` pulls in a `torch` version with no
   Intel-mac wheel; `uv sync` will fail there.
 - **Implemented:** `Input`/`Map`/`Filter`/`Reduce`/`Unnest`/`Detect`, structured prompts,
-  UDFs, local execution, Gemini prompt execution, conservative rule + LLM rewriters,
-  `.py`/`.pyi` UDF discovery.
+  UDFs, local execution, Gemini prompt execution, conservative rules, typed
+  directive rewrites with automatic dataset context and bounded search, legacy
+  whole-query LLM rewriting, and `.py`/`.pyi` UDF discovery.
 - **Not yet supported:** inline lambdas; loops/conditionals/comprehensions/classes in
   queries; joins/sorts/projections; cost-based optimization; `.pyi` → `.py` synthesis;
   nested `ForEach`; provider-specific media syntax in the DSL. (See DESIGN.md for the full list.)

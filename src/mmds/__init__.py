@@ -1,12 +1,46 @@
 from typing import TYPE_CHECKING
-from .dsl import Coalesce, Detect, Filter, ForEach, Input, Map, Reduce, Unnest, Window
-from .execution import PromptExecutor, StaticPromptExecutor, execute
+from .dsl import (
+    Coalesce,
+    Detect,
+    DropFields,
+    Filter,
+    ForEach,
+    Input,
+    Map,
+    Reduce,
+    Unnest,
+    VideoMap,
+    VideoMapEach,
+    Window,
+)
+from .execution import (
+    ExecutionMetrics,
+    MeasuredExecution,
+    PromptExecutor,
+    StaticPromptExecutor,
+    execute,
+    execute_measured,
+)
 from .execution.llm.gemini import GeminiPromptExecutor
 from .optimizers.rewriter.agent import LLMClient, StaticLLMClient
+from .optimizers.rewriter import (
+    JointTemporalPushdown,
+    MMDSRewriteError,
+    ModelRewriteAgent,
+    ModalitySubstitution,
+    PerViewTemporalPushdown,
+    ProjectionBeforeMap,
+    RewriteSelection,
+    RewriteModelClient,
+    StaticRewriteAgent,
+    rewrite_once,
+    search_rewrites,
+)
 from .model import (
     Assignment,
     DatasetExpr,
     DetectSpec,
+    DropFieldsSpec,
     WindowSpec,
     ForEachPrompt,
     JsonValue,
@@ -18,6 +52,7 @@ from .model import (
     ResolvedPrompt,
     Row,
     UdfSpec,
+    VideoMapSpec,
 )
 from .parser import load_query, parse_query
 from .render import program_from_plan, render_query
@@ -36,6 +71,9 @@ __all__ = [
     "DatasetExpr",
     "Detect",
     "DetectSpec",
+    "DropFields",
+    "DropFieldsSpec",
+    "ExecutionMetrics",
     "WindowSpec",
     "Window",
     "Filter",
@@ -44,32 +82,48 @@ __all__ = [
     "GeminiPromptExecutor",
     "Input",
     "JsonValue",
+    "JointTemporalPushdown",
     "LLMClient",
     "MMDSValidationError",
+    "MMDSRewriteError",
+    "ModelRewriteAgent",
     "Map",
+    "MeasuredExecution",
+    "ModalitySubstitution",
+    "PerViewTemporalPushdown",
     "PromptExecutor",
     "PromptSpec",
+    "ProjectionBeforeMap",
     "QueryProgram",
     "Record",
     "RecordPath",
     "Reduce",
     "ResolvedPrompt",
+    "RewriteSelection",
+    "RewriteModelClient",
     "Row",
     "StaticLLMClient",
+    "StaticRewriteAgent",
     "StaticPromptExecutor",
     "UdfCatalog",
     "UdfEntry",
     "UdfSpec",
     "Unnest",
+    "VideoMap",
+    "VideoMapEach",
+    "VideoMapSpec",
     "VideoView",
     "canonicalize",
     "discover_udfs",
     "execute",
+    "execute_measured",
     "load_query",
     "optimize",
     "parse_query",
     "program_from_plan",
     "render_query",
+    "rewrite_once",
+    "search_rewrites",
 ]
 
 
@@ -85,5 +139,6 @@ def __getattr__(name: str):
 
 def main() -> None:
     print(
-        "MMDS exposes a Python DSL. Import Input, Map, Filter, Reduce, Unnest, Record, and ForEach from mmds."
+        "MMDS exposes a Python DSL and directive rewriter. "
+        "Import operators and rewrite_once from mmds."
     )

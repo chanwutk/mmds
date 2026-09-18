@@ -711,6 +711,7 @@ source = { editable = "." }
 dependencies = [
     { name = "clip" },
     { name = "google-genai" },
+    { name = "pydantic" },
     { name = "ultralytics" },
     { name = "yt-dlp" },
 ]
@@ -719,6 +720,7 @@ dependencies = [
 requires-dist = [
     { name = "clip", git = "https://github.com/ultralytics/CLIP.git" },
     { name = "google-genai" },
+    { name = "pydantic", specifier = ">=2.11" },
     { name = "ultralytics" },
     { name = "yt-dlp", specifier = ">=2026.3.3" },
 ]
