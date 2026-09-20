@@ -18,8 +18,8 @@ top-level [GET_START.md](../GET_START.md) for setup and [README.md](../README.md
 | [`detect_multi_species.py`](detect_multi_species.py) | `Detect` → `Unnest` | no API key; downloads weights + video |
 | [`detect_filter_bears.py`](detect_filter_bears.py) | `Detect` → `Filter` (UDF) | no API key; downloads weights + video |
 | [`detect_filter_bears_high_confidence.py`](detect_filter_bears_high_confidence.py) | `Detect` → `Map` (UDF prune) → `Filter` (UDF) | no API key; downloads weights + video |
-| [`lecture_event_localization_video_only.py`](lecture_event_localization_video_only.py) | full-video `Map` → `Reduce` → `Unnest` | Gemini API key; `data/lectures.jsonl` |
-| [`lecture_event_localization_transcript_only.py`](lecture_event_localization_transcript_only.py) | transcript `Map` → `Reduce` → `Unnest` | Gemini API key; `data/lectures.jsonl` |
+| [`lecture_event_localization_video_only.py`](lecture_event_localization_video_only.py) | full-video `Map` → `Unnest` | Gemini API key; `data/lectures.jsonl` |
+| [`lecture_event_localization_transcript_only.py`](lecture_event_localization_transcript_only.py) | transcript `Map` → `Unnest` | Gemini API key; `data/lectures.jsonl` |
 | [`lecture_event_localization.py`](lecture_event_localization.py) | transcript `Map` → `Unnest` → `Window` → `Coalesce` → video `Map` → UDF `Map` → `Reduce` → `Unnest` | Gemini API key; `data/lectures.jsonl` |
 
 ## Drivers
@@ -50,6 +50,11 @@ All three query variants consume the same `data/lectures.jsonl` rows:
 ./run examples/lecture_event_localization_transcript_only.py
 ./run examples/lecture_event_localization.py
 ```
+
+Only the transcript-gated query needs a `Reduce`: several selected video
+windows can produce separate event arrays for one lecture. Its
+`collect_sorted_events` UDF flattens and sorts those arrays; it deliberately
+does not merge or deduplicate event intervals.
 
 `Window` and `Coalesce` are programmatic-only today, so the two-stage example
 cannot yet run through `examples/run_text.py`.

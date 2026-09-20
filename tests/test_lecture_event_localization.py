@@ -64,7 +64,7 @@ class LectureEventLocalizationPlanTests(unittest.TestCase):
             list(names),
             [
                 "one_event_per_row",
-                "reconcile_windows",
+                "collect_and_sort_window_events",
                 "rebase_event_times",
                 "verify_video_events",
                 "merge_overlapping_windows",
@@ -80,14 +80,14 @@ class LectureEventLocalizationPlanTests(unittest.TestCase):
 
         self.assertEqual(
             video_names,
-            ["one_event_per_row", "reconcile_video_events", "localize_full_video"],
+            ["one_event_per_row", "localize_full_video"],
         )
         self.assertEqual(
             transcript_names,
-            ["one_event_per_row", "reconcile_transcript_events", "localize_from_transcript"],
+            ["one_event_per_row", "localize_from_transcript"],
         )
 
-    def test_executes_transcript_gate_through_reconciliation(self) -> None:
+    def test_executes_transcript_gate_through_collection_and_sorting(self) -> None:
         row = {
             "lecture_id": "lecture-1",
             "query_text": "Find the physical demonstration.",
@@ -150,7 +150,7 @@ class LectureEventLocalizationPlanTests(unittest.TestCase):
             ],
         )
 
-    def test_video_only_query_uses_video_and_normalizes_output(self) -> None:
+    def test_video_only_query_uses_video_and_unnests_output(self) -> None:
         row = {
             "lecture_id": "lecture-1",
             "query_text": "Find the physical demonstration.",
@@ -176,10 +176,10 @@ class LectureEventLocalizationPlanTests(unittest.TestCase):
 
         self.assertEqual(
             result,
-            [{"lecture_id": "lecture-1", "events": {"start": 20, "end": 25}}],
+            [{**row, "events": {"start": 20, "end": 25}}],
         )
 
-    def test_transcript_only_query_uses_transcript_and_normalizes_output(self) -> None:
+    def test_transcript_only_query_uses_transcript_and_unnests_output(self) -> None:
         row = {
             "lecture_id": "lecture-1",
             "query_text": "Find the physical demonstration.",
@@ -205,7 +205,7 @@ class LectureEventLocalizationPlanTests(unittest.TestCase):
 
         self.assertEqual(
             result,
-            [{"lecture_id": "lecture-1", "events": {"start": 110, "end": 116}}],
+            [{**row, "events": {"start": 110, "end": 116}}],
         )
 
 

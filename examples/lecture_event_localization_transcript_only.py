@@ -1,7 +1,6 @@
 """Lecture event localization using only timestamped transcript cues."""
 
-from mmds import Input, Map, Record, Reduce, Unnest
-from udfs.temporal_ops import reconcile_events
+from mmds import Input, Map, Record, Unnest
 
 
 INTERVALS_SCHEMA = {
@@ -35,13 +34,7 @@ def build_query(input_path: str = "data/lectures.jsonl"):
         schema={"events": INTERVALS_SCHEMA},
         name="localize_from_transcript",
     )
-    reconciled = Reduce(
-        localized,
-        "lecture_id",
-        reconcile_events,
-        name="reconcile_transcript_events",
-    )
-    return Unnest(reconciled, "events", name="one_event_per_row")
+    return Unnest(localized, "events", name="one_event_per_row")
 
 
 output = build_query()

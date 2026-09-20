@@ -247,11 +247,12 @@ Prompt execution flow:
 Windowed video queries use two deterministic UDFs from
 `udfs.temporal_ops`. `rebase_clip_events` converts `clip_events` from offsets
 relative to the beginning of `clip` into source-time `events` by adding
-`clip.start`. `reconcile_events` is used by `Reduce(..., "source_id", ...)` to
-flatten and sort source-time event collections. Interval merging remains the
-responsibility of `Coalesce`; reconciliation only restores one result
-collection per source. Keeping `clip_events` and `events` as separate fields
-makes their coordinate systems explicit.
+`clip.start`. `collect_sorted_events` is used by
+`Reduce(..., "source_id", ...)` to flatten and sort source-time event
+collections. It does not merge or deduplicate events; interval merging remains
+the responsibility of `Coalesce`. `reconcile_events` remains as a compatibility
+wrapper for the former name. Keeping `clip_events` and `events` as separate
+fields makes their coordinate systems explicit.
 
 Relative path handling:
 

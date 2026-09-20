@@ -14,7 +14,11 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from mmds import Input, Map, Reduce, execute  # noqa: E402
-from udfs.temporal_ops import rebase_clip_events, reconcile_events  # noqa: E402
+from udfs.temporal_ops import (  # noqa: E402
+    collect_sorted_events,
+    rebase_clip_events,
+    reconcile_events,
+)
 
 
 class RebaseClipEventsTests(unittest.TestCase):
@@ -56,14 +60,14 @@ class RebaseClipEventsTests(unittest.TestCase):
         self.assertEqual(row, original)
 
 
-class ReconcileEventsTests(unittest.TestCase):
+class CollectSortedEventsTests(unittest.TestCase):
     def test_flattens_and_sorts_events(self) -> None:
         rows = [
             {"events": [{"type": "goal", "start": 200, "end": 204}]},
             {"events": [{"type": "goal", "start": 120, "end": 125}]},
         ]
 
-        result = reconcile_events(rows)
+        result = collect_sorted_events(rows)
 
         self.assertEqual(
             result["events"],
@@ -79,7 +83,7 @@ class ReconcileEventsTests(unittest.TestCase):
             {"events": [{"type": "goal", "start": 123, "end": 127}]},
         ]
 
-        result = reconcile_events(rows)
+        result = collect_sorted_events(rows)
 
         self.assertEqual(
             result["events"],
@@ -95,7 +99,7 @@ class ReconcileEventsTests(unittest.TestCase):
             {"events": [{"type": "save", "start": 123, "end": 125}]},
         ]
 
-        result = reconcile_events(rows)
+        result = collect_sorted_events(rows)
 
         self.assertEqual(
             result["events"],
@@ -106,7 +110,7 @@ class ReconcileEventsTests(unittest.TestCase):
         )
 
     def test_empty_group_returns_empty_events(self) -> None:
-        self.assertEqual(reconcile_events([]), {"events": []})
+        self.assertEqual(collect_sorted_events([]), {"events": []})
 
     def test_does_not_mutate_input_events(self) -> None:
         rows = [
@@ -115,13 +119,18 @@ class ReconcileEventsTests(unittest.TestCase):
         ]
         original = json.loads(json.dumps(rows))
 
-        reconcile_events(rows)
+        collect_sorted_events(rows)
 
         self.assertEqual(rows, original)
 
+    def test_reconcile_events_remains_a_compatibility_wrapper(self) -> None:
+        rows = [{"events": [{"type": "goal", "start": 120, "end": 125}]}]
+
+        self.assertEqual(reconcile_events(rows), collect_sorted_events(rows))
+
 
 class TemporalUDFExecutionTests(unittest.TestCase):
-    def test_map_then_reduce_rebases_and_reconciles_events(self) -> None:
+    def test_map_then_reduce_rebases_collects_and_sorts_events(self) -> None:
         rows = [
             {
                 "source_id": "video-1",
@@ -148,7 +157,7 @@ class TemporalUDFExecutionTests(unittest.TestCase):
             plan = Reduce(
                 Map(Input(str(input_path)), rebase_clip_events),
                 "source_id",
-                reconcile_events,
+                collect_sorted_events,
             )
             result = execute(plan)
 

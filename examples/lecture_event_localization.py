@@ -1,7 +1,7 @@
 """Transcript-gated lecture event localization with lazy video windows."""
 
 from mmds import Coalesce, Input, Map, Record, Reduce, Unnest, Window
-from udfs.temporal_ops import rebase_clip_events, reconcile_events
+from udfs.temporal_ops import collect_sorted_events, rebase_clip_events
 
 
 INTERVALS_SCHEMA = {
@@ -69,13 +69,13 @@ def build_query(input_path: str = "data/lectures.jsonl"):
     )
 
     source_time_events = Map(localized, rebase_clip_events, name="rebase_event_times")
-    reconciled = Reduce(
+    collected = Reduce(
         source_time_events,
         "lecture_id",
-        reconcile_events,
-        name="reconcile_windows",
+        collect_sorted_events,
+        name="collect_and_sort_window_events",
     )
-    return Unnest(reconciled, "events", name="one_event_per_row")
+    return Unnest(collected, "events", name="one_event_per_row")
 
 
 output = build_query()
