@@ -403,6 +403,50 @@ Current behavior is intentionally conservative:
 
 It does not yet reorder operators, fold operators, infer safety, or reason about prompt/UDF semantics.
 
+#### Typed Directive Rewriter Core
+
+The deterministic directive core lives in
+[src/mmds/optimizers/rewriter/core.py](/Users/chanwutk/Documents/mmds/src/mmds/optimizers/rewriter/core.py).
+It is deliberately independent of model selection and dataset profiling.
+
+`DatasetExpr` remains the only operator-tree representation:
+
+- `NodePath` is an immutable address from the output node, such as
+  `output.source`.
+- `PlanEntry` pairs one address with the existing `DatasetExpr` at that
+  location. It contains no field or schema analysis.
+- `PlanIndex` traverses the plan, resolves addresses, and replaces a subtree
+  by rebuilding only its ancestors. It never mutates or copies the full plan.
+- `RewriteMatch` records that a directive can be applied at one path.
+- `RewriteDirective` separates applicability (`find_matches`) from a
+  deterministic structural transformation (`apply`).
+
+Directive parameters are strict Pydantic models owned by each directive.
+`apply_rewrite()` accepts a previously offered match, validates its parameters,
+calls the directive, validates structural invariants, and returns a normalized
+`QueryProgram`. It rejects matches that the directive did not offer.
+
+Structural validation guarantees that rewrites preserve reachable input paths
+and any declared final output schema, and that the resulting plan round-trips
+through normalized MMDS Python. It does not claim to prove semantic
+equivalence; that responsibility belongs to directive preconditions and later
+evaluation.
+
+Future model-based selection is a separate orchestration layer:
+
+```text
+DatasetExpr -> PlanIndex -> directive matches
+                              |
+                              v
+                    external selector/model
+                              |
+                              v
+                 apply_rewrite(match, params)
+                              |
+                              v
+                       new DatasetExpr
+```
+
 #### LLM Optimizer
 
 The LLM rewrite scaffold lives in [src/mmds/optimizers/rewriter/agent.py](/Users/chanwutk/Documents/mmds/src/mmds/optimizers/rewriter/agent.py).
@@ -428,6 +472,8 @@ The following invariants are part of the current design and should not change si
 - prompt specs are structured data, not opaque runtime callables
 - UDFs must come from `udfs.*`
 - operator trees are immutable
+- directive rewriting never mutates the original operator tree
+- rewrite models or policies select offered matches; directive code owns plan construction
 - the last assignment is the output unless a future explicit sink is added
 - input roots are direct file paths, not catalog identifiers
 - rendered queries are normalized, not source-exact
@@ -453,6 +499,8 @@ The current suite covers:
 - `Unnest` behavior on scalar, empty, and missing values
 - logical video-map construction, validation, parse/render round trips,
   lowering, joint/per-view execution, coalescing, and empty candidates
+- typed rewrite paths, structural indexing, immutable subtree replacement,
+  directive parameter validation, and rewrite structural invariants
 - `Detect` behavior, including `VideoView` clip slicing and absolute-frame detection indices
 - video utility behavior for direct downloads, platform downloads via `yt-dlp`, and `VideoView` iteration
 - parser validation for unsupported Python and invalid prompt forms
