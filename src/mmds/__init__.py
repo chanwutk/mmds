@@ -1,5 +1,17 @@
 from typing import TYPE_CHECKING
-from .dsl import Coalesce, Detect, Filter, ForEach, Input, Map, Reduce, Unnest, Window
+from .dsl import (
+    Coalesce,
+    Detect,
+    Filter,
+    ForEach,
+    Input,
+    Map,
+    Reduce,
+    Unnest,
+    VideoMap,
+    VideoMapEach,
+    Window,
+)
 from .execution import PromptExecutor, StaticPromptExecutor, execute
 from .execution.llm.gemini import GeminiPromptExecutor
 from .optimizers.rewriter.agent import LLMClient, StaticLLMClient
@@ -18,6 +30,7 @@ from .model import (
     ResolvedPrompt,
     Row,
     UdfSpec,
+    VideoMapSpec,
 )
 from .parser import load_query, parse_query
 from .render import program_from_plan, render_query
@@ -61,6 +74,9 @@ __all__ = [
     "UdfEntry",
     "UdfSpec",
     "Unnest",
+    "VideoMap",
+    "VideoMapEach",
+    "VideoMapSpec",
     "VideoView",
     "canonicalize",
     "discover_udfs",

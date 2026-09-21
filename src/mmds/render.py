@@ -14,12 +14,23 @@ from .model import (
     QueryProgram,
     RecordPath,
     UdfSpec,
+    VideoMapSpec,
 )
+from .operator_catalog import OPERATOR_DEFINITIONS, operator_name
 
 
 def render_query(plan_or_query: DatasetExpr | QueryProgram) -> str:
     program = plan_or_query if isinstance(plan_or_query, QueryProgram) else program_from_plan(plan_or_query)
-    lines = ["from mmds import Input, Map, Filter, Reduce, Unnest, Record, ForEach"]
+    used_kinds = {assignment.expr.kind for assignment in program.assignments}
+    operator_imports = [
+        definition.name
+        for definition in OPERATOR_DEFINITIONS
+        if definition.source_visible and definition.kind in used_kinds
+    ]
+    lines = [
+        "from mmds import "
+        + ", ".join([*operator_imports, *_used_prompt_helpers(program)])
+    ]
 
     grouped_udfs: dict[str, list[str]] = defaultdict(list)
     for spec in program.used_udfs():
@@ -80,6 +91,23 @@ def _render_expr(expr: DatasetExpr, node_names: dict[DatasetExpr, str]) -> str:
         if expr.name is not None:
             flags.append(f"name={_quote(expr.name)}")
         return f"Unnest({source_name}, {', '.join(flags)})"
+    if expr.kind in {"video_map", "video_map_each"}:
+        if not isinstance(expr.spec, VideoMapSpec):
+            raise ValueError("VideoMap nodes require a VideoMapSpec.")
+        args = [
+            source_name,
+            _render_spec(expr.spec.map_spec, include_schema=True),
+            f"video_field={_quote(expr.spec.video_field)}",
+            f"views_field={_quote(expr.spec.views_field)}",
+            f"group_by={_render_group_by(expr.spec.group_by)}",
+            f"padding_time={expr.spec.padding_time!r}",
+            f"max_views={expr.spec.max_views!r}",
+            f"max_total_video_seconds={expr.spec.max_total_video_seconds!r}",
+            f"clip_field={_quote(expr.spec.clip_field)}",
+        ]
+        if expr.name is not None:
+            args.append(f"name={_quote(expr.name)}")
+        return f"{operator_name(expr.kind)}({', '.join(args)})"
     raise ValueError(f"Unsupported operator kind {expr.kind!r}.")
 
 
@@ -117,6 +145,36 @@ def _render_prompt_part(part: str | RecordPath | ForEachPrompt) -> str:
         body = ", ".join(_render_prompt_part(child) for child in part.parts)
         return f"ForEach([{body}])"
     raise ValueError(f"Unsupported prompt part {part!r}.")
+
+
+def _used_prompt_helpers(program: QueryProgram) -> list[str]:
+    uses_record = False
+    uses_foreach = False
+
+    def inspect(parts: tuple[str | RecordPath | ForEachPrompt, ...]) -> None:
+        nonlocal uses_record, uses_foreach
+        for part in parts:
+            if isinstance(part, RecordPath):
+                uses_record = True
+            elif isinstance(part, ForEachPrompt):
+                uses_foreach = True
+                inspect(part.parts)
+
+    for assignment in program.assignments:
+        spec = assignment.expr.spec
+        if isinstance(spec, PromptSpec):
+            inspect(spec.parts)
+        elif isinstance(spec, VideoMapSpec) and isinstance(
+            spec.map_spec, PromptSpec
+        ):
+            inspect(spec.map_spec.parts)
+
+    helpers: list[str] = []
+    if uses_record:
+        helpers.append("Record")
+    if uses_foreach:
+        helpers.append("ForEach")
+    return helpers
 
 
 def _render_group_by(group_by: tuple[str, ...]) -> str:

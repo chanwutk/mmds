@@ -19,6 +19,7 @@ from .ops.map import _apply_map
 from .ops.reduce import _apply_reduce
 from .ops.unnest import _apply_unnest
 from .ops.window import _apply_window
+from .ops.view_budget import _apply_view_budget
 
 # NOTE: `.ops.detect` is intentionally NOT imported here. It pulls in the
 # OpenCV/NumPy (and, at run time, torch/ultralytics) stack via
@@ -39,6 +40,9 @@ def execute(
         plan = plan_or_query
     else:
         raise TypeError("execute() expects a DatasetExpr or QueryProgram.")
+    from ..optimizers.lowering import lower_video_ops
+
+    plan = lower_video_ops(plan)
     return list(_execute_node(plan, prompt_executor, base_path=base_path))
 
 
@@ -74,6 +78,8 @@ def _execute_node(
             yield _apply_window(node, row)
     elif node.kind == "coalesce":
         yield from _apply_coalesce(node, source)
+    elif node.kind == "view_budget":
+        yield from _apply_view_budget(node, source)
     else:
         raise MMDSValidationError(f"Unsupported operator kind {node.kind!r}.")
 
