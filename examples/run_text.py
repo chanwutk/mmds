@@ -14,6 +14,7 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from mmds import GeminiPromptExecutor, execute, parse_query  # noqa: E402
+from examples._media_preflight import require_local_media  # noqa: E402
 
 
 def main() -> None:
@@ -24,6 +25,7 @@ def main() -> None:
     os.chdir(ROOT)
     query_text = query_path.read_text(encoding="utf-8")
     program = parse_query(query_text)
+    require_local_media(program.output_expr, ROOT)
     rows = execute(program, prompt_executor=GeminiPromptExecutor())
     print(json.dumps(rows, indent=2, ensure_ascii=False))
 

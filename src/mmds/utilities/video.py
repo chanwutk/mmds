@@ -25,6 +25,7 @@ import hashlib
 import urllib.parse
 import urllib.request
 from pathlib import Path
+from collections.abc import Iterable
 from typing import Iterator
 
 import cv2
@@ -288,6 +289,40 @@ class VideoView:
             f"frames {self._start_frame}\u2013{self._end_frame}, "
             f"{self.num_frames} frames)"
         )
+
+
+def read_frames_at_indices(
+    video_path: str | Path,
+    frame_indices: Iterable[int],
+) -> dict[int, np.ndarray]:
+    """Read requested frames with one capture, in ascending index order.
+
+    Duplicate indices are decoded once. Negative and non-integer indices are
+    ignored, and frames that cannot be decoded are omitted from the result.
+    """
+    ordered_indices = sorted(
+        {
+            frame_index
+            for frame_index in frame_indices
+            if isinstance(frame_index, int)
+            and not isinstance(frame_index, bool)
+            and frame_index >= 0
+        }
+    )
+    if not ordered_indices:
+        return {}
+
+    cap = cv2.VideoCapture(str(video_path))
+    try:
+        frames: dict[int, np.ndarray] = {}
+        for frame_index in ordered_indices:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, frame_index)
+            ok, frame = cap.read()
+            if ok:
+                frames[frame_index] = frame
+        return frames
+    finally:
+        cap.release()
 
 
 # ---------------------------------------------------------------------------

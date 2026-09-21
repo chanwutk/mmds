@@ -134,7 +134,21 @@ groups those rows by species and asks the model to count the clips per species.
 
 ---
 
-## 7. Troubleshooting
+## 7. Optional local datasets
+
+The first examples use public URLs, so no media checkout is needed. The two
+I24V clips used by the cross-camera example are also bundled. Full-corridor
+I24V, UCA, and campus workflows reference optional local files through small
+committed manifests; those additional MP4 and PNG assets are excluded from Git.
+
+Follow [`data/README.md`](data/README.md) and its dataset-specific guides to copy
+or symlink authorized files into the expected paths. The example drivers perform
+a preflight check and print every missing local-media path with that README
+reference before starting model inference or Gemini calls.
+
+---
+
+## 8. Troubleshooting
 
 | Symptom | Likely cause & fix |
 |---------|--------------------|
@@ -142,12 +156,13 @@ groups those rows by species and asks the model to count the clips per species.
 | `uv: command not found` | `uv` isn't on your `PATH` yet — restart your shell or re-run the installer's PATH hint (step 2). |
 | `ModuleNotFoundError: No module named 'cv2'` (or `mmds`) | The environment isn't built/active. Re-run `uv sync` (step 3) and use `./.venv/bin/python`. |
 | The query raises a missing-API-key / authentication error | `GEMINI_API_KEY` isn't set in the current shell (step 5). |
+| `Required local media is missing` | Install the optional dataset files listed in [`data/README.md`](data/README.md); the cross-camera I24V clips, manifests, and ground truth are committed. |
 | `Gemini returned an empty response` / invalid JSON | Usually a transient model issue or a video Gemini couldn't access (must be a public URL). Re-run; try a different clip. |
 | First example is slow | Gemini is fetching and analyzing the video server-side. Give it time; later runs of the same clip are faster. |
 
 ---
 
-## 8. Next steps
+## 9. Next steps
 
 You're set up. To start contributing:
 

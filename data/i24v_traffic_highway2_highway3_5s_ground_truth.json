@@ -1,0 +1,380 @@
+[
+  {
+    "vehicle_id": "v1",
+    "attributes": {
+      "class": "truck",
+      "color": "silver",
+      "subtype": "pickup"
+    },
+    "timeline": [
+      {
+        "camera_id": "cam-i24v-highway2",
+        "entered": 0.0,
+        "exited": 0.334
+      },
+      {
+        "camera_id": "cam-i24v-highway3",
+        "entered": 0.0,
+        "exited": 0.167
+      }
+    ],
+    "vehicle_and_trajectory_description": "Silver pickup with a dark open bed. It is already near the lower-left edge of the upper carriageway at clip start and continues toward the lower-left. The synchronized position, vehicle shape, lane, and immediate exit align across both cameras."
+  },
+  {
+    "vehicle_id": "v2",
+    "attributes": {
+      "class": "suv",
+      "color": "gray",
+      "subtype": "suv"
+    },
+    "timeline": [
+      {
+        "camera_id": "cam-i24v-highway2",
+        "entered": 0.0,
+        "exited": 0.567
+      },
+      {
+        "camera_id": "cam-i24v-highway3",
+        "entered": 0.0,
+        "exited": 0.801
+      }
+    ],
+    "vehicle_and_trajectory_description": "Dark blue-gray compact SUV/crossover with dark windows. It travels toward the lower-left in the middle lane of the upper carriageway and exits early. The apparent gray-versus-blue difference is consistent with lighting and camera color response."
+  },
+  {
+    "vehicle_id": "v3",
+    "attributes": {
+      "class": "sedan",
+      "color": "white",
+      "subtype": "sedan"
+    },
+    "timeline": [
+      {
+        "camera_id": "cam-i24v-highway2",
+        "entered": 3.07,
+        "exited": 4.771
+      },
+      {
+        "camera_id": "cam-i24v-highway3",
+        "entered": 0.534,
+        "exited": 4.037
+      }
+    ],
+    "vehicle_and_trajectory_description": "White four-door sedan with a dark roof-glass or sunroof area. It remains in a median-side lane on the upper carriageway and moves continuously toward the lower-left without an evident lane change."
+  },
+  {
+    "vehicle_id": "v4",
+    "attributes": {
+      "class": "sedan",
+      "color": "blue",
+      "subtype": "suv"
+    },
+    "timeline": [
+      {
+        "camera_id": "cam-i24v-highway2",
+        "entered": 4.638,
+        "exited": 4.972
+      },
+      {
+        "camera_id": "cam-i24v-highway3",
+        "entered": 2.703,
+        "exited": 4.972
+      }
+    ],
+    "vehicle_and_trajectory_description": "Dark-blue compact SUV/crossover moving toward the lower-left in the upper carriageway's middle lane. It enters the tighter highway2 view very late but is already visible in the wider highway3 view."
+  },
+  {
+    "vehicle_id": "v5",
+    "attributes": {
+      "class": "sedan",
+      "color": "white",
+      "subtype": "sedan"
+    },
+    "timeline": [
+      {
+        "camera_id": "cam-i24v-highway2",
+        "entered": 0.0,
+        "exited": 0.133
+      },
+      {
+        "camera_id": "cam-i24v-highway3",
+        "entered": 0.0,
+        "exited": 0.667
+      }
+    ],
+    "vehicle_and_trajectory_description": "White sedan already at the extreme upper boundary when the clips begin. Only a small portion is visible in highway2, while highway3 retains it longer as it continues toward the upper-right. This is a partial-boundary match."
+  },
+  {
+    "vehicle_id": "v6",
+    "attributes": {
+      "class": "truck",
+      "color": "red",
+      "subtype": "pickup"
+    },
+    "timeline": [
+      {
+        "camera_id": "cam-i24v-highway2",
+        "entered": 0.0,
+        "exited": 0.767
+      },
+      {
+        "camera_id": "cam-i24v-highway3",
+        "entered": 0.0,
+        "exited": 2.803
+      }
+    ],
+    "vehicle_and_trajectory_description": "Red pickup with a dark open bed containing indistinct equipment or cargo. It remains ahead of the distinctive red flatbed truck and travels toward the upper-right in the same relative lane position in both views."
+  },
+  {
+    "vehicle_id": "v7",
+    "attributes": {
+      "class": "sedan",
+      "color": "white",
+      "subtype": "sedan"
+    },
+    "timeline": [
+      {
+        "camera_id": "cam-i24v-highway2",
+        "entered": 0.0,
+        "exited": 0.868
+      },
+      {
+        "camera_id": "cam-i24v-highway3",
+        "entered": 0.0,
+        "exited": 2.469
+      }
+    ],
+    "vehicle_and_trajectory_description": "White compact sedan traveling toward the upper-right in the lane nearest the median. It maintains a steady, lane-centered trajectory and remains in the same relative position ahead of the nearby convoy."
+  },
+  {
+    "vehicle_id": "v8",
+    "attributes": {
+      "class": "truck",
+      "color": "white",
+      "subtype": "flatbed truck"
+    },
+    "timeline": [
+      {
+        "camera_id": "cam-i24v-highway2",
+        "entered": 0.0,
+        "exited": 2.169
+      },
+      {
+        "camera_id": "cam-i24v-highway3",
+        "entered": 0.0,
+        "exited": 3.437
+      }
+    ],
+    "vehicle_and_trajectory_description": "White tractor cab pulling a long open flatbed loaded with large red covered industrial modules. It moves steadily toward the upper-right in a central lane. The unusual cargo, long geometry, and surrounding vehicles make this identity distinctive."
+  },
+  {
+    "vehicle_id": "v9",
+    "attributes": {
+      "class": "sedan",
+      "color": "silver",
+      "subtype": "sedan"
+    },
+    "timeline": [
+      {
+        "camera_id": "cam-i24v-highway2",
+        "entered": 0.0,
+        "exited": 1.935
+      },
+      {
+        "camera_id": "cam-i24v-highway3",
+        "entered": 0.0,
+        "exited": 3.203
+      }
+    ],
+    "vehicle_and_trajectory_description": "Silver or light-blue compact sedan positioned immediately right of the red flatbed truck. It travels upper-right roughly parallel to the truck and preserves the same lane and relative ordering across both camera views."
+  },
+  {
+    "vehicle_id": "v10",
+    "attributes": {
+      "class": "sedan",
+      "color": "black",
+      "subtype": "sedan"
+    },
+    "timeline": [
+      {
+        "camera_id": "cam-i24v-highway2",
+        "entered": 0.0,
+        "exited": 2.035
+      },
+      {
+        "camera_id": "cam-i24v-highway3",
+        "entered": 0.0,
+        "exited": 3.27
+      }
+    ],
+    "vehicle_and_trajectory_description": "Black four-door sedan with a long, low roofline. It travels immediately left of the red flatbed truck toward the upper-right and maintains that distinctive side-by-side relationship in both views."
+  },
+  {
+    "vehicle_id": "v11",
+    "attributes": {
+      "class": "sedan",
+      "color": "white",
+      "subtype": "sedan"
+    },
+    "timeline": [
+      {
+        "camera_id": "cam-i24v-highway2",
+        "entered": 0.0,
+        "exited": 3.504
+      },
+      {
+        "camera_id": "cam-i24v-highway3",
+        "entered": 0.0,
+        "exited": 3.937
+      }
+    ],
+    "vehicle_and_trajectory_description": "White midsize sedan with a dark sunroof or roof-glass section. It follows the outer exit-side lane toward the upper-right, remaining separated from the central convoy."
+  },
+  {
+    "vehicle_id": "v12",
+    "attributes": {
+      "class": "suv",
+      "color": "black",
+      "subtype": "suv"
+    },
+    "timeline": [
+      {
+        "camera_id": "cam-i24v-highway2",
+        "entered": 0.0,
+        "exited": 3.37
+      },
+      {
+        "camera_id": "cam-i24v-highway3",
+        "entered": 0.801,
+        "exited": 4.972
+      }
+    ],
+    "vehicle_and_trajectory_description": "Dark-blue crossover/SUV with a boxy rear and dark windows. It travels toward the upper-right in a middle lane and remains paired spatially with a neighboring black SUV throughout the overlapping portion of the views."
+  },
+  {
+    "vehicle_id": "v13",
+    "attributes": {
+      "class": "suv",
+      "color": "black",
+      "subtype": "suv"
+    },
+    "timeline": [
+      {
+        "camera_id": "cam-i24v-highway2",
+        "entered": 0.1,
+        "exited": 3.337
+      },
+      {
+        "camera_id": "cam-i24v-highway3",
+        "entered": 1.802,
+        "exited": 4.972
+      }
+    ],
+    "vehicle_and_trajectory_description": "Black compact SUV/crossover with a squared rear profile. It travels toward the upper-right in the lane closer to the median than the blue SUV and maintains the same relative ordering across cameras."
+  },
+  {
+    "vehicle_id": "v14",
+    "attributes": {
+      "class": "truck",
+      "color": "silver",
+      "subtype": "tractor trailer"
+    },
+    "timeline": [
+      {
+        "camera_id": "cam-i24v-highway2",
+        "entered": 0.934,
+        "exited": 4.972
+      },
+      {
+        "camera_id": "cam-i24v-highway3",
+        "entered": 2.002,
+        "exited": 4.972
+      }
+    ],
+    "vehicle_and_trajectory_description": "Brown tractor hauling a long silver or light-blue enclosed trailer. It enters from the lower edge, travels toward the upper-right in a central through lane, and remains visible at the five-second cutoff in both views."
+  },
+  {
+    "vehicle_id": "v15",
+    "attributes": {
+      "class": "truck",
+      "color": "white",
+      "subtype": "pickup"
+    },
+    "timeline": [
+      {
+        "camera_id": "cam-i24v-highway2",
+        "entered": 1.869,
+        "exited": 4.972
+      },
+      {
+        "camera_id": "cam-i24v-highway3",
+        "entered": 2.936,
+        "exited": 4.972
+      }
+    ],
+    "vehicle_and_trajectory_description": "White crew-cab pickup with a black open bed. It travels immediately left of the silver tractor trailer toward the upper-right, retaining the same side-by-side relationship across both cameras."
+  },
+  {
+    "vehicle_id": "v16",
+    "attributes": {
+      "class": "sedan",
+      "color": "blue",
+      "subtype": "sedan"
+    },
+    "timeline": [
+      {
+        "camera_id": "cam-i24v-highway2",
+        "entered": 1.902,
+        "exited": 4.972
+      },
+      {
+        "camera_id": "cam-i24v-highway3",
+        "entered": 2.836,
+        "exited": 4.972
+      }
+    ],
+    "vehicle_and_trajectory_description": "Dark-blue compact sedan with a conventional trunk. It travels immediately right of the silver tractor trailer toward the upper-right. Its position relative to the trailer is consistent, although the original highway3 trajectory list omitted it."
+  },
+  {
+    "vehicle_id": "v17",
+    "attributes": {
+      "class": "sedan",
+      "color": "silver",
+      "subtype": "sedan"
+    },
+    "timeline": [
+      {
+        "camera_id": "cam-i24v-highway2",
+        "entered": 2.87,
+        "exited": 4.972
+      },
+      {
+        "camera_id": "cam-i24v-highway3",
+        "entered": 3.804,
+        "exited": 4.972
+      }
+    ],
+    "vehicle_and_trajectory_description": "Light silver sedan with a slight blue cast and a dark sunroof or roof-glass panel. It enters late in the outer exit-side lane and continues steadily toward the upper-right through the cutoff."
+  },
+  {
+    "vehicle_id": "v18",
+    "attributes": {
+      "class": "truck",
+      "color": "white",
+      "subtype": "flatbed truck"
+    },
+    "timeline": [
+      {
+        "camera_id": "cam-i24v-highway2",
+        "entered": 4.037,
+        "exited": 4.972
+      },
+      {
+        "camera_id": "cam-i24v-highway3",
+        "entered": 4.872,
+        "exited": 4.972
+      }
+    ],
+    "vehicle_and_trajectory_description": "White commercial flatbed carrying red or orange utility machinery. It enters very late from the lower edge and travels toward the upper-right in a middle-left lane. Only a short portion is visible in highway3, but the specialized load supports the match."
+  }
+]
