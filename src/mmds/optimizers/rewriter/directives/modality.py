@@ -13,9 +13,9 @@ from ..core import (
 from ..errors import MMDSRewriteError
 from ._prompt import (
     format_record_paths,
+    prompt_from_fields,
     prompt_map_entries,
     record_paths,
-    replace_record_path,
 )
 
 
@@ -24,11 +24,22 @@ class ModalitySubstitutionParams(BaseModel):
 
     video_field: str = Field(min_length=1)
     transcript_field: str = Field(min_length=1)
+    rewritten_prompt: str = Field(
+        min_length=1,
+        description=(
+            "Complete replacement instruction that preserves the original task "
+            "while using transcript instead of video."
+        ),
+    )
 
     @model_validator(mode="after")
     def validate_fields(self) -> ModalitySubstitutionParams:
-        if not self.video_field.strip() or not self.transcript_field.strip():
-            raise ValueError("Modality field names cannot be blank.")
+        if (
+            not self.video_field.strip()
+            or not self.transcript_field.strip()
+            or not self.rewritten_prompt.strip()
+        ):
+            raise ValueError("Modality fields and rewritten_prompt cannot be blank.")
         if self.video_field == self.transcript_field:
             raise ValueError(
                 "Modality substitution requires distinct video and transcript fields."
@@ -88,14 +99,17 @@ class ModalitySubstitution:
                 f"{params.video_field!r}."
             )
 
+        adapted_paths = tuple(
+            RecordPath((params.transcript_field,)) if path == old else path
+            for path in paths
+        )
         replacement = replace(
             node,
             spec=replace(
                 node.spec,
-                parts=replace_record_path(
-                    node.spec.parts,
-                    old,
-                    RecordPath((params.transcript_field,)),
+                parts=prompt_from_fields(
+                    params.rewritten_prompt,
+                    adapted_paths,
                 ),
             ),
         )

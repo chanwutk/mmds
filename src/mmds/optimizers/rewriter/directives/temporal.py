@@ -14,7 +14,12 @@ from ....model import (
 )
 from ..core import DirectiveMetadata, PlanIndex, RewriteMatch
 from ..errors import MMDSRewriteError
-from ._prompt import format_record_paths, prompt_map_entries, record_paths
+from ._prompt import (
+    format_record_paths,
+    prompt_from_fields,
+    prompt_map_entries,
+    record_paths,
+)
 
 
 INTERVALS_SCHEMA = {
@@ -54,6 +59,15 @@ class TemporalPushdownParams(BaseModel):
             "verify events, rebase times, or reconcile results."
         ),
     )
+    video_prompt: str = Field(
+        min_length=1,
+        description=(
+            "Complete replacement instruction for the rewritten video stage. "
+            "Preserve the original task while adapting it to selected views. A "
+            "joint rewrite must request source-video times; a per-view rewrite "
+            "must request clip-relative times."
+        ),
+    )
 
     @model_validator(mode="after")
     def validate_fields(self) -> TemporalPushdownParams:
@@ -64,8 +78,8 @@ class TemporalPushdownParams(BaseModel):
             raise ValueError(
                 "Temporal video, transcript, and query fields must be distinct."
             )
-        if not self.candidate_prompt.strip():
-            raise ValueError("Temporal candidate_prompt cannot be blank.")
+        if not self.candidate_prompt.strip() or not self.video_prompt.strip():
+            raise ValueError("Temporal model-generated prompts cannot be blank.")
         return self
 
 
@@ -200,7 +214,11 @@ class _TemporalDirective:
             ),
             name="rewrite_transcript_candidates",
         )
-        return node, params, node.spec, candidates, group_by
+        adapted_spec = replace(
+            node.spec,
+            parts=prompt_from_fields(params.video_prompt, paths),
+        )
+        return node, params, adapted_spec, candidates, group_by
 
     def _derive_group_by(
         self,
@@ -315,11 +333,6 @@ class PerViewTemporalPushdown(_TemporalDirective):
 
         local_spec = replace(
             original_spec,
-            parts=(
-                "Inspect only this video view. Return event times relative to "
-                "the beginning of the view under clip_events.\n",
-                *original_spec.parts,
-            ),
             output_schema={"clip_events": output_schema["events"]},
         )
         localized = DatasetExpr(

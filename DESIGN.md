@@ -433,19 +433,27 @@ output has no declared schema to compare today. Validation does not claim to
 prove semantic equivalence; that responsibility belongs to directive
 preconditions and later evaluation.
 
-Future model-based selection is a separate orchestration layer:
+Model-based selection is a separate orchestration layer over the deterministic
+core:
 
 ```text
-DatasetExpr -> PlanIndex -> directive matches
-                              |
-                              v
-                    external selector/model
-                              |
-                              v
-                 apply_rewrite(match, params)
-                              |
-                              v
-                       new DatasetExpr
+QueryProgram -> PlanIndex -> directive matches
+                                 |
+                                 v
+                       model call 1: select
+                                 |
+                         validate offered option
+                                 |
+                                 v
+                    model call 2: parameters
+                                 |
+                       validate typed parameters
+                                 |
+                                 v
+                    deterministic apply_rewrite
+                                 |
+                                 v
+                       rewritten QueryProgram
 ```
 
 #### Implemented Video Rewrite Directives
@@ -456,7 +464,8 @@ transformations; they do not call a model to select themselves or invent their
 parameters.
 
 - `ModalitySubstitution` rewrites a direct `Record[video_field]` reference in
-  one prompt-backed `Map` to `Record[transcript_field]`.
+  one prompt-backed `Map` to `Record[transcript_field]` and uses a generated
+  replacement instruction.
 - `JointTemporalPushdown` replaces a video `Map` with a transcript candidate
   `Map` followed by logical `VideoMap`. The final prompt sees all coalesced
   candidate views for a group and runs once.
@@ -472,11 +481,47 @@ downstream grouping keys. Candidate intervals use source-video time, while a
 per-view verifier returns clip-relative time that is subsequently rebased.
 The internal candidate field is reserved as `_mmds_candidate_views`.
 
+Generated `rewritten_prompt`/`video_prompt` parameters replace the original
+literal instruction instead of merely prepending to it. This prevents stale
+phrases such as "complete video" or "absolute time" from contradicting a
+transcript-only or per-view rewrite. Structured `Record[...]` references are
+rebuilt deterministically by the directive.
+
 Directive matching is intentionally broader than parameter validation:
 `find_matches()` offers prompt-backed `Map` locations, then `apply_rewrite()`
 validates the chosen video, transcript, and query fields before changing the
-plan. Dataset-aware field discovery and model-based choice belong to later,
-separate layers.
+plan.
+
+#### Automatic Rewrite Flow
+
+`build_rewrite_context()` creates compact, ephemeral model input. It summarizes
+the complete reachable plan, including prompt templates and output schemas,
+and profiles at most eight JSON/JSONL rows to expose field types and semantic
+roles. Dataset row values are never included. Unreferenced fields whose names
+look like ground truth, labels, or annotations are excluded to avoid benchmark
+leakage. Missing input files are reported as unavailable; malformed existing
+files fail explicitly.
+
+`rewrite_once()` applies at most one rewrite:
+
+1. Build one structural `PlanIndex` and enumerate directive matches.
+2. Model call 1 sees the complete plan summary, value-free dataset fields, and
+   offered directive/path options. It returns one ephemeral option ID or null.
+3. Validate that the ID was offered before making another call.
+4. Model call 2 sees only the selected node, dataset fields, directive metadata,
+   and its compact Pydantic parameter contract.
+5. Pass the returned object through `apply_rewrite()`, which validates the
+   parameters and deterministically builds the new plan.
+
+`GeminiRewriteModel` is the concrete JSON-response adapter. Tests use a small
+sequence model so both prompts, response validation, and call ordering remain
+deterministic. Selection and parameter prompts are also available through
+debug logging.
+
+This initial engine intentionally has no budgets, multi-plan search, ranking,
+fingerprints, projection cleanup, metrics, or repeated rewrite chains. Those
+are independent research extensions rather than prerequisites for one safe,
+inspectable rewrite.
 
 #### LLM Optimizer
 
@@ -534,6 +579,8 @@ The current suite covers:
   directive parameter validation, and rewrite structural invariants
 - deterministic modality-substitution and joint/per-view temporal-pushdown
   directives, including plan-shape and end-to-end execution tests
+- value-free rewrite context, sequential model selection/parameter calls,
+  response validation, null selection, and the Gemini adapter
 - `Detect` behavior, including `VideoView` clip slicing and absolute-frame detection indices
 - video utility behavior for direct downloads, platform downloads via `yt-dlp`, and `VideoView` iteration
 - parser validation for unsupported Python and invalid prompt forms

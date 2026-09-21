@@ -28,26 +28,22 @@ def record_paths(parts: Iterable[PromptPart]) -> tuple[RecordPath, ...]:
     return tuple(paths)
 
 
-def replace_record_path(
-    parts: Iterable[PromptPart],
-    old: RecordPath,
-    new: RecordPath,
-) -> tuple[PromptPart, ...]:
-    """Replace one exact record reference throughout a structured prompt."""
-
-    replaced: list[PromptPart] = []
-    for part in parts:
-        if part == old:
-            replaced.append(new)
-        elif isinstance(part, ForEachPrompt):
-            replaced.append(
-                ForEachPrompt(parts=replace_record_path(part.parts, old, new))
-            )
-        else:
-            replaced.append(part)
-    return tuple(replaced)
-
-
 def format_record_paths(paths: Iterable[RecordPath]) -> str:
     rendered = sorted({".".join(path.path) for path in paths if path.path})
     return ", ".join(rendered) if rendered else "no record fields"
+
+
+def prompt_from_fields(
+    instruction: str,
+    paths: Iterable[RecordPath],
+) -> tuple[PromptPart, ...]:
+    """Build a structured prompt from one instruction and named row fields."""
+
+    parts: list[PromptPart] = [instruction]
+    seen: set[RecordPath] = set()
+    for path in paths:
+        if path in seen:
+            continue
+        seen.add(path)
+        parts.extend((f"\n{'.'.join(path.path)}:\n", path))
+    return tuple(parts)

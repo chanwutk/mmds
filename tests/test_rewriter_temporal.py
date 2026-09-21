@@ -50,6 +50,10 @@ PARAMS = {
     "transcript_field": "transcript",
     "query_field": "query",
     "candidate_prompt": "Find high-recall source-time intervals relevant to the query.",
+    "video_prompt": (
+        "Inspect this selected video view for every event matching the query. "
+        "Return clip-relative event times."
+    ),
 }
 
 
@@ -122,7 +126,14 @@ class TemporalDirectivePlanTests(unittest.TestCase):
         self.assertEqual(video_map.spec.views_field, "_mmds_candidate_views")
         self.assertEqual(video_map.spec.group_by, ("lecture_id", "query"))
         self.assertEqual(video_map.spec.padding_time, 5.0)
-        self.assertEqual(video_map.spec.map_spec, original.output_expr.spec)
+        self.assertEqual(
+            video_map.spec.map_spec.output_schema,
+            original.output_expr.spec.output_schema,
+        )
+        self.assertEqual(
+            video_map.spec.map_spec.parts[0],
+            PARAMS["video_prompt"],
+        )
         self.assertEqual(candidates.kind, "map")
         self.assertIsInstance(candidates.spec, PromptSpec)
         self.assertEqual(

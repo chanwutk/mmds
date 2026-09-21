@@ -49,6 +49,7 @@ class ModalitySubstitutionTests(unittest.TestCase):
             params={
                 "video_field": "video",
                 "transcript_field": "transcript",
+                "rewritten_prompt": "Answer using only the transcript.",
             },
         )
 
@@ -56,9 +57,10 @@ class ModalitySubstitutionTests(unittest.TestCase):
         self.assertEqual(
             rewritten.output_expr.spec.parts,
             (
-                "Answer from ",
+                "Answer using only the transcript.",
+                "\ntranscript:\n",
                 RecordPath(("transcript",)),
-                " for ",
+                "\nquestion:\n",
                 RecordPath(("question",)),
             ),
         )
@@ -119,6 +121,7 @@ output = Map(rows, ["Inspect ", Record["media"]["video"]], schema={"answer": "st
                         params={
                             "video_field": video_field,
                             "transcript_field": "transcript",
+                            "rewritten_prompt": "Answer using the transcript.",
                         },
                     )
 
@@ -127,9 +130,26 @@ output = Map(rows, ["Inspect ", Record["media"]["video"]], schema={"answer": "st
         directive = ModalitySubstitution()
         match = directive.find_matches(PlanIndex.build(program.output_expr))[0]
         invalid = (
-            {"video_field": "video", "transcript_field": "video"},
-            {"video_field": "video", "transcript_field": "   "},
-            {"video_field": "video", "transcript_field": 7},
+            {
+                "video_field": "video",
+                "transcript_field": "video",
+                "rewritten_prompt": "Answer.",
+            },
+            {
+                "video_field": "video",
+                "transcript_field": "   ",
+                "rewritten_prompt": "Answer.",
+            },
+            {
+                "video_field": "video",
+                "transcript_field": 7,
+                "rewritten_prompt": "Answer.",
+            },
+            {
+                "video_field": "video",
+                "transcript_field": "transcript",
+                "rewritten_prompt": "   ",
+            },
         )
 
         for params in invalid:
