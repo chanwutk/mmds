@@ -448,6 +448,36 @@ DatasetExpr -> PlanIndex -> directive matches
                        new DatasetExpr
 ```
 
+#### Implemented Video Rewrite Directives
+
+The first directive library lives in
+`src/mmds/optimizers/rewriter/directives/`. Directives are deterministic plan
+transformations; they do not call a model to select themselves or invent their
+parameters.
+
+- `ModalitySubstitution` rewrites a direct `Record[video_field]` reference in
+  one prompt-backed `Map` to `Record[transcript_field]`.
+- `JointTemporalPushdown` replaces a video `Map` with a transcript candidate
+  `Map` followed by logical `VideoMap`. The final prompt sees all coalesced
+  candidate views for a group and runs once.
+- `PerViewTemporalPushdown` replaces an event-localization `Map` with a
+  transcript candidate `Map`, logical `VideoMapEach`, deterministic timestamp
+  rebasing, and `Reduce(reconcile_events)`. `reconcile_events` only collects
+  and sorts source-time events; it does not merge or deduplicate them.
+
+Temporal directives require explicit `identity_fields`, such as
+`lecture_id`, so intervals from different source videos cannot be grouped
+together. They preserve non-video fields read by the original prompt and
+downstream grouping keys. Candidate intervals use source-video time, while a
+per-view verifier returns clip-relative time that is subsequently rebased.
+The internal candidate field is reserved as `_mmds_candidate_views`.
+
+Directive matching is intentionally broader than parameter validation:
+`find_matches()` offers prompt-backed `Map` locations, then `apply_rewrite()`
+validates the chosen video, transcript, and query fields before changing the
+plan. Dataset-aware field discovery and model-based choice belong to later,
+separate layers.
+
 #### LLM Optimizer
 
 The LLM rewrite scaffold lives in [src/mmds/optimizers/rewriter/agent.py](/Users/chanwutk/Documents/mmds/src/mmds/optimizers/rewriter/agent.py).
@@ -502,6 +532,8 @@ The current suite covers:
   lowering, joint/per-view execution, coalescing, and empty candidates
 - typed rewrite paths, structural indexing, immutable subtree replacement,
   directive parameter validation, and rewrite structural invariants
+- deterministic modality-substitution and joint/per-view temporal-pushdown
+  directives, including plan-shape and end-to-end execution tests
 - `Detect` behavior, including `VideoView` clip slicing and absolute-frame detection indices
 - video utility behavior for direct downloads, platform downloads via `yt-dlp`, and `VideoView` iteration
 - parser validation for unsupported Python and invalid prompt forms

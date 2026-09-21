@@ -187,8 +187,10 @@ Components (all under [`src/mmds/`](src/mmds/)):
 - **`optimizers/lowering.py`** — deterministically expands logical video-map operators
   into `Unnest`, `Window`, `Coalesce`, and `Map`/`Reduce`.
 - **`optimizers/rewriter/`** — immutable path/index primitives and typed
-  directive application, plus `rule.py` (conservative canonicalization) and
-  `agent.py` (the legacy whole-query LLM rewrite scaffold).
+  directive application. Its deterministic video directives support modality
+  substitution and transcript-guided joint or per-view video processing;
+  `rule.py` provides conservative canonicalization and `agent.py` is the
+  legacy whole-query LLM rewrite scaffold.
 - **`udf_catalog.py`** — discovers UDFs from `udfs/*.py` (implemented) and `*.pyi` (declared-only).
 
 **[DESIGN.md](DESIGN.md) is the authoritative architecture document** — read it before
@@ -238,7 +240,7 @@ Early-stage **research prototype** — APIs and semantics may change.
   Intel-mac wheel; `uv sync` will fail there.
 - **Implemented:** `Input`/`Map`/`Filter`/`Reduce`/`Unnest`/`VideoMap`/`VideoMapEach`/`Detect`, structured prompts,
   UDFs, local execution, Gemini prompt execution, conservative rule + LLM rewriters,
-  `.py`/`.pyi` UDF discovery.
+  deterministic video rewrite directives, and `.py`/`.pyi` UDF discovery.
 - **Not yet supported:** inline lambdas; loops/conditionals/comprehensions/classes in
   queries; joins/sorts/projections; cost-based optimization; `.pyi` → `.py` synthesis;
   nested `ForEach`; provider-specific media syntax in the DSL. (See DESIGN.md for the full list.)
