@@ -40,7 +40,7 @@ The design goal is to keep those representations close enough that:
 
 The current implementation supports:
 
-- operators: `Input`, `Map`, `Filter`, `Reduce`, `Unnest`, `Detect`, `Window`, `Coalesce`
+- operators: `Input`, `Map`, `Filter`, `Reduce`, `Unnest`, `Join`, `Detect`, `Window`, `Coalesce`
 - public video utility: `VideoView(video, start, end)` for seek-based clip-range iteration
 - file-backed `Input(...)` roots over `.json` and `.jsonl`
 - prompt-backed semantics as either:
@@ -64,7 +64,7 @@ The current implementation intentionally does not support:
 - inline lambdas
 - nested functions or callables outside `udfs.*`
 - loops, conditionals, comprehensions, classes, or arbitrary Python control flow in query files
-- joins, sorts, projections, or cost-based optimization
+- sorts, projections, or cost-based optimization
 - automatic `.py` implementation synthesis from `.pyi`
 - nested `ForEach(...)`
 - provider-specific media syntax in the DSL
@@ -77,11 +77,12 @@ The current implementation intentionally does not support:
 The main entrypoints are exported from [src/mmds/__init__.py](/Users/chanwutk/Documents/mmds/src/mmds/__init__.py):
 
 - `Input(path)`
-- `Map(data, spec, *, schema=None, name=None)`
+- `Map(data, spec, *, schema=None, replace=False, name=None)`
 - `Filter(data, spec, *, name=None)`
 - `Reduce(data, group_by, reducer, *, schema=None, name=None)`
 - `Unnest(data, field, *, keep_empty=False, name=None)`
-- `Detect(data, video_field, classes, *, model="yoloe-11s-seg.pt", output_field="detections", name=None)`
+- `Join(left, right, predicate=None, *, on=None, one_to_one=False, score=None, min_score=None, left_key=None, right_key=None, name=None)`
+- `Detect(data, video_field, classes, *, model="yoloe-11s-seg.pt", output_field="detections", frame_stride=1, conf=None, imgsz=None, name=None)`
 - `Window(data, video_field, candidate_field, output_field, padding_time, name=None)`
 - `Coalesce(data, group_by, field, *, name=None)`
 - `VideoView(video, start, end)`
@@ -103,19 +104,24 @@ The core model lives in [src/mmds/model.py](/Users/chanwutk/Documents/mmds/src/m
 - `ForEachPrompt` represents repeated prompt expansion over grouped records.
 - `ResolvedPrompt` is the execution-time prompt after all `Record[...]` references are resolved against data.
 - `UdfSpec` stores a stable import path for a UDF.
-- `DetectSpec` stores the parameters for a `Detect` node: `video_field`, `classes`, `model`, `output_field`.
+- `JoinSpec` stores equi-join keys, an optional binary predicate UDF, and
+  optional score, threshold, and side-identity keys for greedy one-to-one
+  matching.
+- `DetectSpec` stores the parameters for a `Detect` node: `video_field`,
+  `classes`, `model`, `output_field`, `frame_stride`, `conf`, and `imgsz`.
 - `WindowSpec` stores the parameters for a `Window` node: `video_field`,
   `candidate_field`, `output_field`, and `padding_time`.
 - `Assignment` and `QueryProgram` represent a parsed query file.
 - `MMDSValidationError` is the shared validation failure type.
 
-`DatasetExpr` uses a unary tree shape today:
+`DatasetExpr` supports unary and binary nodes:
 
 - `Input` has no source.
 - `Map`, `Filter`, `Reduce`, `Unnest`, `Detect`, `Window`, and `Coalesce`
   each have one `source`.
-
-That shape is sufficient for the first operator set and keeps rendering and execution simple. If future operators introduce multiple inputs, `DatasetExpr` will need a general child list instead of a single `source`.
+- `Join` has a left `source` and `right_source`. Its `children()` and
+  `walk_postorder()` methods traverse both sources and skip repeated visits
+  by object identity, so equal-but-distinct branches stay distinct.
 
 ### Prompt Expression Model
 
@@ -177,12 +183,22 @@ Parser rules:
 - `Input(...)` must be a string literal ending in `.json` or `.jsonl`
 - `Reduce.group_by` must be a string or list/tuple of strings
 - `Unnest.keep_empty` must be a literal boolean
+- `Map.replace` and `Join.one_to_one` must be literal booleans
 - `Map` and `Reduce` prompt specs must include `schema={...}` as an output field map
 - `Filter` does not accept `schema=`
 - `Reduce` prompt lists may only use `Record[...]` inside `ForEach([...])`
-
-`Window`, `Coalesce`, and `Detect` are currently programmatic-only operators;
-the restricted source parser does not accept them yet.
+- `Join` sources must reference prior assignments; predicates and score
+  functions must be imported `udfs.*` names; keys and identity fields must be
+  string literals or literal lists/tuples of strings
+- operators and `Record`/`ForEach` helpers must be imported from `mmds`
+  before they are used; unused imports remain allowed
+- `Detect` requires literal `video_field` and class-list arguments and accepts
+  literal `model`, `output_field`, `frame_stride`, `conf`, `imgsz`, and `name`
+  keyword arguments; parsing constructs a validated `DetectSpec`
+- `Window` requires literal `video_field`, `candidate_field`, `output_field`,
+  and `padding_time` arguments and accepts a literal `name`
+- `Coalesce` requires a literal string or string-list/tuple `group_by`, a
+  non-empty literal interval field, and an optional literal `name`
 
 The canonical output variable is the last assignment in the file.
 
@@ -197,17 +213,19 @@ It has two jobs:
 
 Normalization behavior:
 
-- always emits `from mmds import Input, Map, Filter, Reduce, Unnest, Record, ForEach`
+- always emits `from mmds import Input, Map, Filter, Reduce, Unnest, Join, Detect, Window, Coalesce, Record, ForEach`
 - emits grouped `from udfs... import ...` lines for referenced UDFs
 - uses double-quoted string literals
 - renders structured prompt lists explicitly
 - renders schemas as normalized Python literals
+- renders `Detect`, `Window`, and `Coalesce` with literal validated arguments,
+  including non-default extended `Detect` options
 - assigns synthesized names like `source_docs`, `step_1`, `output` when rendering from a bare plan
 
 This is semantic round-tripping, not source-fidelity round-tripping. Comments, whitespace, and original local variable names are not preserved unless they naturally match the normalized output.
 
-`Window`, `Coalesce`, and `Detect` plans are not currently supported by the
-renderer.
+`Join`, `Detect`, `Window`, `Coalesce`, and `Map(replace=True)` are rendered
+and parse back to equivalent plans.
 
 ### Execution
 
@@ -223,11 +241,18 @@ Execution input model:
 Operator semantics:
 
 - `Input(path)`: reads rows from the referenced `.json` or `.jsonl` file
-- `Map`: applies prompt/UDF to one row and merges returned fields into that row
+- `Map`: applies prompt/UDF to one row and merges returned fields into that
+  row, or returns only the produced mapping when `replace=True`
 - `Filter`: applies prompt/UDF to one row and keeps rows whose result is truthy
 - `Reduce`: groups rows by the configured fields, calls the reducer once per group, and merges returned aggregate fields with the group key fields
 - `Unnest`: expands one field; lists and tuples explode into multiple rows, scalars pass through unchanged, and missing/empty values produce no row unless `keep_empty=True`
-- `Detect`: reads the video pointed to by `video_field`; if the value is a `VideoView`-shaped dict with `start`/`end`, wraps the source in a `VideoView`, runs YOLOE detection on the selected frames, and merges a detection list with absolute source-video `frame_idx` values into `output_field`
+- `Join`: emits `{"left": ..., "right": ...}` pairs. Equi-join keys use a
+  right-side hash index; predicate-only joins use quadratic pair matching.
+  One-to-one joins score candidates, apply an optional minimum score, and
+  greedily retain the highest-scoring pairs with unique left/right identity
+  keys. A self-join whose sources are the same plan object executes and
+  materializes that shared upstream subtree exactly once.
+- `Detect`: reads the video pointed to by `video_field`; if the value is a `VideoView`-shaped dict with `start`/`end`, wraps the source in a `VideoView`, runs YOLOE detection on sampled frames according to `frame_stride`, forwards optional `conf` and `imgsz` inference parameters, and merges a detection list with absolute source-video `frame_idx` values into `output_field`
 - `Window`: reads one `{start, end}` candidate interval per row, applies
   symmetric padding, clamps the start to zero, and stores a non-materialized
   `VideoView` descriptor in `output_field` while preserving the input row
@@ -334,7 +359,6 @@ Design rules:
 ```
 
 - the OpenCV/NumPy stack (and, at run time, `torch`/`ultralytics`) is imported **lazily**: `mmds.execution` imports `.ops.detect` only when a `detect` node actually executes, and `mmds.VideoView` is a lazy export via module `__getattr__`. This keeps `import mmds` and the prompt/UDF execution paths usable without the heavy CV/ML dependencies installed.
-- `Detect` is **not** parsed from or rendered back to DSL text (it is for internal/programmatic use only)
 
 ### UDF Contract
 
@@ -365,8 +389,9 @@ The rule optimizer lives in [src/mmds/optimizers/rewriter/rule.py](/Users/chanwu
 
 Current behavior is intentionally conservative:
 
-- recursively rebuild the tree
+- recursively rebuild both unary and binary sources
 - structurally deduplicate equivalent nodes through memoization
+- preserve shared source identity, including self-join sources
 
 It does not yet reorder operators, fold operators, infer safety, or reason about prompt/UDF semantics.
 
