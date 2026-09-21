@@ -10,7 +10,7 @@ JsonValue: TypeAlias = JsonScalar | dict[str, "JsonValue"] | list["JsonValue"]
 FieldSchemaValue: TypeAlias = str | dict[str, JsonValue]
 RecordSchema: TypeAlias = dict[str, FieldSchemaValue]
 OperatorKind: TypeAlias = Literal[
-    "input", "map", "filter", "reduce", "unnest", , "split", "detect", "join", "window", "coalesce"
+    "input", "map", "filter", "reduce", "unnest", "split", "detect", "join", "window", "coalesce"
 ]
 
 
