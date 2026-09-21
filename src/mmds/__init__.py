@@ -1,6 +1,6 @@
 from typing import TYPE_CHECKING
 
-from .dsl import Coalesce, Detect, Filter, ForEach, Input, Map, Reduce, Unnest, Window
+from .dsl import Coalesce, Detect, Filter, ForEach, Input, Join, Map, Reduce, Split, Unnest, Window
 from .execution import PromptExecutor, StaticPromptExecutor, execute
 from .execution.llm.gemini import GeminiPromptExecutor
 from .optimizers.rewriter.agent import LLMClient, StaticLLMClient
