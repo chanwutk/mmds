@@ -170,6 +170,7 @@ flowchart TD
     QP -->|".output_expr"| PLAN
     RT -->|"program_from_plan"| QP
     PLAN -->|"optimize / canonicalize (rule rewriter)"| PLAN
+    PLAN -->|"typed directive + validated parameters"| PLAN
     PY -->|"LLM rewrite (agent, re-parsed and validated)"| PY
     PLAN -->|"execute(plan, prompt_executor)"| ROWS
 ```
@@ -185,8 +186,9 @@ Components (all under [`src/mmds/`](src/mmds/)):
   `execution/ops/` holds per-operator logic including `Detect`.
 - **`optimizers/lowering.py`** — deterministically expands logical video-map operators
   into `Unnest`, `Window`, `Coalesce`, and `Map`/`Reduce`.
-- **`optimizers/rewriter/`** — `rule.py` (conservative structural canonicalization) and
-  `agent.py` (validation-heavy LLM rewrite scaffold).
+- **`optimizers/rewriter/`** — immutable path/index primitives and typed
+  directive application, plus `rule.py` (conservative canonicalization) and
+  `agent.py` (the legacy whole-query LLM rewrite scaffold).
 - **`udf_catalog.py`** — discovers UDFs from `udfs/*.py` (implemented) and `*.pyi` (declared-only).
 
 **[DESIGN.md](DESIGN.md) is the authoritative architecture document** — read it before
