@@ -21,7 +21,11 @@ def validate_rewrite_structure(
 
     original_schema = _declared_output_schema(original.output_expr)
     rewritten_schema = _declared_output_schema(rewritten)
-    if original_schema is not None and rewritten_schema != original_schema:
+    if (
+        original_schema is not None
+        and rewritten_schema is not None
+        and rewritten_schema != original_schema
+    ):
         raise MMDSRewriteError(
             "Rewrites must preserve the final declared output schema."
         )

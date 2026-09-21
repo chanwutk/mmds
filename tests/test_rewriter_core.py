@@ -15,7 +15,14 @@ if str(ROOT) not in sys.path:
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from mmds import Input, PromptSpec, QueryProgram, RecordPath, parse_query  # noqa: E402
+from mmds import (  # noqa: E402
+    Input,
+    PromptSpec,
+    QueryProgram,
+    RecordPath,
+    UdfSpec,
+    parse_query,
+)
 from mmds.model import DatasetExpr  # noqa: E402
 from mmds.optimizers.rewriter import (  # noqa: E402
     DirectiveMetadata,
@@ -255,6 +262,15 @@ class RewriteValidationTests(unittest.TestCase):
 
         with self.assertRaisesRegex(MMDSRewriteError, "output schema"):
             validate_rewrite_structure(original, rewritten)
+
+    def test_udf_output_schema_is_explicitly_unknown(self) -> None:
+        original = _program()
+        rewritten = replace(
+            original.output_expr,
+            spec=UdfSpec(module="udfs.test_ops", name="annotate"),
+        )
+
+        validate_rewrite_structure(original, rewritten)
 
     def test_rewritten_plan_must_round_trip_through_the_dsl(self) -> None:
         original = parse_query(

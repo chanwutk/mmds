@@ -426,11 +426,12 @@ Directive parameters are strict Pydantic models owned by each directive.
 calls the directive, validates structural invariants, and returns a normalized
 `QueryProgram`. It rejects matches that the directive did not offer.
 
-Structural validation guarantees that rewrites preserve reachable input paths
-and any declared final output schema, and that the resulting plan round-trips
-through normalized MMDS Python. It does not claim to prove semantic
-equivalence; that responsibility belongs to directive preconditions and later
-evaluation.
+Structural validation guarantees that rewrites preserve reachable input paths,
+rejects conflicts when both plans declare a final output schema, and requires
+the resulting plan to round-trip through normalized MMDS Python. A UDF-backed
+output has no declared schema to compare today. Validation does not claim to
+prove semantic equivalence; that responsibility belongs to directive
+preconditions and later evaluation.
 
 Future model-based selection is a separate orchestration layer:
 
