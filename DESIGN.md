@@ -381,6 +381,38 @@ Current rules:
 
 The current system does not generate `.py` from `.pyi`; it only records the contract.
 
+### Cross-Camera Vehicle Join
+
+The I24V case study has a semantic baseline and a UDF rewrite that share the
+same default manifest and final row schema
+(`vehicle_id`, `attributes`, `timeline`, `match_score`):
+
+- [`examples/semantic_join_cross_camera_vehicle.py`](/Users/chanwutk/Documents/mmds/examples/semantic_join_cross_camera_vehicle.py)
+  is the Gemini Reduce–Unnest baseline. It stitches both camera feeds in one
+  prompt, unnests `vehicles`, then promotes each item to the top-level
+  trajectory schema.
+- [`examples/join_cross_camera_vehicle.py`](/Users/chanwutk/Documents/mmds/examples/join_cross_camera_vehicle.py)
+  is the rewritten Detect–Track–Join plan. It detects vehicles, normalizes
+  detections, tracks and embeds per-camera trajectories, unnests one row per
+  track, and self-joins those rows before mapping each match to the trajectory
+  output schema.
+
+The self-join uses `same_vehicle` to enforce camera ordering and source-time
+compatibility, `appearance_match_score` to score candidate associations, and
+`(camera_id, track_id)` as each side's identity. It intentionally has no exact
+hash key: detector-derived class and color labels can disagree between cameras,
+so exact attribute blocking would silently remove valid candidates. The
+tradeoff is quadratic candidate generation and up to quadratic candidate
+memory before greedy score ordering. This is acceptable for the documented
+two-camera five-second example, but larger feeds need a measured blocking or
+approximate-neighbor strategy.
+
+Input track intervals remain in absolute source time on the rewrite path. The
+semantic baseline reports clip-relative entered/exited times in the same
+timeline field shape. Controlled rewrite-contract tests start from the
+semantic baseline text and accept a static Detect–Track–Join target; they do
+not claim that a live model invents the rewrite.
+
 ### Optimizers
 
 #### Rule Optimizer
