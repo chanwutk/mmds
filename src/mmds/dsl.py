@@ -206,16 +206,14 @@ def VideoMap(
     group_by: str | list[str] | tuple[str, ...],
     schema: JsonValue,
     padding_time: float = 0.0,
-    max_views: int = 8,
-    max_total_video_seconds: float = 600.0,
     clip_field: str = "clip",
     name: str | None = None,
 ) -> DatasetExpr:
-    """Apply one prompt over a bounded group of candidate video views.
+    """Apply one prompt over all coalesced candidate views in each group.
 
     ``views_field`` contains source-time ``{start, end}`` intervals. The
-    operator pads and coalesces them, applies the configured budgets, and
-    submits the remaining lazy views together in one prompt per group.
+    operator pads and coalesces them, then submits the resulting lazy views
+    together in one prompt per group.
     """
 
     return _video_map(
@@ -227,8 +225,6 @@ def VideoMap(
         group_by=group_by,
         schema=schema,
         padding_time=padding_time,
-        max_views=max_views,
-        max_total_video_seconds=max_total_video_seconds,
         clip_field=clip_field,
         name=name,
     )
@@ -243,12 +239,10 @@ def VideoMapEach(
     group_by: str | list[str] | tuple[str, ...],
     schema: JsonValue | None = None,
     padding_time: float = 0.0,
-    max_views: int = 8,
-    max_total_video_seconds: float = 600.0,
     clip_field: str = "clip",
     name: str | None = None,
 ) -> DatasetExpr:
-    """Apply the same map independently to each bounded candidate video view.
+    """Apply the same map independently to every coalesced candidate view.
 
     Prompt specs receive ``Record[video_field]`` as the generated
     ``VideoView``. A UDF receives a row containing the grouping fields and the
@@ -264,8 +258,6 @@ def VideoMapEach(
         group_by=group_by,
         schema=schema,
         padding_time=padding_time,
-        max_views=max_views,
-        max_total_video_seconds=max_total_video_seconds,
         clip_field=clip_field,
         name=name,
     )
@@ -281,8 +273,6 @@ def _video_map(
     group_by: str | list[str] | tuple[str, ...],
     schema: JsonValue | None,
     padding_time: float,
-    max_views: int,
-    max_total_video_seconds: float,
     clip_field: str,
     name: str | None,
 ) -> DatasetExpr:
@@ -298,8 +288,6 @@ def _video_map(
             group_by=normalize_group_by(group_by),
             map_spec=map_spec,
             padding_time=padding_time,
-            max_views=max_views,
-            max_total_video_seconds=max_total_video_seconds,
             clip_field=clip_field,
         ),
         name=name,

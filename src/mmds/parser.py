@@ -171,8 +171,6 @@ def _parse_call(
             "group_by",
             "schema",
             "padding_time",
-            "max_views",
-            "max_total_video_seconds",
             "clip_field",
             "name",
         }
@@ -210,16 +208,6 @@ def _parse_call(
                     keywords.get("padding_time"),
                     f"{operator} padding_time",
                     default=0.0,
-                ),
-                max_views=_parse_int(
-                    keywords.get("max_views"),
-                    f"{operator} max_views",
-                    default=8,
-                ),
-                max_total_video_seconds=_parse_number(
-                    keywords.get("max_total_video_seconds"),
-                    f"{operator} max_total_video_seconds",
-                    default=600.0,
                 ),
                 clip_field=(
                     _parse_string(
@@ -384,23 +372,6 @@ def _parse_number(
     ):
         raise MMDSValidationError(f"{label} must be a numeric literal.")
     return float(node.value)
-
-
-def _parse_int(
-    node: ast.AST | None,
-    label: str,
-    *,
-    default: int,
-) -> int:
-    if node is None:
-        return default
-    if (
-        not isinstance(node, ast.Constant)
-        or not isinstance(node.value, int)
-        or isinstance(node.value, bool)
-    ):
-        raise MMDSValidationError(f"{label} must be an integer literal.")
-    return node.value
 
 
 def _parse_optional_name(keywords: dict[str, ast.AST]) -> str | None:

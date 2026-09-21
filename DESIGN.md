@@ -60,7 +60,7 @@ The current implementation supports:
 - programmatic `Window` and `Coalesce` operators for constructing padded
   source-time video views and merging overlapping candidate intervals
 - logical `VideoMap` and `VideoMapEach` operators that lower candidate intervals
-  into bounded, non-materialized video-view execution plans
+  into non-materialized video-view execution plans
 
 The current implementation intentionally does not support:
 
@@ -87,8 +87,8 @@ The main entrypoints are exported from [src/mmds/__init__.py](/Users/chanwutk/Do
 - `Detect(data, video_field, classes, *, model="yoloe-11s-seg.pt", output_field="detections", name=None)`
 - `Window(data, video_field, candidate_field, output_field, padding_time, name=None)`
 - `Coalesce(data, group_by, field, *, name=None)`
-- `VideoMap(data, spec, *, video_field, views_field, group_by, schema, padding_time=0, max_views=8, max_total_video_seconds=600, clip_field="clip", name=None)`
-- `VideoMapEach(data, spec, *, video_field, views_field, group_by, schema=None, padding_time=0, max_views=8, max_total_video_seconds=600, clip_field="clip", name=None)`
+- `VideoMap(data, spec, *, video_field, views_field, group_by, schema, padding_time=0, clip_field="clip", name=None)`
+- `VideoMapEach(data, spec, *, video_field, views_field, group_by, schema=None, padding_time=0, clip_field="clip", name=None)`
 - `VideoView(video, start, end)`
 - `Record[...]`
 - `ForEach([...])`
@@ -112,9 +112,7 @@ The core model lives in [src/mmds/model.py](/Users/chanwutk/Documents/mmds/src/m
 - `WindowSpec` stores the parameters for a `Window` node: `video_field`,
   `candidate_field`, `output_field`, and `padding_time`.
 - `VideoMapSpec` stores the candidate-view field, source-video field, grouping
-  fields, semantic map spec, padding, clip field, and hard view budgets.
-- `ViewBudgetSpec` is an internal physical specification introduced only by
-  video-map lowering.
+  fields, semantic map spec, padding, and clip field.
 - `Assignment` and `QueryProgram` represent a parsed query file.
 - `MMDSValidationError` is the shared validation failure type.
 
@@ -122,7 +120,7 @@ The core model lives in [src/mmds/model.py](/Users/chanwutk/Documents/mmds/src/m
 
 - `Input` has no source.
 - `Map`, `Filter`, `Reduce`, `Unnest`, `Detect`, `Window`, `Coalesce`,
-  `VideoMap`, `VideoMapEach`, and internal `ViewBudget` each have one `source`.
+  `VideoMap`, and `VideoMapEach` each have one `source`.
 
 That shape is sufficient for the first operator set and keeps rendering and execution simple. If future operators introduce multiple inputs, `DatasetExpr` will need a general child list instead of a single `source`.
 
@@ -194,7 +192,7 @@ Parser rules:
 - prompt-backed video maps require `schema=...`; joint `VideoMap` is
   prompt-only, while `VideoMapEach` may also use an imported UDF
 
-`Window`, `Coalesce`, `ViewBudget`, and `Detect` are internal or
+`Window`, `Coalesce`, and `Detect` are internal or
 programmatic-only operators; the restricted source parser does not accept
 them. `VideoMap` and `VideoMapEach` are the source-visible logical interface
 to that physical pipeline.
@@ -222,7 +220,7 @@ Normalization behavior:
 This is semantic round-tripping, not source-fidelity round-tripping. Comments, whitespace, and original local variable names are not preserved unless they naturally match the normalized output.
 
 Logical `VideoMap` and `VideoMapEach` plans render to normalized Python.
-Physical `Window`, `Coalesce`, `ViewBudget`, and `Detect` plans are not
+Physical `Window`, `Coalesce`, and `Detect` plans are not
 source-renderable.
 
 ### Execution
@@ -251,17 +249,15 @@ Operator semantics:
   `start`, merges overlapping or touching intervals, and emits one row per
   merged interval containing only the grouping fields and `field`
 - `VideoMap`: logically applies one prompt to all selected video views in each
-  group; execution lowers it to `Unnest -> Window -> Coalesce -> ViewBudget -> Reduce`
+  group; execution lowers it to `Unnest -> Window -> Coalesce -> Reduce`
 - `VideoMapEach`: logically applies the same map independently to every
-  selected view; execution lowers it to `Unnest -> Window -> Coalesce -> ViewBudget -> Map`
-- `ViewBudget`: internal physical operator that enforces `max_views` and
-  `max_total_video_seconds` independently per group, clipping the final view
-  when necessary to respect the duration limit
+  selected view; execution lowers it to `Unnest -> Window -> Coalesce -> Map`
 
 Video-map lowering never materializes clip files. `Window` creates
 `VideoView` dictionaries that retain the original video source and absolute
-`start`/`end` seconds. `Coalesce` removes redundant overlap before the budget
-is applied.
+`start`/`end` seconds. `Coalesce` removes redundant overlap, and every
+resulting view is processed. Any future sampling or limiting policy should be
+an explicit approximate rewrite rather than part of the logical operators.
 
 `group_by` is also the boundary for row fields preserved through coalescing.
 For prompt-backed video maps, every referenced non-video field must therefore
@@ -456,8 +452,7 @@ The current suite covers:
 - `Record[...]` resolution and `ForEach([...])` expansion
 - `Unnest` behavior on scalar, empty, and missing values
 - logical video-map construction, validation, parse/render round trips,
-  lowering, joint/per-view execution, coalescing, empty candidates, and
-  per-group budgets
+  lowering, joint/per-view execution, coalescing, and empty candidates
 - `Detect` behavior, including `VideoView` clip slicing and absolute-frame detection indices
 - video utility behavior for direct downloads, platform downloads via `yt-dlp`, and `VideoView` iteration
 - parser validation for unsupported Python and invalid prompt forms

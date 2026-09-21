@@ -23,7 +23,6 @@ OPERATOR_DEFINITIONS: tuple[OperatorDefinition, ...] = (
     OperatorDefinition("Detect", "detect", source_visible=False),
     OperatorDefinition("Window", "window", source_visible=False),
     OperatorDefinition("Coalesce", "coalesce", source_visible=False),
-    OperatorDefinition("ViewBudget", "view_budget", source_visible=False),
 )
 
 OPERATOR_BY_KIND = {

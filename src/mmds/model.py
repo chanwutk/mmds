@@ -21,7 +21,6 @@ OperatorKind: TypeAlias = Literal[
     "coalesce",
     "video_map",
     "video_map_each",
-    "view_budget",
 ]
 
 
@@ -173,8 +172,6 @@ class VideoMapSpec:
     group_by: tuple[str, ...]
     map_spec: PromptSpec | UdfSpec
     padding_time: float = 0.0
-    max_views: int = 8
-    max_total_video_seconds: float = 600.0
     clip_field: str = "clip"
 
     def __post_init__(self) -> None:
@@ -250,54 +247,7 @@ class VideoMapSpec:
             raise MMDSValidationError(
                 "VideoMapSpec padding_time must be a finite non-negative number."
             )
-        if (
-            not isinstance(self.max_views, int)
-            or isinstance(self.max_views, bool)
-            or self.max_views <= 0
-        ):
-            raise MMDSValidationError(
-                "VideoMapSpec max_views must be a positive integer."
-            )
-        total_seconds = self.max_total_video_seconds
-        if not _is_finite_number(total_seconds) or total_seconds <= 0:
-            raise MMDSValidationError(
-                "VideoMapSpec max_total_video_seconds must be a finite positive number."
-            )
         object.__setattr__(self, "padding_time", float(padding))
-        object.__setattr__(
-            self, "max_total_video_seconds", float(total_seconds)
-        )
-
-
-@dataclass(frozen=True)
-class ViewBudgetSpec:
-    """Internal physical limit applied after candidate views are coalesced."""
-
-    group_by: tuple[str, ...]
-    field: str
-    max_views: int
-    max_total_video_seconds: float
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "group_by", normalize_group_by(self.group_by))
-        if not isinstance(self.field, str) or not self.field:
-            raise MMDSValidationError(
-                "ViewBudgetSpec field must be a non-empty string."
-            )
-        if (
-            not isinstance(self.max_views, int)
-            or isinstance(self.max_views, bool)
-            or self.max_views <= 0
-        ):
-            raise MMDSValidationError(
-                "ViewBudgetSpec max_views must be a positive integer."
-            )
-        seconds = self.max_total_video_seconds
-        if not _is_finite_number(seconds) or seconds <= 0:
-            raise MMDSValidationError(
-                "ViewBudgetSpec max_total_video_seconds must be a finite positive number."
-            )
-        object.__setattr__(self, "max_total_video_seconds", float(seconds))
 
 
 SemanticSpec: TypeAlias = (
@@ -306,7 +256,6 @@ SemanticSpec: TypeAlias = (
     | DetectSpec
     | WindowSpec
     | VideoMapSpec
-    | ViewBudgetSpec
 )
 
 
@@ -355,13 +304,6 @@ class DatasetExpr:
             raise MMDSValidationError(
                 f"{self.kind} nodes require a VideoMapSpec."
             )
-        if self.kind == "view_budget" and not isinstance(
-            self.spec, ViewBudgetSpec
-        ):
-            raise MMDSValidationError(
-                "view_budget nodes require a ViewBudgetSpec."
-            )
-
     def children(self) -> tuple[DatasetExpr, ...]:
         if self.source is None:
             return ()

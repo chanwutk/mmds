@@ -101,8 +101,6 @@ def _render_expr(expr: DatasetExpr, node_names: dict[DatasetExpr, str]) -> str:
             f"views_field={_quote(expr.spec.views_field)}",
             f"group_by={_render_group_by(expr.spec.group_by)}",
             f"padding_time={expr.spec.padding_time!r}",
-            f"max_views={expr.spec.max_views!r}",
-            f"max_total_video_seconds={expr.spec.max_total_video_seconds!r}",
             f"clip_field={_quote(expr.spec.clip_field)}",
         ]
         if expr.name is not None:

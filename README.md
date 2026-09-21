@@ -93,8 +93,8 @@ A query is a sequence of top-level assignments; the **last assignment is the out
 | `Filter` | `Filter(data, spec)` | Keep rows where the prompt/UDF result is truthy. |
 | `Reduce` | `Reduce(data, group_by, reducer, *, schema=…)` | Group rows, run the reducer once per group, merge the aggregate with the group key. |
 | `Unnest` | `Unnest(data, field, *, keep_empty=False)` | Explode a list/tuple field into one row per item. |
-| `VideoMap` | `VideoMap(data, spec, *, video_field, views_field, group_by, schema=…, …)` | Run one prompt over a bounded set of candidate video views per group. |
-| `VideoMapEach` | `VideoMapEach(data, spec, *, video_field, views_field, group_by, schema=…, …)` | Run the same map independently over each bounded candidate video view. |
+| `VideoMap` | `VideoMap(data, spec, *, video_field, views_field, group_by, schema=…, …)` | Run one prompt over all coalesced candidate video views per group. |
+| `VideoMapEach` | `VideoMapEach(data, spec, *, video_field, views_field, group_by, schema=…, …)` | Run the same map independently over every coalesced candidate video view. |
 | `Detect` | `Detect(data, video_field, classes, …)` | Frame-level YOLOE object detection on a video field (programmatic-only; not parsed/rendered as DSL text). |
 
 Helpers: `Record["field"]["nested"]` references a row field inside a prompt; `ForEach([...])`
@@ -184,7 +184,7 @@ Components (all under [`src/mmds/`](src/mmds/)):
 - **`execution/`** — the local interpreter; `execution/llm/gemini.py` is the Gemini executor;
   `execution/ops/` holds per-operator logic including `Detect`.
 - **`optimizers/lowering.py`** — deterministically expands logical video-map operators
-  into `Unnest`, `Window`, `Coalesce`, a view budget, and `Map`/`Reduce`.
+  into `Unnest`, `Window`, `Coalesce`, and `Map`/`Reduce`.
 - **`optimizers/rewriter/`** — `rule.py` (conservative structural canonicalization) and
   `agent.py` (validation-heavy LLM rewrite scaffold).
 - **`udf_catalog.py`** — discovers UDFs from `udfs/*.py` (implemented) and `*.pyi` (declared-only).

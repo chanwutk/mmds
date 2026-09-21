@@ -28,9 +28,7 @@ from mmds import (  # noqa: E402
     parse_query,
     render_query,
 )
-from mmds.model import DatasetExpr, ViewBudgetSpec  # noqa: E402
 from mmds.optimizers.lowering import lower_video_ops  # noqa: E402
-from mmds.execution.ops.view_budget import _apply_view_budget  # noqa: E402
 from udfs.test_ops import annotate  # noqa: E402
 
 
@@ -50,8 +48,6 @@ def _video_map_each(**overrides):
         "group_by": ["lecture_id", "question"],
         "schema": {"answer": "string"},
         "padding_time": 5,
-        "max_views": 3,
-        "max_total_video_seconds": 90,
         "clip_field": "clip",
         "name": "verify_candidates",
     }
@@ -78,8 +74,6 @@ class VideoMapDSLTests(unittest.TestCase):
         self.assertIsInstance(plan.spec, VideoMapSpec)
         self.assertEqual(plan.spec.group_by, ("lecture_id", "question"))
         self.assertEqual(plan.spec.padding_time, 5.0)
-        self.assertEqual(plan.spec.max_views, 3)
-        self.assertEqual(plan.spec.max_total_video_seconds, 90.0)
 
     def test_joint_video_map_requires_a_prompt(self) -> None:
         with self.assertRaisesRegex(TypeError, "prompt-backed"):
@@ -156,18 +150,12 @@ class VideoMapDSLTests(unittest.TestCase):
                 with self.assertRaises(MMDSValidationError):
                     _video_map_each(**updates)
 
-    def test_budget_configuration_is_validated(self) -> None:
+    def test_padding_configuration_is_validated(self) -> None:
         cases = (
             {"padding_time": -1},
             {"padding_time": float("inf")},
             {"padding_time": float("nan")},
             {"padding_time": True},
-            {"max_views": 0},
-            {"max_views": True},
-            {"max_total_video_seconds": 0},
-            {"max_total_video_seconds": float("inf")},
-            {"max_total_video_seconds": float("nan")},
-            {"max_total_video_seconds": True},
         )
         for updates in cases:
             with self.subTest(updates=updates):
@@ -191,8 +179,6 @@ output = {operator}(
     group_by=["lecture_id", "question"],
     schema={{"answer": "string"}},
     padding_time=5,
-    max_views=3,
-    max_total_video_seconds=90,
     clip_field="clip",
     name="verify",
 )
@@ -236,7 +222,7 @@ output = VideoMap(rows, "answer", views_field="views", group_by="id", schema={"a
             '''
 from mmds import Input, VideoMap
 rows = Input("lectures.jsonl")
-output = VideoMap(rows, "answer", video_field="video", views_field="views", group_by="id", schema={"answer": "string"}, max_views=1.5)
+output = VideoMap(rows, "answer", video_field="video", views_field="views", group_by="id", schema={"answer": "string"}, padding_time="five")
 ''',
         )
         for query in invalid_queries:
@@ -254,7 +240,7 @@ class VideoMapLoweringTests(unittest.TestCase):
 
         self.assertEqual(
             [node.kind for node in nodes],
-            ["input", "unnest", "window", "coalesce", "view_budget", "map"],
+            ["input", "unnest", "window", "coalesce", "map"],
         )
         self.assertEqual(
             [node.name for node in nodes[1:]],
@@ -262,7 +248,6 @@ class VideoMapLoweringTests(unittest.TestCase):
                 "verify_candidates_views",
                 "verify_candidates_window",
                 "verify_candidates_coalesce",
-                "verify_candidates_budget",
                 "verify_candidates",
             ],
         )
@@ -292,7 +277,7 @@ class VideoMapLoweringTests(unittest.TestCase):
 
 
 class VideoMapExecutionTests(unittest.TestCase):
-    def test_per_view_execution_pads_coalesces_and_enforces_budgets(self) -> None:
+    def test_per_view_execution_pads_coalesces_and_processes_every_view(self) -> None:
         rows = [
             {
                 "lecture_id": "lecture-1",
@@ -315,8 +300,6 @@ class VideoMapExecutionTests(unittest.TestCase):
             group_by=["lecture_id", "question"],
             schema={"answer": "string"},
             padding_time=5,
-            max_views=2,
-            max_total_video_seconds=35,
         )
         lowered = lower_video_ops(plan)
         seen: list[tuple[dict, str]] = []
@@ -334,7 +317,7 @@ class VideoMapExecutionTests(unittest.TestCase):
 
         self.assertEqual(
             [(clip["start"], clip["end"]) for clip, _ in seen],
-            [(5.0, 30.0), (45.0, 55.0)],
+            [(5.0, 30.0), (45.0, 75.0)],
         )
         self.assertEqual([question for _, question in seen], ["What happened?"] * 2)
         self.assertEqual(len(result), 2)
@@ -422,62 +405,6 @@ class VideoMapExecutionTests(unittest.TestCase):
         )
 
         self.assertEqual(execute(plan, prompt_executor=StaticPromptExecutor({})), [])
-
-
-class ViewBudgetTests(unittest.TestCase):
-    def test_budget_is_applied_independently_per_group(self) -> None:
-        node = DatasetExpr(
-            kind="view_budget",
-            source=Input("rows.jsonl"),
-            spec=ViewBudgetSpec(
-                group_by=("lecture_id",),
-                field="clip",
-                max_views=1,
-                max_total_video_seconds=5,
-            ),
-        )
-        rows = [
-            {"lecture_id": "a", "clip": {"start": 0, "end": 10}},
-            {"lecture_id": "a", "clip": {"start": 20, "end": 30}},
-            {"lecture_id": "b", "clip": {"start": 0, "end": 3}},
-        ]
-
-        original_first_clip = dict(rows[0]["clip"])
-        result = list(_apply_view_budget(node, rows))
-
-        self.assertEqual(
-            [
-                (row["lecture_id"], row["clip"]["start"], row["clip"]["end"])
-                for row in result
-            ],
-            [("a", 0, 5.0), ("b", 0, 3)],
-        )
-        self.assertEqual(rows[0]["clip"], original_first_clip)
-
-    def test_invalid_rows_raise_validation_errors(self) -> None:
-        node = DatasetExpr(
-            kind="view_budget",
-            source=Input("rows.jsonl"),
-            spec=ViewBudgetSpec(
-                group_by=("lecture_id",),
-                field="clip",
-                max_views=1,
-                max_total_video_seconds=5,
-            ),
-        )
-        invalid_rows = (
-            {"clip": {"start": 0, "end": 1}},
-            {"lecture_id": "a", "clip": "invalid"},
-            {"lecture_id": "a", "clip": {"start": 1, "end": 1}},
-            {"lecture_id": "a", "clip": {"start": 0, "end": float("inf")}},
-            {"lecture_id": [], "clip": {"start": 0, "end": 1}},
-        )
-
-        for row in invalid_rows:
-            with self.subTest(row=row):
-                with self.assertRaises(MMDSValidationError):
-                    list(_apply_view_budget(node, [row]))
-
 
 if __name__ == "__main__":
     unittest.main()

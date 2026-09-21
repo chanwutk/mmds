@@ -11,7 +11,6 @@ from ..model import (
     RecordPath,
     UdfSpec,
     VideoMapSpec,
-    ViewBudgetSpec,
     WindowSpec,
 )
 
@@ -57,22 +56,10 @@ def _lower_video_map(node: DatasetExpr) -> DatasetExpr:
         field=spec.clip_field,
         name=_stage_name(node.name, "coalesce"),
     )
-    budgeted = DatasetExpr(
-        kind="view_budget",
-        source=coalesced,
-        spec=ViewBudgetSpec(
-            group_by=spec.group_by,
-            field=spec.clip_field,
-            max_views=spec.max_views,
-            max_total_video_seconds=spec.max_total_video_seconds,
-        ),
-        name=_stage_name(node.name, "budget"),
-    )
-
     if node.kind == "video_map_each":
         return DatasetExpr(
             kind="map",
-            source=budgeted,
+            source=coalesced,
             spec=_replace_video_reference(
                 spec.map_spec,
                 video_field=spec.video_field,
@@ -87,7 +74,7 @@ def _lower_video_map(node: DatasetExpr) -> DatasetExpr:
         )
     return DatasetExpr(
         kind="reduce",
-        source=budgeted,
+        source=coalesced,
         group_by=spec.group_by,
         spec=PromptSpec(
             parts=_map_parts_to_reduce_parts(
