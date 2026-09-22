@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from importlib import import_module
+from math import isfinite
 from typing import Any, Callable, Iterator, Literal, TypeAlias
 
 Row: TypeAlias = dict[str, Any]
@@ -10,7 +11,16 @@ JsonValue: TypeAlias = JsonScalar | dict[str, "JsonValue"] | list["JsonValue"]
 FieldSchemaValue: TypeAlias = str | dict[str, JsonValue]
 RecordSchema: TypeAlias = dict[str, FieldSchemaValue]
 OperatorKind: TypeAlias = Literal[
-    "input", "map", "filter", "reduce", "unnest", "detect", "window", "coalesce"
+    "input",
+    "map",
+    "filter",
+    "reduce",
+    "unnest",
+    "detect",
+    "window",
+    "coalesce",
+    "video_map",
+    "video_map_each",
 ]
 
 
@@ -140,14 +150,113 @@ class WindowSpec:
             )
 
         padding = self.padding_time
-        if padding < 0:
+        if (
+            not isinstance(padding, (int, float))
+            or isinstance(padding, bool)
+            or not isfinite(padding)
+            or padding < 0
+        ):
             raise MMDSValidationError(
                 "WindowSpec padding_time must be a finite non-negative number."
             )
 
         object.__setattr__(self, "padding_time", float(padding))
 
-SemanticSpec: TypeAlias = PromptSpec | UdfSpec | DetectSpec | WindowSpec
+
+@dataclass(frozen=True)
+class VideoMapSpec:
+    """Logical video-map configuration shared by joint and per-view variants."""
+
+    video_field: str
+    views_field: str
+    group_by: tuple[str, ...]
+    map_spec: PromptSpec | UdfSpec
+    padding_time: float = 0.0
+    clip_field: str = "clip"
+
+    def __post_init__(self) -> None:
+        for label, value in (
+            ("video_field", self.video_field),
+            ("views_field", self.views_field),
+            ("clip_field", self.clip_field),
+        ):
+            if not isinstance(value, str) or not value:
+                raise MMDSValidationError(
+                    f"VideoMapSpec {label} must be a non-empty string."
+                )
+        if len({self.video_field, self.views_field, self.clip_field}) != 3:
+            raise MMDSValidationError(
+                "VideoMapSpec video, views, and clip fields must be distinct."
+            )
+
+        group_by = normalize_group_by(self.group_by)
+        if any(not field for field in group_by):
+            raise MMDSValidationError(
+                "VideoMapSpec group_by fields must be non-empty strings."
+            )
+        if len(set(group_by)) != len(group_by):
+            raise MMDSValidationError(
+                "VideoMapSpec group_by fields must be unique."
+            )
+        if self.views_field in group_by or self.clip_field in group_by:
+            raise MMDSValidationError(
+                "VideoMapSpec group_by cannot contain the views or clip field."
+            )
+        object.__setattr__(self, "group_by", group_by)
+
+        if not isinstance(self.map_spec, (PromptSpec, UdfSpec)):
+            raise MMDSValidationError(
+                "VideoMapSpec map_spec must be a PromptSpec or UdfSpec."
+            )
+        if isinstance(self.map_spec, PromptSpec):
+            if self.map_spec.output_schema is None:
+                raise MMDSValidationError(
+                    "Prompt-backed VideoMap operations require an output schema."
+                )
+            record_paths = _record_paths(self.map_spec.parts)
+            video_reference = RecordPath((self.video_field,))
+            if video_reference not in record_paths:
+                raise MMDSValidationError(
+                    "VideoMap prompts must reference video_field directly through "
+                    f"Record[{self.video_field!r}]."
+                )
+            if any(
+                path.path
+                and path.path[0] == self.video_field
+                and path != video_reference
+                for path in record_paths
+            ):
+                raise MMDSValidationError(
+                    "VideoMap prompts cannot reference nested values below video_field."
+                )
+            available_fields = {*group_by, self.video_field}
+            referenced_fields = {
+                path.path[0]
+                for path in record_paths
+                if path.path
+            }
+            missing_fields = referenced_fields - available_fields
+            if missing_fields:
+                raise MMDSValidationError(
+                    "VideoMap prompt fields other than video_field must be present "
+                    f"in group_by; missing {sorted(missing_fields)!r}."
+                )
+
+        padding = self.padding_time
+        if not _is_finite_number(padding) or padding < 0:
+            raise MMDSValidationError(
+                "VideoMapSpec padding_time must be a finite non-negative number."
+            )
+        object.__setattr__(self, "padding_time", float(padding))
+
+
+SemanticSpec: TypeAlias = (
+    PromptSpec
+    | UdfSpec
+    | DetectSpec
+    | WindowSpec
+    | VideoMapSpec
+)
 
 
 @dataclass(frozen=True)
@@ -189,7 +298,12 @@ class DatasetExpr:
                 raise MMDSValidationError(
                     "Coalesce nodes require an interval field."
                 )
-
+        if self.kind in {"video_map", "video_map_each"} and not isinstance(
+            self.spec, VideoMapSpec
+        ):
+            raise MMDSValidationError(
+                f"{self.kind} nodes require a VideoMapSpec."
+            )
     def children(self) -> tuple[DatasetExpr, ...]:
         if self.source is None:
             return ()
@@ -254,6 +368,10 @@ class QueryProgram:
             for node in assignment.expr.walk_postorder():
                 if isinstance(node.spec, UdfSpec):
                     specs.add(node.spec)
+                elif isinstance(node.spec, VideoMapSpec) and isinstance(
+                    node.spec.map_spec, UdfSpec
+                ):
+                    specs.add(node.spec.map_spec)
         return tuple(sorted(specs, key=lambda spec: (spec.module, spec.name)))
 
 
@@ -269,6 +387,24 @@ def normalize_group_by(group_by: str | list[str] | tuple[str, ...]) -> tuple[str
     if any(not isinstance(field, str) for field in normalized):
         raise TypeError("group_by fields must all be strings.")
     return normalized
+
+
+def _record_paths(parts: tuple[PromptPart, ...]) -> tuple[RecordPath, ...]:
+    paths: list[RecordPath] = []
+    for part in parts:
+        if isinstance(part, RecordPath):
+            paths.append(part)
+        elif isinstance(part, ForEachPrompt):
+            paths.extend(_record_paths(part.parts))
+    return tuple(paths)
+
+
+def _is_finite_number(value: Any) -> bool:
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and isfinite(value)
+    )
 
 
 def udf_spec_from_callable(value: Callable[..., Any]) -> UdfSpec:

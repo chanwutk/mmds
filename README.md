@@ -93,6 +93,8 @@ A query is a sequence of top-level assignments; the **last assignment is the out
 | `Filter` | `Filter(data, spec)` | Keep rows where the prompt/UDF result is truthy. |
 | `Reduce` | `Reduce(data, group_by, reducer, *, schema=…)` | Group rows, run the reducer once per group, merge the aggregate with the group key. |
 | `Unnest` | `Unnest(data, field, *, keep_empty=False)` | Explode a list/tuple field into one row per item. |
+| `VideoMap` | `VideoMap(data, spec, *, video_field, views_field, group_by, schema=…, …)` | Run one prompt over all coalesced candidate video views per group. |
+| `VideoMapEach` | `VideoMapEach(data, spec, *, video_field, views_field, group_by, schema=…, …)` | Run the same map independently over every coalesced candidate video view. |
 | `Detect` | `Detect(data, video_field, classes, …)` | Frame-level YOLOE object detection on a video field (programmatic-only; not parsed/rendered as DSL text). |
 
 Helpers: `Record["field"]["nested"]` references a row field inside a prompt; `ForEach([...])`
@@ -168,6 +170,7 @@ flowchart TD
     QP -->|".output_expr"| PLAN
     RT -->|"program_from_plan"| QP
     PLAN -->|"optimize / canonicalize (rule rewriter)"| PLAN
+    PLAN -->|"typed directive + validated parameters"| PLAN
     PY -->|"LLM rewrite (agent, re-parsed and validated)"| PY
     PLAN -->|"execute(plan, prompt_executor)"| ROWS
 ```
@@ -181,12 +184,40 @@ Components (all under [`src/mmds/`](src/mmds/)):
 - **`render.py`** — renders a plan/program back to *normalized* Python.
 - **`execution/`** — the local interpreter; `execution/llm/gemini.py` is the Gemini executor;
   `execution/ops/` holds per-operator logic including `Detect`.
-- **`optimizers/rewriter/`** — `rule.py` (conservative structural canonicalization) and
-  `agent.py` (validation-heavy LLM rewrite scaffold).
+- **`optimizers/lowering.py`** — deterministically expands logical video-map operators
+  into `Unnest`, `Window`, `Coalesce`, and `Map`/`Reduce`.
+- **`optimizers/rewriter/`** — immutable path/index primitives and typed
+  directive application. Its deterministic video directives support modality
+  substitution and transcript-guided joint or per-view video processing. The
+  minimal automatic engine uses one model call to select an offered rewrite
+  and a second call to fill its validated parameters; `rule.py` provides
+  conservative canonicalization and `agent.py` is the legacy whole-query LLM
+  rewrite scaffold.
 - **`udf_catalog.py`** — discovers UDFs from `udfs/*.py` (implemented) and `*.pyi` (declared-only).
 
 **[DESIGN.md](DESIGN.md) is the authoritative architecture document** — read it before
 making changes. **[AGENTS.md](AGENTS.md)** records the contribution rules and invariants.
+
+A single automatic rewrite is invoked explicitly:
+
+```python
+from mmds.optimizers.rewriter import (
+    GeminiRewriteModel,
+    PerViewTemporalPushdown,
+    rewrite_once,
+)
+
+result = rewrite_once(
+    program,
+    directives=[PerViewTemporalPushdown(identity_fields="lecture_id")],
+    model=GeminiRewriteModel(),
+)
+rewritten_program = result.program
+```
+
+The first model call selects an offered directive and operator path. Only after
+that selection is validated does the second call generate the directive's
+typed parameters; deterministic code constructs and validates the new plan.
 
 ---
 
@@ -230,9 +261,10 @@ Early-stage **research prototype** — APIs and semantics may change.
 - **Supported platforms:** Linux (x86_64 / aarch64), Apple-Silicon macOS, Windows.
   **Intel macOS is unsupported** because `ultralytics` pulls in a `torch` version with no
   Intel-mac wheel; `uv sync` will fail there.
-- **Implemented:** `Input`/`Map`/`Filter`/`Reduce`/`Unnest`/`Detect`, structured prompts,
+- **Implemented:** `Input`/`Map`/`Filter`/`Reduce`/`Unnest`/`VideoMap`/`VideoMapEach`/`Detect`, structured prompts,
   UDFs, local execution, Gemini prompt execution, conservative rule + LLM rewriters,
-  `.py`/`.pyi` UDF discovery.
+  deterministic video rewrite directives, two-call automatic rewrite selection,
+  and `.py`/`.pyi` UDF discovery.
 - **Not yet supported:** inline lambdas; loops/conditionals/comprehensions/classes in
   queries; joins/sorts/projections; cost-based optimization; `.pyi` → `.py` synthesis;
   nested `ForEach`; provider-specific media syntax in the DSL. (See DESIGN.md for the full list.)
