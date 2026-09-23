@@ -8,6 +8,7 @@ from .dsl import ForEach
 from .model import (
     Assignment,
     DatasetExpr,
+    DetectSpec,
     FieldPredicateSpec,
     JsonValue,
     MMDSValidationError,
@@ -162,6 +163,37 @@ def _parse_call(
             source=source,
             field=_parse_string(node.args[1], "Unnest field"),
             keep_empty=keep_empty,
+            name=_parse_optional_name(keywords),
+        )
+
+    if operator == "Detect":
+        allowed = {"model", "output_field", "name"}
+        _expect_args(operator, node.args, 3, keywords, allowed_keywords=allowed)
+        classes_node = node.args[2]
+        if not isinstance(classes_node, (ast.List, ast.Tuple)):
+            raise MMDSValidationError(
+                "Detect classes must be a list or tuple of string literals."
+            )
+        classes = tuple(
+            _parse_string(element, "Detect class") for element in classes_node.elts
+        )
+        return DatasetExpr(
+            kind="detect",
+            source=_parse_source(node.args[0], bindings),
+            spec=DetectSpec(
+                video_field=_parse_string(node.args[1], "Detect video_field"),
+                classes=classes,
+                model=(
+                    _parse_string(keywords["model"], "Detect model")
+                    if "model" in keywords
+                    else "yoloe-11s-seg.pt"
+                ),
+                output_field=(
+                    _parse_string(keywords["output_field"], "Detect output_field")
+                    if "output_field" in keywords
+                    else "detections"
+                ),
+            ),
             name=_parse_optional_name(keywords),
         )
 

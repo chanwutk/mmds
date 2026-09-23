@@ -95,7 +95,7 @@ A query is a sequence of top-level assignments; the **last assignment is the out
 | `Unnest` | `Unnest(data, field, *, keep_empty=False)` | Explode a list/tuple field into one row per item. |
 | `VideoMap` | `VideoMap(data, spec, *, video_field, views_field, group_by, schema=…, …)` | Run one prompt over all coalesced candidate video views per group. |
 | `VideoMapEach` | `VideoMapEach(data, spec, *, video_field, views_field, group_by, schema=…, …)` | Run the same map independently over every coalesced candidate video view. |
-| `Detect` | `Detect(data, video_field, classes, …)` | Frame-level YOLOE object detection on a video field (programmatic-only; not parsed/rendered as DSL text). |
+| `Detect` | `Detect(data, video_field, classes, …)` | Frame-level YOLOE object detection on a video field. |
 
 Helpers: `Record["field"]["nested"]` references a row field inside a prompt; `ForEach([...])`
 repeats a prompt fragment once per grouped row (only at the top level of a `Reduce`);
@@ -188,8 +188,9 @@ Components (all under [`src/mmds/`](src/mmds/)):
   into `Unnest`, `Window`, `Coalesce`, and `Map`/`Reduce`.
 - **`optimizers/rewriter/`** — immutable path/index primitives and typed
   directive application. Its deterministic video directives support modality
-  substitution, prompt-field pruning, boolean-map code filters, and
-  transcript-guided joint or per-view video processing. The
+  substitution, prompt-field pruning, boolean-map code filters, YOLOE detect
+  gates before Maps, and transcript-guided joint or per-view video processing.
+  The
   minimal automatic engine uses one model call to select an offered rewrite
   and a second call to fill its validated parameters; `rule.py` provides
   conservative canonicalization and `agent.py` is the legacy whole-query LLM

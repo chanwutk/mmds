@@ -8,6 +8,7 @@ from typing import Any
 from .model import (
     Assignment,
     DatasetExpr,
+    DetectSpec,
     FieldPredicateSpec,
     ForEachPrompt,
     JsonValue,
@@ -92,6 +93,21 @@ def _render_expr(expr: DatasetExpr, node_names: dict[DatasetExpr, str]) -> str:
         if expr.name is not None:
             flags.append(f"name={_quote(expr.name)}")
         return f"Unnest({source_name}, {', '.join(flags)})"
+    if expr.kind == "detect":
+        if not isinstance(expr.spec, DetectSpec):
+            raise ValueError("Detect nodes require a DetectSpec.")
+        args = [
+            source_name,
+            _quote(expr.spec.video_field),
+            _render_literal(list(expr.spec.classes)),
+        ]
+        if expr.spec.model != "yoloe-11s-seg.pt":
+            args.append(f"model={_quote(expr.spec.model)}")
+        if expr.spec.output_field != "detections":
+            args.append(f"output_field={_quote(expr.spec.output_field)}")
+        if expr.name is not None:
+            args.append(f"name={_quote(expr.name)}")
+        return f"Detect({', '.join(args)})"
     if expr.kind in {"video_map", "video_map_each"}:
         if not isinstance(expr.spec, VideoMapSpec):
             raise ValueError("VideoMap nodes require a VideoMapSpec.")

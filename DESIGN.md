@@ -190,16 +190,19 @@ Parser rules:
 - `Map` and `Reduce` prompt specs must include `schema={...}` as an output field map
 - `Filter` does not accept `schema=`
 - `Filter` field predicates must be a single top-level `Record["field"]`
+- `Detect` requires literal `video_field` and a list/tuple of literal class
+  strings; optional `model` / `output_field` / `name` keywords use the same
+  defaults as the DSL constructor
 - `Reduce` prompt lists may only use `Record[...]` inside `ForEach([...])`
 - `VideoMap` and `VideoMapEach` require literal `video_field`, `views_field`,
   and `group_by` keyword arguments
 - prompt-backed video maps require `schema=...`; joint `VideoMap` is
   prompt-only, while `VideoMapEach` may also use an imported UDF
 
-`Window`, `Coalesce`, and `Detect` are internal or
-programmatic-only operators; the restricted source parser does not accept
-them. `VideoMap` and `VideoMapEach` are the source-visible logical interface
-to that physical pipeline.
+`Window` and `Coalesce` are internal or programmatic-only operators; the
+restricted source parser does not accept them. `Detect` is source-visible and
+round-trips through parse/render. `VideoMap` and `VideoMapEach` are the
+source-visible logical interface to the window/coalesce physical pipeline.
 
 The canonical output variable is the last assignment in the file.
 
@@ -224,8 +227,8 @@ Normalization behavior:
 This is semantic round-tripping, not source-fidelity round-tripping. Comments, whitespace, and original local variable names are not preserved unless they naturally match the normalized output.
 
 Logical `VideoMap` and `VideoMapEach` plans render to normalized Python.
-Physical `Window`, `Coalesce`, and `Detect` plans are not
-source-renderable.
+`Detect` also renders and parses as source-visible DSL. Physical `Window` and
+`Coalesce` plans are not source-renderable.
 
 ### Execution
 
@@ -371,7 +374,7 @@ Design rules:
 ```
 
 - the OpenCV/NumPy stack (and, at run time, `torch`/`ultralytics`) is imported **lazily**: `mmds.execution` imports `.ops.detect` only when a `detect` node actually executes, and `mmds.VideoView` is a lazy export via module `__getattr__`. This keeps `import mmds` and the prompt/UDF execution paths usable without the heavy CV/ML dependencies installed.
-- `Detect` is **not** parsed from or rendered back to DSL text (it is for internal/programmatic use only)
+- `Detect` is parsed from and rendered back to DSL text (`Detect(data, video_field, classes, *, model=..., output_field=..., name=...)`) so rewrite directives can insert it while preserving render/parse round trips
 
 ### UDF Contract
 
@@ -478,6 +481,11 @@ parameters.
   materializes a boolean keep flag plus a non-LLM `Filter(..., Record[flag])`
   field predicate. When the Filter already sits on a prompt Map, `map_schema`
   must preserve that Map's declared schema.
+- `DetectGateBeforeMap` inserts `Detect` (YOLOE) and
+  `Filter(keep_rows_with_detections)` before a prompt-backed `Map` that reads
+  a video field, so empty detections are pruned before the VLM call. The Map
+  prompt and schema are preserved. Classes are model-chosen; the keep UDF is
+  fixed and uses the default `detections` output field.
 - `JointTemporalPushdown` replaces a video `Map` with a transcript candidate
   `Map` followed by logical `VideoMap`. The final prompt sees all coalesced
   candidate views for a group and runs once.
@@ -589,9 +597,10 @@ The current suite covers:
 - typed rewrite paths, structural indexing, immutable subtree replacement,
   directive parameter validation, and rewrite structural invariants
 - deterministic modality-substitution, prompt-field pruning, boolean-map code
-  filter, and joint/per-view temporal-pushdown directives, including plan-shape
-  and end-to-end execution tests
+  filter, detect-gate-before-map, and joint/per-view temporal-pushdown
+  directives, including plan-shape and end-to-end execution tests
 - `Filter(..., Record["field"])` field-predicate parse/render/execute round trips
+- `Detect(...)` parse/render round trips
 - value-free rewrite context, sequential model selection/parameter calls,
   response validation, null selection, and the Gemini adapter
 - `Detect` behavior, including `VideoView` clip slicing and absolute-frame detection indices

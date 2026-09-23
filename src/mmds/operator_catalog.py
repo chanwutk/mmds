@@ -20,7 +20,7 @@ OPERATOR_DEFINITIONS: tuple[OperatorDefinition, ...] = (
     OperatorDefinition("Unnest", "unnest"),
     OperatorDefinition("VideoMap", "video_map"),
     OperatorDefinition("VideoMapEach", "video_map_each"),
-    OperatorDefinition("Detect", "detect", source_visible=False),
+    OperatorDefinition("Detect", "detect"),
     OperatorDefinition("Window", "window", source_visible=False),
     OperatorDefinition("Coalesce", "coalesce", source_visible=False),
 )
