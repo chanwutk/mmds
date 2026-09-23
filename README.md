@@ -188,8 +188,8 @@ Components (all under [`src/mmds/`](src/mmds/)):
   into `Unnest`, `Window`, `Coalesce`, and `Map`/`Reduce`.
 - **`optimizers/rewriter/`** — immutable path/index primitives and typed
   directive application. Its deterministic video directives support modality
-  substitution, prompt-field pruning, and transcript-guided joint or per-view
-  video processing. The
+  substitution, prompt-field pruning, boolean-map code filters, and
+  transcript-guided joint or per-view video processing. The
   minimal automatic engine uses one model call to select an offered rewrite
   and a second call to fill its validated parameters; `rule.py` provides
   conservative canonicalization and `agent.py` is the legacy whole-query LLM

@@ -8,6 +8,7 @@ from .dsl import ForEach
 from .model import (
     Assignment,
     DatasetExpr,
+    FieldPredicateSpec,
     JsonValue,
     MMDSValidationError,
     PromptSpec,
@@ -238,13 +239,27 @@ def _parse_spec(
     udf_imports: dict[str, UdfSpec],
     *,
     schema_node: ast.AST | None,
-) -> PromptSpec | UdfSpec:
+) -> PromptSpec | UdfSpec | FieldPredicateSpec:
     schema = _parse_schema(schema_node)
 
     if isinstance(node, ast.Name) and node.id in udf_imports:
         if schema is not None:
             raise MMDSValidationError("schema= is only valid for prompt-backed operators.")
         return udf_imports[node.id]
+
+    record_ref = _parse_record_ref(node)
+    if record_ref is not None:
+        if op_kind != "filter":
+            raise MMDSValidationError(
+                "Bare Record[...] field predicates are only valid for Filter."
+            )
+        if schema is not None:
+            raise MMDSValidationError("schema= is only valid for prompt-backed operators.")
+        if len(record_ref.path) != 1:
+            raise MMDSValidationError(
+                "Filter field predicates require a single top-level Record[field]."
+            )
+        return FieldPredicateSpec(field=record_ref.path[0])
 
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
         if op_kind in {"map", "reduce"} and schema is None:
@@ -260,7 +275,8 @@ def _parse_spec(
         return PromptSpec(parts=parts, output_schema=schema)
 
     raise MMDSValidationError(
-        "Operator semantic specs must be prompt strings, prompt-part lists, or imported UDF names."
+        "Operator semantic specs must be prompt strings, prompt-part lists, "
+        "imported UDF names, or Filter Record[field] predicates."
     )
 
 

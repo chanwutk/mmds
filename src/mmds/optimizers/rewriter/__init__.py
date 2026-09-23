@@ -11,6 +11,8 @@ from .context import build_rewrite_context
 from .errors import MMDSRewriteError
 from .engine import RewriteResult, rewrite_once
 from .directives import (
+    BooleanMapCodeFilter,
+    BooleanMapCodeFilterParams,
     JointTemporalPushdown,
     ModalitySubstitution,
     ModalitySubstitutionParams,
@@ -25,6 +27,8 @@ from .selector import (
 )
 
 __all__ = [
+    "BooleanMapCodeFilter",
+    "BooleanMapCodeFilterParams",
     "DirectiveMetadata",
     "GeminiRewriteModel",
     "JointTemporalPushdown",

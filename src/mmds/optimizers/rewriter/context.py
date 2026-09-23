@@ -7,6 +7,7 @@ from typing import Any, Mapping
 from ...model import (
     DatasetExpr,
     DetectSpec,
+    FieldPredicateSpec,
     ForEachPrompt,
     PromptPart,
     PromptSpec,
@@ -81,6 +82,8 @@ def _summarize_node(node: DatasetExpr, *, path: str) -> dict[str, Any]:
         summary["output_schema"] = spec.output_schema
     elif isinstance(spec, UdfSpec):
         summary["udf"] = f"{spec.module}.{spec.name}"
+    elif isinstance(spec, FieldPredicateSpec):
+        summary["field_predicate"] = spec.field
     elif isinstance(spec, DetectSpec):
         summary["detect"] = {
             "video_field": spec.video_field,
@@ -134,6 +137,8 @@ def _referenced_fields(index: PlanIndex) -> frozenset[str]:
         spec = node.spec
         if isinstance(spec, PromptSpec):
             fields.update(_prompt_fields(spec))
+        elif isinstance(spec, FieldPredicateSpec):
+            fields.add(spec.field)
         elif isinstance(spec, DetectSpec):
             fields.add(spec.video_field)
         elif isinstance(spec, WindowSpec):

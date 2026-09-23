@@ -8,6 +8,7 @@ from typing import Any
 from .model import (
     Assignment,
     DatasetExpr,
+    FieldPredicateSpec,
     ForEachPrompt,
     JsonValue,
     PromptSpec,
@@ -109,7 +110,11 @@ def _render_expr(expr: DatasetExpr, node_names: dict[DatasetExpr, str]) -> str:
     raise ValueError(f"Unsupported operator kind {expr.kind!r}.")
 
 
-def _render_spec(spec: PromptSpec | UdfSpec | None, *, include_schema: bool) -> str:
+def _render_spec(
+    spec: PromptSpec | UdfSpec | FieldPredicateSpec | None,
+    *,
+    include_schema: bool,
+) -> str:
     if isinstance(spec, PromptSpec):
         prompt = _render_prompt_spec(spec)
         if include_schema:
@@ -119,7 +124,9 @@ def _render_spec(spec: PromptSpec | UdfSpec | None, *, include_schema: bool) -> 
         return prompt
     if isinstance(spec, UdfSpec):
         return spec.name
-    raise ValueError("Expected a prompt or UDF spec.")
+    if isinstance(spec, FieldPredicateSpec):
+        return _render_prompt_part(RecordPath((spec.field,)))
+    raise ValueError("Expected a prompt, UDF, or field-predicate spec.")
 
 
 def _render_prompt_spec(spec: PromptSpec) -> str:
@@ -162,6 +169,8 @@ def _used_prompt_helpers(program: QueryProgram) -> list[str]:
         spec = assignment.expr.spec
         if isinstance(spec, PromptSpec):
             inspect(spec.parts)
+        elif isinstance(spec, FieldPredicateSpec):
+            uses_record = True
         elif isinstance(spec, VideoMapSpec) and isinstance(
             spec.map_spec, PromptSpec
         ):

@@ -99,6 +99,20 @@ class UdfSpec:
 
 
 @dataclass(frozen=True)
+class FieldPredicateSpec:
+    """Code filter that keeps rows where one top-level field is truthy."""
+
+    field: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.field, str) or not self.field.strip():
+            raise MMDSValidationError(
+                "FieldPredicateSpec field must be a non-empty string."
+            )
+        object.__setattr__(self, "field", self.field.strip())
+
+
+@dataclass(frozen=True)
 class DetectSpec:
     """Spec for the Detect operator: runs YOLOE on every frame of a video field."""
 
@@ -253,6 +267,7 @@ class VideoMapSpec:
 SemanticSpec: TypeAlias = (
     PromptSpec
     | UdfSpec
+    | FieldPredicateSpec
     | DetectSpec
     | WindowSpec
     | VideoMapSpec

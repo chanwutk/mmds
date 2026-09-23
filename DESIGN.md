@@ -108,6 +108,8 @@ The core model lives in [src/mmds/model.py](/Users/chanwutk/Documents/mmds/src/m
 - `ForEachPrompt` represents repeated prompt expansion over grouped records.
 - `ResolvedPrompt` is the execution-time prompt after all `Record[...]` references are resolved against data.
 - `UdfSpec` stores a stable import path for a UDF.
+- `FieldPredicateSpec` stores a top-level field name for a non-LLM `Filter`
+  that keeps rows where that field is truthy (`Filter(..., Record["flag"])`).
 - `DetectSpec` stores the parameters for a `Detect` node: `video_field`, `classes`, `model`, `output_field`.
 - `WindowSpec` stores the parameters for a `Window` node: `video_field`,
   `candidate_field`, `output_field`, and `padding_time`.
@@ -179,6 +181,7 @@ Parser rules:
   - a prompt string
   - a prompt-part list
   - an imported UDF name
+  - for `Filter` only: a bare top-level `Record["field"]` field predicate
 - UDF import aliasing is rejected
 - only absolute imports are allowed
 - `Input(...)` must be a string literal ending in `.json` or `.jsonl`
@@ -186,6 +189,7 @@ Parser rules:
 - `Unnest.keep_empty` must be a literal boolean
 - `Map` and `Reduce` prompt specs must include `schema={...}` as an output field map
 - `Filter` does not accept `schema=`
+- `Filter` field predicates must be a single top-level `Record["field"]`
 - `Reduce` prompt lists may only use `Record[...]` inside `ForEach([...])`
 - `VideoMap` and `VideoMapEach` require literal `video_field`, `views_field`,
   and `group_by` keyword arguments
@@ -238,7 +242,7 @@ Operator semantics:
 
 - `Input(path)`: reads rows from the referenced `.json` or `.jsonl` file
 - `Map`: applies prompt/UDF to one row and merges returned fields into that row
-- `Filter`: applies prompt/UDF to one row and keeps rows whose result is truthy
+- `Filter`: applies prompt/UDF/field-predicate to one row and keeps rows whose result is truthy; `Filter(..., Record["field"])` is a non-LLM predicate on a top-level row field
 - `Reduce`: groups rows by the configured fields, calls the reducer once per group, and merges returned aggregate fields with the group key fields
 - `Unnest`: expands one field; lists and tuples explode into multiple rows, scalars pass through unchanged, and missing/empty values produce no row unless `keep_empty=True`
 - `Detect`: reads the video pointed to by `video_field`; if the value is a `VideoView`-shaped dict with `start`/`end`, wraps the source in a `VideoView`, runs YOLOE detection on the selected frames, and merges a detection list with absolute source-video `frame_idx` values into `output_field`
@@ -470,6 +474,10 @@ parameters.
   references from a prompt-backed `Map` and replaces the instruction. It
   requires every listed drop field to be directly referenced, leaves at least
   one remaining `Record` reference, and rejects nested drop targets.
+- `BooleanMapCodeFilter` replaces a prompt-backed `Filter` with a Map that
+  materializes a boolean keep flag plus a non-LLM `Filter(..., Record[flag])`
+  field predicate. When the Filter already sits on a prompt Map, `map_schema`
+  must preserve that Map's declared schema.
 - `JointTemporalPushdown` replaces a video `Map` with a transcript candidate
   `Map` followed by logical `VideoMap`. The final prompt sees all coalesced
   candidate views for a group and runs once.
@@ -580,9 +588,10 @@ The current suite covers:
   lowering, joint/per-view execution, coalescing, and empty candidates
 - typed rewrite paths, structural indexing, immutable subtree replacement,
   directive parameter validation, and rewrite structural invariants
-- deterministic modality-substitution, prompt-field pruning, and joint/per-view
-  temporal-pushdown directives, including plan-shape and end-to-end execution
-  tests
+- deterministic modality-substitution, prompt-field pruning, boolean-map code
+  filter, and joint/per-view temporal-pushdown directives, including plan-shape
+  and end-to-end execution tests
+- `Filter(..., Record["field"])` field-predicate parse/render/execute round trips
 - value-free rewrite context, sequential model selection/parameter calls,
   response validation, null selection, and the Gemini adapter
 - `Detect` behavior, including `VideoView` clip slicing and absolute-frame detection indices
