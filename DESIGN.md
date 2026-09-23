@@ -466,6 +466,10 @@ parameters.
 - `ModalitySubstitution` rewrites a direct `Record[video_field]` reference in
   one prompt-backed `Map` to `Record[transcript_field]` and uses a generated
   replacement instruction.
+- `PromptFieldPruning` removes one or more unused top-level `Record[...]`
+  references from a prompt-backed `Map` and replaces the instruction. It
+  requires every listed drop field to be directly referenced, leaves at least
+  one remaining `Record` reference, and rejects nested drop targets.
 - `JointTemporalPushdown` replaces a video `Map` with a transcript candidate
   `Map` followed by logical `VideoMap`. The final prompt sees all coalesced
   candidate views for a group and runs once.
@@ -484,13 +488,12 @@ The internal candidate field is reserved as `_mmds_candidate_views`.
 Generated `rewritten_prompt`/`video_prompt` parameters replace the original
 literal instruction instead of merely prepending to it. This prevents stale
 phrases such as "complete video" or "absolute time" from contradicting a
-transcript-only or per-view rewrite. Structured `Record[...]` references are
-rebuilt deterministically by the directive.
+transcript-only, field-pruned, or per-view rewrite. Structured `Record[...]`
+references are rebuilt deterministically by the directive.
 
 Directive matching is intentionally broader than parameter validation:
 `find_matches()` offers prompt-backed `Map` locations, then `apply_rewrite()`
-validates the chosen video, transcript, and query fields before changing the
-plan.
+validates the chosen fields before changing the plan.
 
 #### Automatic Rewrite Flow
 
@@ -577,8 +580,9 @@ The current suite covers:
   lowering, joint/per-view execution, coalescing, and empty candidates
 - typed rewrite paths, structural indexing, immutable subtree replacement,
   directive parameter validation, and rewrite structural invariants
-- deterministic modality-substitution and joint/per-view temporal-pushdown
-  directives, including plan-shape and end-to-end execution tests
+- deterministic modality-substitution, prompt-field pruning, and joint/per-view
+  temporal-pushdown directives, including plan-shape and end-to-end execution
+  tests
 - value-free rewrite context, sequential model selection/parameter calls,
   response validation, null selection, and the Gemini adapter
 - `Detect` behavior, including `VideoView` clip slicing and absolute-frame detection indices

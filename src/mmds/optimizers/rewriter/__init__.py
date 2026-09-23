@@ -15,6 +15,8 @@ from .directives import (
     ModalitySubstitution,
     ModalitySubstitutionParams,
     PerViewTemporalPushdown,
+    PromptFieldPruning,
+    PromptFieldPruningParams,
     TemporalPushdownParams,
 )
 from .validation import validate_rewrite_structure
@@ -32,6 +34,8 @@ __all__ = [
     "NodePath",
     "PlanEntry",
     "PlanIndex",
+    "PromptFieldPruning",
+    "PromptFieldPruningParams",
     "RewriteDirective",
     "RewriteMatch",
     "RewriteResult",
