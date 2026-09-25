@@ -141,3 +141,64 @@ def keep_rows_with_detections(row: dict[str, Any]) -> bool:
         if isinstance(item, dict) and item.get("bboxes"):
             return True
     return False
+
+
+_VIEWS_FIELD = "_mmds_candidate_views"
+_DEFAULT_FPS = 30.0
+
+
+def detections_to_candidate_views(row: dict[str, Any]) -> dict[str, Any]:
+    """Convert Detect boxes into ``_mmds_candidate_views`` time intervals.
+
+    Each kept box at absolute ``frame_idx`` becomes the half-open source-time
+    window ``[frame_idx / fps, (frame_idx + 1) / fps)``. ``fps`` is taken from
+    ``row["_mmds_video_fps"]`` (written by Detect), then from a video-shaped
+    field's ``fps`` entry, else ``30.0``.
+
+    Isolated hits stay one-frame-wide; ``VideoMap``/``Window`` padding is what
+    bridges gaps before ``Coalesce`` merges overlapping views.
+    """
+    fps = _resolve_detection_fps(row)
+    frame_indices: set[int] = set()
+    detections = row.get("detections")
+    if isinstance(detections, list):
+        for item in detections:
+            if not isinstance(item, dict):
+                continue
+            bboxes = item.get("bboxes")
+            if not isinstance(bboxes, list):
+                continue
+            for bbox in bboxes:
+                if not isinstance(bbox, dict):
+                    continue
+                frame_idx = bbox.get("frame_idx")
+                if isinstance(frame_idx, bool) or not isinstance(frame_idx, (int, float)):
+                    continue
+                if frame_idx < 0:
+                    continue
+                frame_indices.add(int(frame_idx))
+
+    views = [
+        {"start": index / fps, "end": (index + 1) / fps}
+        for index in sorted(frame_indices)
+    ]
+    return {_VIEWS_FIELD: views}
+
+
+def _resolve_detection_fps(row: dict[str, Any]) -> float:
+    explicit = row.get("_mmds_video_fps")
+    if (
+        isinstance(explicit, (int, float))
+        and not isinstance(explicit, bool)
+        and explicit > 0
+    ):
+        return float(explicit)
+
+    for value in row.values():
+        if not isinstance(value, dict):
+            continue
+        fps = value.get("fps")
+        if isinstance(fps, (int, float)) and not isinstance(fps, bool) and fps > 0:
+            return float(fps)
+
+    return _DEFAULT_FPS

@@ -117,10 +117,18 @@ def _apply_detect(node: DatasetExpr, row: Row) -> Row:
         if start is not None and end is not None:
             iterable = VideoView(video, float(start), float(end))
 
-    detections = _detect_in_video(iterable, list(spec.classes), spec.model)
+    detections = _detect_in_video(
+        iterable,
+        list(spec.classes),
+        spec.model,
+        conf=spec.conf,
+    )
 
     result = dict(row)
     result[spec.output_field] = detections
+    fps = float(getattr(iterable, "fps", 0.0) or 0.0)
+    if fps > 0:
+        result["_mmds_video_fps"] = fps
     return result
 
 
@@ -128,6 +136,8 @@ def _detect_in_video(
     video: Video | VideoView,
     classes: list[str],
     model_name: str,
+    *,
+    conf: float | None = None,
 ) -> list[dict[str, Any]]:
     """Run detection on every frame and group bboxes by detected class.
 
@@ -147,12 +157,15 @@ def _detect_in_video(
         model.set_classes(classes, text_pe)
 
     base_frame_idx = video.start_frame if isinstance(video, VideoView) else 0
+    predict_kwargs: dict[str, Any] = {"verbose": False, "device": _get_device()}
+    if conf is not None:
+        predict_kwargs["conf"] = conf
 
     by_class: dict[str, list[dict[str, Any]]] = {}
     for relative_frame_idx, frame in enumerate(video):
         frame_idx = base_frame_idx + relative_frame_idx
         with _model_lock:
-            results = model.predict(frame, verbose=False, device=_get_device())
+            results = model.predict(frame, **predict_kwargs)
         for result in results:
             boxes = result.boxes
             if boxes is None:

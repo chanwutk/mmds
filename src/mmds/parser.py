@@ -8,6 +8,8 @@ from .dsl import ForEach
 from .model import (
     Assignment,
     DatasetExpr,
+    DetectSpec,
+    FieldPredicateSpec,
     JsonValue,
     MMDSValidationError,
     PromptSpec,
@@ -164,6 +166,41 @@ def _parse_call(
             name=_parse_optional_name(keywords),
         )
 
+    if operator == "Detect":
+        allowed = {"model", "output_field", "conf", "name"}
+        _expect_args(operator, node.args, 3, keywords, allowed_keywords=allowed)
+        classes_node = node.args[2]
+        if not isinstance(classes_node, (ast.List, ast.Tuple)):
+            raise MMDSValidationError(
+                "Detect classes must be a list or tuple of string literals."
+            )
+        classes = tuple(
+            _parse_string(element, "Detect class") for element in classes_node.elts
+        )
+        conf = None
+        if "conf" in keywords:
+            conf = _parse_number(keywords["conf"], "Detect conf", default=0.0)
+        return DatasetExpr(
+            kind="detect",
+            source=_parse_source(node.args[0], bindings),
+            spec=DetectSpec(
+                video_field=_parse_string(node.args[1], "Detect video_field"),
+                classes=classes,
+                model=(
+                    _parse_string(keywords["model"], "Detect model")
+                    if "model" in keywords
+                    else "yoloe-11s-seg.pt"
+                ),
+                output_field=(
+                    _parse_string(keywords["output_field"], "Detect output_field")
+                    if "output_field" in keywords
+                    else "detections"
+                ),
+                conf=conf if "conf" in keywords else None,
+            ),
+            name=_parse_optional_name(keywords),
+        )
+
     if operator in {"VideoMap", "VideoMapEach"}:
         allowed = {
             "video_field",
@@ -238,13 +275,27 @@ def _parse_spec(
     udf_imports: dict[str, UdfSpec],
     *,
     schema_node: ast.AST | None,
-) -> PromptSpec | UdfSpec:
+) -> PromptSpec | UdfSpec | FieldPredicateSpec:
     schema = _parse_schema(schema_node)
 
     if isinstance(node, ast.Name) and node.id in udf_imports:
         if schema is not None:
             raise MMDSValidationError("schema= is only valid for prompt-backed operators.")
         return udf_imports[node.id]
+
+    record_ref = _parse_record_ref(node)
+    if record_ref is not None:
+        if op_kind != "filter":
+            raise MMDSValidationError(
+                "Bare Record[...] field predicates are only valid for Filter."
+            )
+        if schema is not None:
+            raise MMDSValidationError("schema= is only valid for prompt-backed operators.")
+        if len(record_ref.path) != 1:
+            raise MMDSValidationError(
+                "Filter field predicates require a single top-level Record[field]."
+            )
+        return FieldPredicateSpec(field=record_ref.path[0])
 
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
         if op_kind in {"map", "reduce"} and schema is None:
@@ -260,7 +311,8 @@ def _parse_spec(
         return PromptSpec(parts=parts, output_schema=schema)
 
     raise MMDSValidationError(
-        "Operator semantic specs must be prompt strings, prompt-part lists, or imported UDF names."
+        "Operator semantic specs must be prompt strings, prompt-part lists, "
+        "imported UDF names, or Filter Record[field] predicates."
     )
 
 

@@ -99,6 +99,20 @@ class UdfSpec:
 
 
 @dataclass(frozen=True)
+class FieldPredicateSpec:
+    """Code filter that keeps rows where one top-level field is truthy."""
+
+    field: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.field, str) or not self.field.strip():
+            raise MMDSValidationError(
+                "FieldPredicateSpec field must be a non-empty string."
+            )
+        object.__setattr__(self, "field", self.field.strip())
+
+
+@dataclass(frozen=True)
 class DetectSpec:
     """Spec for the Detect operator: runs YOLOE on every frame of a video field."""
 
@@ -106,6 +120,7 @@ class DetectSpec:
     classes: tuple[str, ...]
     model: str = "yoloe-11s-seg.pt"
     output_field: str = "detections"
+    conf: float | None = None
 
     def __post_init__(self) -> None:
         if not self.video_field:
@@ -124,6 +139,17 @@ class DetectSpec:
             raise MMDSValidationError(
                 "DetectSpec output_field must be a non-empty string."
             )
+        if self.conf is not None:
+            if (
+                not isinstance(self.conf, (int, float))
+                or isinstance(self.conf, bool)
+                or not isfinite(self.conf)
+                or not (0.0 <= float(self.conf) <= 1.0)
+            ):
+                raise MMDSValidationError(
+                    "DetectSpec conf must be a finite number in [0, 1]."
+                )
+            object.__setattr__(self, "conf", float(self.conf))
 
 
 @dataclass(frozen=True)
@@ -253,6 +279,7 @@ class VideoMapSpec:
 SemanticSpec: TypeAlias = (
     PromptSpec
     | UdfSpec
+    | FieldPredicateSpec
     | DetectSpec
     | WindowSpec
     | VideoMapSpec

@@ -7,6 +7,7 @@ from typing import Any, Callable, TypeAlias
 from .model import (
     DatasetExpr,
     DetectSpec,
+    FieldPredicateSpec,
     ForEachPrompt,
     JsonValue,
     MMDSValidationError,
@@ -50,14 +51,14 @@ def Map(
 
 def Filter(
     data: DatasetExpr,
-    spec: str | Sequence[PromptInputPart] | Callable[..., Any],
+    spec: str | Sequence[PromptInputPart] | Callable[..., Any] | RecordPath,
     *,
     name: str | None = None,
 ) -> DatasetExpr:
     return DatasetExpr(
         kind="filter",
         source=_normalize_source(data),
-        spec=_normalize_spec(spec, op_kind="filter", schema=None),
+        spec=_normalize_filter_spec(spec),
         name=name,
     )
 
@@ -104,6 +105,7 @@ def Detect(
     *,
     model: str = "yoloe-11s-seg.pt",
     output_field: str = "detections",
+    conf: float | None = None,
     name: str | None = None,
 ) -> DatasetExpr:
     """Run YOLOE object detection on every frame of a video field.
@@ -117,6 +119,7 @@ def Detect(
         model: YOLOE weights file.  Defaults to ``"yoloe-11s-seg.pt"``.
         output_field: Name of the output field that receives the detection
             list.  Defaults to ``"detections"``.
+        conf: Optional minimum confidence in ``[0, 1]`` forwarded to YOLOE.
         name: Optional operator label.
 
     The output field contains a list of objects, one per detected class::
@@ -141,6 +144,7 @@ def Detect(
             classes=tuple(classes),
             model=model,
             output_field=output_field,
+            conf=conf,
         ),
         name=name,
     )
@@ -312,6 +316,18 @@ def _normalize_source(data: DatasetExpr) -> DatasetExpr:
 def _validate_input_path(path: str) -> None:
     if not (path.endswith(".json") or path.endswith(".jsonl")):
         raise TypeError("Input paths must point to .json or .jsonl files.")
+
+
+def _normalize_filter_spec(
+    spec: str | Sequence[PromptInputPart] | Callable[..., Any] | RecordPath,
+) -> SemanticSpec:
+    if isinstance(spec, RecordPath):
+        if spec.is_root() or len(spec.path) != 1:
+            raise MMDSValidationError(
+                "Filter field predicates require a single top-level Record[field]."
+            )
+        return FieldPredicateSpec(field=spec.path[0])
+    return _normalize_spec(spec, op_kind="filter", schema=None)
 
 
 def _normalize_spec(

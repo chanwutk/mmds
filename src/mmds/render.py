@@ -8,6 +8,8 @@ from typing import Any
 from .model import (
     Assignment,
     DatasetExpr,
+    DetectSpec,
+    FieldPredicateSpec,
     ForEachPrompt,
     JsonValue,
     PromptSpec,
@@ -91,6 +93,23 @@ def _render_expr(expr: DatasetExpr, node_names: dict[DatasetExpr, str]) -> str:
         if expr.name is not None:
             flags.append(f"name={_quote(expr.name)}")
         return f"Unnest({source_name}, {', '.join(flags)})"
+    if expr.kind == "detect":
+        if not isinstance(expr.spec, DetectSpec):
+            raise ValueError("Detect nodes require a DetectSpec.")
+        args = [
+            source_name,
+            _quote(expr.spec.video_field),
+            _render_literal(list(expr.spec.classes)),
+        ]
+        if expr.spec.model != "yoloe-11s-seg.pt":
+            args.append(f"model={_quote(expr.spec.model)}")
+        if expr.spec.output_field != "detections":
+            args.append(f"output_field={_quote(expr.spec.output_field)}")
+        if expr.spec.conf is not None:
+            args.append(f"conf={expr.spec.conf!r}")
+        if expr.name is not None:
+            args.append(f"name={_quote(expr.name)}")
+        return f"Detect({', '.join(args)})"
     if expr.kind in {"video_map", "video_map_each"}:
         if not isinstance(expr.spec, VideoMapSpec):
             raise ValueError("VideoMap nodes require a VideoMapSpec.")
@@ -109,7 +128,11 @@ def _render_expr(expr: DatasetExpr, node_names: dict[DatasetExpr, str]) -> str:
     raise ValueError(f"Unsupported operator kind {expr.kind!r}.")
 
 
-def _render_spec(spec: PromptSpec | UdfSpec | None, *, include_schema: bool) -> str:
+def _render_spec(
+    spec: PromptSpec | UdfSpec | FieldPredicateSpec | None,
+    *,
+    include_schema: bool,
+) -> str:
     if isinstance(spec, PromptSpec):
         prompt = _render_prompt_spec(spec)
         if include_schema:
@@ -119,7 +142,9 @@ def _render_spec(spec: PromptSpec | UdfSpec | None, *, include_schema: bool) -> 
         return prompt
     if isinstance(spec, UdfSpec):
         return spec.name
-    raise ValueError("Expected a prompt or UDF spec.")
+    if isinstance(spec, FieldPredicateSpec):
+        return _render_prompt_part(RecordPath((spec.field,)))
+    raise ValueError("Expected a prompt, UDF, or field-predicate spec.")
 
 
 def _render_prompt_spec(spec: PromptSpec) -> str:
@@ -162,6 +187,8 @@ def _used_prompt_helpers(program: QueryProgram) -> list[str]:
         spec = assignment.expr.spec
         if isinstance(spec, PromptSpec):
             inspect(spec.parts)
+        elif isinstance(spec, FieldPredicateSpec):
+            uses_record = True
         elif isinstance(spec, VideoMapSpec) and isinstance(
             spec.map_spec, PromptSpec
         ):
