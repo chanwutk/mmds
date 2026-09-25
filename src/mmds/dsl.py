@@ -105,6 +105,7 @@ def Detect(
     *,
     model: str = "yoloe-11s-seg.pt",
     output_field: str = "detections",
+    conf: float | None = None,
     name: str | None = None,
 ) -> DatasetExpr:
     """Run YOLOE object detection on every frame of a video field.
@@ -118,6 +119,7 @@ def Detect(
         model: YOLOE weights file.  Defaults to ``"yoloe-11s-seg.pt"``.
         output_field: Name of the output field that receives the detection
             list.  Defaults to ``"detections"``.
+        conf: Optional minimum confidence in ``[0, 1]`` forwarded to YOLOE.
         name: Optional operator label.
 
     The output field contains a list of objects, one per detected class::
@@ -142,6 +144,7 @@ def Detect(
             classes=tuple(classes),
             model=model,
             output_field=output_field,
+            conf=conf,
         ),
         name=name,
     )

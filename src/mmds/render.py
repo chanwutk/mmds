@@ -105,6 +105,8 @@ def _render_expr(expr: DatasetExpr, node_names: dict[DatasetExpr, str]) -> str:
             args.append(f"model={_quote(expr.spec.model)}")
         if expr.spec.output_field != "detections":
             args.append(f"output_field={_quote(expr.spec.output_field)}")
+        if expr.spec.conf is not None:
+            args.append(f"conf={expr.spec.conf!r}")
         if expr.name is not None:
             args.append(f"name={_quote(expr.name)}")
         return f"Detect({', '.join(args)})"

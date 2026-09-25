@@ -189,7 +189,8 @@ Components (all under [`src/mmds/`](src/mmds/)):
 - **`optimizers/rewriter/`** — immutable path/index primitives and typed
   directive application. Its deterministic video directives support modality
   substitution, prompt-field pruning, boolean-map code filters, YOLOE detect
-  gates before Maps, and transcript-guided joint or per-view video processing.
+  gates and detected-frame windows before Maps, and transcript-guided joint or
+  per-view video processing.
   The
   minimal automatic engine uses one model call to select an offered rewrite
   and a second call to fill its validated parameters; `rule.py` provides

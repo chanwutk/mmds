@@ -167,7 +167,7 @@ def _parse_call(
         )
 
     if operator == "Detect":
-        allowed = {"model", "output_field", "name"}
+        allowed = {"model", "output_field", "conf", "name"}
         _expect_args(operator, node.args, 3, keywords, allowed_keywords=allowed)
         classes_node = node.args[2]
         if not isinstance(classes_node, (ast.List, ast.Tuple)):
@@ -177,6 +177,9 @@ def _parse_call(
         classes = tuple(
             _parse_string(element, "Detect class") for element in classes_node.elts
         )
+        conf = None
+        if "conf" in keywords:
+            conf = _parse_number(keywords["conf"], "Detect conf", default=0.0)
         return DatasetExpr(
             kind="detect",
             source=_parse_source(node.args[0], bindings),
@@ -193,6 +196,7 @@ def _parse_call(
                     if "output_field" in keywords
                     else "detections"
                 ),
+                conf=conf if "conf" in keywords else None,
             ),
             name=_parse_optional_name(keywords),
         )
