@@ -14,7 +14,7 @@ if str(SRC) not in sys.path:
 
 import numpy as np  # noqa: E402
 
-from mmds import Detect, Input  # noqa: E402
+from mmds import Detect, Input, parse_query, render_query  # noqa: E402
 from mmds.model import DatasetExpr, DetectSpec, MMDSValidationError  # noqa: E402
 from mmds.execution.ops.detect import (  # noqa: E402
     _apply_detect,
@@ -530,6 +530,170 @@ class DetectionOpsTests(unittest.TestCase):
             keep_other_classes=True,
         )
         self.assertEqual(pruned_high_generic, pruned_high)
+
+
+def _query(body: str, imports: str) -> str:
+    return f'from mmds import {imports}\n\nrows = Input("rows.jsonl")\n{body}\n'
+
+
+class DetectParseRenderTests(unittest.TestCase):
+    def _parse(self, body: str):
+        return parse_query(_query(body, "Input, Detect"))
+
+    def test_round_trips_all_keyword_arguments(self) -> None:
+        program = self._parse(
+            'output = Detect(rows, "video", ["dog", "cat"], model="m.pt", '
+            'output_field="hits", frame_stride=5, conf=0.4, imgsz=640, name="det")'
+        )
+        spec = program.output_expr.spec
+
+        self.assertEqual(spec.classes, ("dog", "cat"))
+        self.assertEqual(spec.model, "m.pt")
+        self.assertEqual(spec.output_field, "hits")
+        self.assertEqual(spec.frame_stride, 5)
+        self.assertEqual(spec.conf, 0.4)
+        self.assertEqual(spec.imgsz, 640)
+        self.assertEqual(program.output_expr.name, "det")
+        rendered = render_query(program)
+        self.assertEqual(parse_query(rendered).output_expr, program.output_expr)
+        self.assertEqual(render_query(parse_query(rendered)), rendered)
+
+    def test_defaults_are_omitted_when_rendering(self) -> None:
+        program = self._parse('output = Detect(rows, "video", ["dog"])')
+        spec = program.output_expr.spec
+
+        self.assertEqual((spec.frame_stride, spec.conf, spec.imgsz), (1, None, None))
+        self.assertIn('output = Detect(rows, "video", ["dog"])', render_query(program))
+
+    def test_explicit_none_conf_and_imgsz_are_accepted(self) -> None:
+        spec = self._parse(
+            'output = Detect(rows, "video", ["dog"], conf=None, imgsz=None)'
+        ).output_expr.spec
+
+        self.assertEqual((spec.conf, spec.imgsz), (None, None))
+
+    def test_rejects_invalid_arguments(self) -> None:
+        cases = {
+            "frame_stride zero": 'Detect(rows, "video", ["dog"], frame_stride=0)',
+            "frame_stride float": 'Detect(rows, "video", ["dog"], frame_stride=1.5)',
+            "frame_stride bool": 'Detect(rows, "video", ["dog"], frame_stride=True)',
+            "conf above one": 'Detect(rows, "video", ["dog"], conf=1.5)',
+            "conf negative": 'Detect(rows, "video", ["dog"], conf=-0.1)',
+            "conf bool": 'Detect(rows, "video", ["dog"], conf=True)',
+            "conf string": 'Detect(rows, "video", ["dog"], conf="0.5")',
+            "imgsz zero": 'Detect(rows, "video", ["dog"], imgsz=0)',
+            "imgsz float": 'Detect(rows, "video", ["dog"], imgsz=640.0)',
+            "empty classes": 'Detect(rows, "video", [])',
+            "non-literal classes": 'Detect(rows, "video", classes)',
+            "unknown keyword": 'Detect(rows, "video", ["dog"], fps=3)',
+            "missing classes": 'Detect(rows, "video")',
+        }
+        for label, call in cases.items():
+            with self.subTest(case=label):
+                with self.assertRaises(MMDSValidationError):
+                    self._parse(f"output = {call}")
+
+    def test_requires_detect_import(self) -> None:
+        with self.assertRaisesRegex(MMDSValidationError, "Detect must be imported"):
+            parse_query(_query('output = Detect(rows, "video", ["dog"])', "Input"))
+
+
+class DetectParamValidationTests(unittest.TestCase):
+    def test_dsl_rejects_invalid_params(self) -> None:
+        cases = {
+            "frame_stride zero": {"frame_stride": 0},
+            "frame_stride bool": {"frame_stride": True},
+            "conf above one": {"conf": 1.01},
+            "conf nan": {"conf": float("nan")},
+            "conf bool": {"conf": False},
+            "imgsz zero": {"imgsz": 0},
+            "imgsz float": {"imgsz": 32.0},
+        }
+        for label, kwargs in cases.items():
+            with self.subTest(case=label):
+                with self.assertRaises((TypeError, MMDSValidationError)):
+                    Detect(Input("clips.jsonl"), "video", ["dog"], **kwargs)
+
+    def test_spec_accepts_boundary_values(self) -> None:
+        for conf in (0.0, 1.0):
+            with self.subTest(conf=conf):
+                spec = DetectSpec(video_field="video", classes=("dog",), conf=conf)
+                self.assertEqual(spec.conf, conf)
+        spec = DetectSpec(video_field="video", classes=("dog",), frame_stride=1, imgsz=1)
+        self.assertEqual((spec.frame_stride, spec.imgsz), (1, 1))
+
+
+class DetectParamExecutionTests(unittest.TestCase):
+    def _run(self, num_frames: int, **kwargs):
+        frames = [np.zeros((48, 64, 3), dtype=np.uint8) for _ in range(num_frames)]
+        video = _make_video(num_frames=num_frames)
+        video.__iter__ = MagicMock(return_value=iter(frames))
+        mock_model = MagicMock()
+        mock_model.get_text_pe.return_value = MagicMock()
+        mock_model.predict.side_effect = lambda frame, **_: [
+            _make_yoloe_result(0, "dog", [0, 0, 10, 10], 0.9)
+        ]
+        with patch("mmds.execution.ops.detect._get_model", return_value=mock_model):
+            detections = _detect_in_video(video, ["dog"], "yoloe-11s-seg.pt", **kwargs)
+        return detections, mock_model
+
+    def test_frame_stride_runs_every_nth_frame_with_absolute_indices(self) -> None:
+        detections, model = self._run(7, frame_stride=3)
+
+        self.assertEqual(model.predict.call_count, 3)
+        self.assertEqual(
+            [bbox["frame_idx"] for bbox in detections[0]["bboxes"]],
+            [0, 3, 6],
+        )
+
+    def test_frame_stride_larger_than_video_runs_first_frame_only(self) -> None:
+        detections, model = self._run(3, frame_stride=10)
+
+        self.assertEqual(model.predict.call_count, 1)
+        self.assertEqual([bbox["frame_idx"] for bbox in detections[0]["bboxes"]], [0])
+
+    def test_conf_and_imgsz_are_forwarded_to_predict(self) -> None:
+        _, model = self._run(1, conf=0.25, imgsz=320)
+
+        kwargs = model.predict.call_args.kwargs
+        self.assertEqual(kwargs["conf"], 0.25)
+        self.assertEqual(kwargs["imgsz"], 320)
+
+    def test_unset_conf_and_imgsz_use_model_defaults(self) -> None:
+        _, model = self._run(1)
+
+        kwargs = model.predict.call_args.kwargs
+        self.assertNotIn("conf", kwargs)
+        self.assertNotIn("imgsz", kwargs)
+
+    def test_invalid_frame_stride_raises(self) -> None:
+        with self.assertRaises(MMDSValidationError):
+            self._run(1, frame_stride=0)
+
+    def test_apply_detect_forwards_spec_params(self) -> None:
+        source = DatasetExpr(kind="input", input_path="dummy.jsonl")
+        node = DatasetExpr(
+            kind="detect",
+            source=source,
+            spec=DetectSpec(
+                video_field="video",
+                classes=("dog",),
+                frame_stride=4,
+                conf=0.5,
+                imgsz=480,
+            ),
+        )
+
+        with patch("mmds.execution.ops.detect.open_video", return_value=_make_video()):
+            with patch(
+                "mmds.execution.ops.detect._detect_in_video", return_value=[]
+            ) as detect:
+                _apply_detect(node, {"video": "clip.mp4"})
+
+        self.assertEqual(
+            detect.call_args.kwargs,
+            {"frame_stride": 4, "conf": 0.5, "imgsz": 480},
+        )
 
 
 if __name__ == "__main__":
