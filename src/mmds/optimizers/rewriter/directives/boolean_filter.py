@@ -133,13 +133,17 @@ class BooleanMapCodeFilter:
 
         schema = normalize_output_schema(params.map_schema)
         assert schema is not None
-        map_paths = tuple(RecordPath((field,)) for field in schema)
-        map_spec = PromptSpec(
-            parts=prompt_from_fields(params.rewritten_map_prompt, map_paths),
-            output_schema=schema,
-        )
 
         source = node.source
+        input_paths = (
+            record_paths(source.spec.parts)
+            if source.kind == "map" and isinstance(source.spec, PromptSpec)
+            else record_paths(node.spec.parts)
+        )
+        map_spec = PromptSpec(
+            parts=prompt_from_fields(params.rewritten_map_prompt, input_paths),
+            output_schema=schema,
+        )
         if source.kind == "map" and isinstance(source.spec, PromptSpec):
             if source.spec.output_schema != schema:
                 raise MMDSRewriteError(
