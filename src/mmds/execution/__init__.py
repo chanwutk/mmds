@@ -42,7 +42,27 @@ def execute(
     from ..optimizers.lowering import lower_video_ops
 
     plan = lower_video_ops(plan)
-    return list(_execute_node(plan, prompt_executor, base_path=base_path))
+    parent_counts = _count_parents(plan)
+    cache: dict[int, list[Row]] = {}
+    return list(
+        _execute_node(
+            plan,
+            prompt_executor,
+            base_path=base_path,
+            parent_counts=parent_counts,
+            cache=cache,
+        )
+    )
+
+
+def _count_parents(plan: DatasetExpr) -> dict[int, int]:
+    """Return how many parent edges point at each node (by object identity)."""
+    counts: dict[int, int] = {}
+    for node in plan.walk_postorder():
+        for child in node.children():
+            child_id = id(child)
+            counts[child_id] = counts.get(child_id, 0) + 1
+    return counts
 
 
 def _execute_node(
@@ -50,6 +70,39 @@ def _execute_node(
     prompt_executor: PromptExecutor | None,
     *,
     base_path: Path | None,
+    parent_counts: dict[int, int],
+    cache: dict[int, list[Row]],
+) -> Iterator[Row]:
+    node_id = id(node)
+    cached = cache.get(node_id)
+    if cached is not None:
+        yield from cached
+        return
+
+    rows = _execute_node_uncached(
+        node,
+        prompt_executor,
+        base_path=base_path,
+        parent_counts=parent_counts,
+        cache=cache,
+    )
+    # Materialize only nodes with multiple parents so shared DAG upstreams
+    # (including Join(Filter(s), Map(s))) run once. Single-parent nodes stream.
+    if parent_counts.get(node_id, 0) > 1:
+        materialized = list(rows)
+        cache[node_id] = materialized
+        yield from materialized
+        return
+    yield from rows
+
+
+def _execute_node_uncached(
+    node: DatasetExpr,
+    prompt_executor: PromptExecutor | None,
+    *,
+    base_path: Path | None,
+    parent_counts: dict[int, int],
+    cache: dict[int, list[Row]],
 ) -> Iterator[Row]:
     if node.kind == "input":
         yield from _load_input_rows(node.input_path, base_path=base_path)
@@ -60,30 +113,38 @@ def _execute_node(
             raise MMDSValidationError("Join nodes require left and right sources.")
         from .ops.join import _apply_join
 
-        # If right source, execute subtree once and materialize
-        if node.source is node.right_source:
-            shared_rows = list(
-                _execute_node(node.source, prompt_executor, base_path=base_path)
-            )
-            left_rows = shared_rows
-            right_rows = shared_rows
-        else:
-            left_rows = _execute_node(
-                node.source, prompt_executor, base_path=base_path
-            )
-            right_rows = _execute_node(
-                node.right_source, prompt_executor, base_path=base_path
-            )
+        left_rows = _execute_node(
+            node.source,
+            prompt_executor,
+            base_path=base_path,
+            parent_counts=parent_counts,
+            cache=cache,
+        )
+        right_rows = _execute_node(
+            node.right_source,
+            prompt_executor,
+            base_path=base_path,
+            parent_counts=parent_counts,
+            cache=cache,
+        )
         yield from _apply_join(node, left_rows, right_rows)
         return
 
-    source = _execute_node(node.source, prompt_executor, base_path=base_path)
+    source = _execute_node(
+        node.source,
+        prompt_executor,
+        base_path=base_path,
+        parent_counts=parent_counts,
+        cache=cache,
+    )
     if node.kind == "map":
         with ThreadPoolExecutor() as ex:
             yield from ex.map(lambda row: _apply_map(node, row, prompt_executor), source)
     elif node.kind == "filter":
         with ThreadPoolExecutor() as ex:
-            for row, keep in ex.map(lambda r: (r, _apply_filter(node, r, prompt_executor)), source):
+            for row, keep in ex.map(
+                lambda r: (r, _apply_filter(node, r, prompt_executor)), source
+            ):
                 if keep:
                     yield row
     elif node.kind == "reduce":
@@ -124,13 +185,17 @@ def _load_json_rows(path: Path) -> list[Row]:
     except json.JSONDecodeError as exc:
         raise MMDSValidationError(f"Input file {str(path)!r} is not valid JSON.") from exc
     if not isinstance(payload, list):
-        raise MMDSValidationError(f"JSON input file {str(path)!r} must contain a top-level list of records.")
+        raise MMDSValidationError(
+            f"JSON input file {str(path)!r} must contain a top-level list of records."
+        )
     return [_coerce_row(item) for item in payload]
 
 
 def _load_jsonl_rows(path: Path) -> list[Row]:
     rows: list[Row] = []
-    for line_number, raw_line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+    for line_number, raw_line in enumerate(
+        path.read_text(encoding="utf-8").splitlines(), start=1
+    ):
         line = raw_line.strip()
         if not line:
             continue

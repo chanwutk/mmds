@@ -11,7 +11,7 @@ if str(ROOT) not in sys.path:
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from mmds.join.hash_join import hash_join, one_to_one_hash_join  # noqa: E402
+from mmds.join.hash_join import hash_join, join_hash_key, one_to_one_hash_join  # noqa: E402
 from mmds.model import MMDSValidationError  # noqa: E402
 from udfs.test_ops import (  # noqa: E402
     join_cross_camera_test_bucket,
@@ -130,6 +130,61 @@ class HashJoinTests(unittest.TestCase):
 
         self.assertEqual(pairs[0]["left"]["track_id"], "a")
         self.assertEqual(scored, [("a", "b")])
+
+    def test_null_keys_match_each_other(self) -> None:
+        pairs = list(
+            hash_join(
+                [{"id": None, "side": "left"}],
+                [{"id": None, "side": "right"}],
+                ("id",),
+            )
+        )
+        self.assertEqual(len(pairs), 1)
+
+    def test_numeric_bool_keys_match_under_python_equality(self) -> None:
+        pairs = list(
+            hash_join(
+                [{"id": 1, "side": "left"}],
+                [{"id": True, "side": "right"}, {"id": 1.0, "side": "right2"}],
+                ("id",),
+            )
+        )
+        self.assertEqual(
+            {pair["right"]["side"] for pair in pairs},
+            {"right", "right2"},
+        )
+
+    def test_join_hash_key_returns_none_for_missing_or_unhashable(self) -> None:
+        self.assertIsNone(join_hash_key({"a": 1}, ("missing",)))
+        self.assertIsNone(join_hash_key({"a": [1]}, ("a",)))
+        self.assertEqual(join_hash_key({"a": 1}, ("a",)), (1,))
+
+    def test_self_join_can_pair_a_row_with_itself(self) -> None:
+        row = {"id": "a", "camera_id": "cam"}
+        pairs = list(hash_join([row], [row], ("id",)))
+        self.assertEqual(len(pairs), 1)
+        self.assertEqual(pairs[0]["left"], row)
+        self.assertEqual(pairs[0]["right"], row)
+
+    def test_one_to_one_breaks_score_ties_by_input_order(self) -> None:
+        pairs = list(
+            one_to_one_hash_join(
+                [
+                    {"camera_id": "left", "track_id": "a", "bucket": "sedan"},
+                ],
+                [
+                    {"camera_id": "right", "track_id": "first", "bucket": "sedan"},
+                    {"camera_id": "right", "track_id": "second", "bucket": "sedan"},
+                ],
+                keys=("bucket",),
+                predicate=None,
+                score_fn=lambda _left, _right: 0.5,
+                left_key=("camera_id", "track_id"),
+                right_key=("camera_id", "track_id"),
+            )
+        )
+        self.assertEqual(len(pairs), 1)
+        self.assertEqual(pairs[0]["right"]["track_id"], "first")
 
 
 if __name__ == "__main__":

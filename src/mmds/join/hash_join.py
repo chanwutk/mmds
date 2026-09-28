@@ -13,7 +13,15 @@ JoinScore = Callable[[Row, Row], float]
 
 
 def join_hash_key(row: Row, keys: tuple[str, ...]) -> tuple[Any, ...] | None:
-    """Return a hashable key, or None for missing/unhashable fields."""
+    """Return a hashable key tuple, or None for missing/unhashable fields.
+
+    Matching semantics (intentionally not SQL NULL semantics):
+
+    - ``None`` values are included and compare equal, so null keys match.
+    - Values use Python hashing/equality (``1``, ``1.0``, and ``True`` match).
+    - Rows with a missing key field or an unhashable key value are skipped
+      silently by callers that drop a ``None`` result.
+    """
     values: list[Any] = []
     for key in keys:
         if key not in row:
@@ -90,7 +98,13 @@ def one_to_one_hash_join(
     right_key: tuple[str, ...],
     min_score: float | None = None,
 ) -> Iterator[Row]:
-    """Greedily select highest-scoring pairs with unique side identities."""
+    """Greedily select highest-scoring pairs with unique side identities.
+
+    Candidates are sorted by score descending. Equal scores keep the order in
+    which candidates were discovered (left input order, then right matches),
+    so ties break by input order. A self-join can pair a row with itself unless
+    the predicate excludes that case.
+    """
     left_list = list(left_rows)
     right_list = list(right_rows)
     candidates: list[tuple[float, Row, Row, tuple[Any, ...], tuple[Any, ...]]] = []

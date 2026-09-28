@@ -210,6 +210,10 @@ class CoalesceParseRenderTests(unittest.TestCase):
                 with self.assertRaises(MMDSValidationError):
                     self._parse(f"output = {call}")
 
+    def test_non_string_group_by_mentions_coalesce(self) -> None:
+        with self.assertRaisesRegex(MMDSValidationError, "Coalesce group_by"):
+            self._parse('output = Coalesce(rows, 3, "clip")')
+
 
 class CoalesceMediaIdentityTests(unittest.TestCase):
     def _node(self) -> DatasetExpr:

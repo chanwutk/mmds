@@ -15,7 +15,7 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 import mmds.execution as execution_module  # noqa: E402
-from mmds import Input, Join, Map, execute, optimize, parse_query, render_query  # noqa: E402
+from mmds import Filter, Input, Join, Map, Record, execute, optimize, parse_query, render_query  # noqa: E402
 from mmds.model import DatasetExpr, JoinSpec, MMDSValidationError  # noqa: E402
 from udfs.test_ops import (  # noqa: E402
     empty_update,
@@ -144,6 +144,51 @@ class JoinExecutionTests(unittest.TestCase):
         self.assertEqual(loader.call_count, 1)
         self.assertEqual(len(result), 2)
 
+    def test_deep_shared_upstream_is_evaluated_once(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = _write_jsonl(
+                Path(temp_dir),
+                "tracks.jsonl",
+                [
+                    {"incident_id": "a", "camera_id": "left", "keep": True},
+                    {"incident_id": "a", "camera_id": "right", "keep": True},
+                ],
+            )
+            shared = Input(path)
+            plan = Join(
+                Filter(shared, Record["keep"]),
+                Map(shared, empty_update),
+                on="incident_id",
+            )
+            original_loader = execution_module._load_input_rows
+            with patch.object(
+                execution_module,
+                "_load_input_rows",
+                wraps=original_loader,
+            ) as loader:
+                result = execute(plan)
+
+        self.assertEqual(loader.call_count, 1)
+        self.assertEqual(len(result), 4)
+
+    def test_distinct_equal_inputs_execute_twice(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = _write_jsonl(
+                Path(temp_dir),
+                "tracks.jsonl",
+                [{"incident_id": "a", "camera_id": "left"}],
+            )
+            plan = Join(Input(path), Input(path), on="incident_id")
+            original_loader = execution_module._load_input_rows
+            with patch.object(
+                execution_module,
+                "_load_input_rows",
+                wraps=original_loader,
+            ) as loader:
+                execute(plan)
+
+        self.assertEqual(loader.call_count, 2)
+
     def test_distinct_equal_join_sources_stay_distinct_through_render(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             path = _write_jsonl(
@@ -218,6 +263,27 @@ class JoinOptimizerTests(unittest.TestCase):
         self.assertIs(optimized.right_source, optimized.source.source)
         self.assertEqual(optimized, plan)
 
+    def test_rule_optimizer_keeps_distinct_equal_sources_distinct(self) -> None:
+        left = Map(Input("tracks.jsonl"), empty_update)
+        right = Map(Input("tracks.jsonl"), empty_update)
+        plan = Join(left, right, join_cross_camera_test_bucket)
+
+        optimized = optimize(plan)
+
+        self.assertIsNot(plan.source, plan.right_source)
+        self.assertEqual(plan.source, plan.right_source)
+        self.assertIsNot(optimized.source, optimized.right_source)
+        self.assertEqual(optimized.source, optimized.right_source)
+        self.assertEqual(optimized, plan)
+
+    def test_rule_optimizer_keeps_distinct_equal_inputs_distinct(self) -> None:
+        plan = Join(Input("tracks.jsonl"), Input("tracks.jsonl"), on="incident_id")
+
+        optimized = optimize(plan)
+
+        self.assertIsNot(optimized.source, optimized.right_source)
+        self.assertEqual(optimized.source, optimized.right_source)
+
     def test_rule_optimizer_self_join_renders_shared_upstream_once(self) -> None:
         source = Map(Input("tracks.jsonl"), empty_update, name="tracks_mapped")
         plan = Join(source, source, join_cross_camera_test_bucket)
@@ -287,6 +353,17 @@ class JoinParseErrorTests(unittest.TestCase):
             with self.subTest(case=label):
                 with self.assertRaises(MMDSValidationError):
                     self._parse(call)
+
+    def test_parses_negative_min_score(self) -> None:
+        program = self._parse(
+            "Join(tracks, tracks, on=\"id\", one_to_one=True, "
+            "score=join_test_match_score, left_key=\"id\", right_key=\"id\", "
+            "min_score=-0.5)"
+        )
+        self.assertEqual(program.output_expr.spec.min_score, -0.5)
+        rendered = render_query(program)
+        self.assertIn("min_score=-0.5", rendered)
+        self.assertEqual(parse_query(rendered).output_expr.spec.min_score, -0.5)
 
     def test_requires_join_import(self) -> None:
         with self.assertRaisesRegex(MMDSValidationError, "Join must be imported"):

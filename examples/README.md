@@ -58,9 +58,11 @@ windows can produce separate event arrays for one lecture. Its
 `collect_sorted_events` UDF flattens and sorts those arrays; it deliberately
 does not merge or deduplicate event intervals.
 
-The two-stage example is built in Python (a `build_query` function, a shared
-schema constant, and keyword arguments to `Window`), so it cannot run through
-`examples/run_text.py`.
+The two-stage lecture example is built in Python (`build_query`, a shared
+schema constant, and keyword arguments to `Window` / `Coalesce`). `Window` and
+`Coalesce` are parseable DSL operators; this example still goes through
+`run_expr.py` / `./run` rather than `examples/run_text.py` because the module
+builds the plan programmatically instead of as straight-line source text.
 
 ## Notes
 

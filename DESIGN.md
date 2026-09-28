@@ -130,7 +130,10 @@ The core model lives in [src/mmds/model.py](/Users/chanwutk/Documents/mmds/src/m
   `VideoMap`, and `VideoMapEach` each have one `source`.
 - `Join` has a left `source` and `right_source`. Its `children()` and
   `walk_postorder()` methods traverse both sources and skip repeated visits
-  by object identity, so equal-but-distinct branches stay distinct.
+  by object identity, so equal-but-distinct branches stay distinct. Plan
+  sharing is always by Python object identity (or the same assignment name in
+  source text), never by structural equality: two separately constructed but
+  equal subplans remain two nodes through optimize, render, and execute.
 
 ### Prompt Expression Model
 
@@ -210,7 +213,8 @@ Parser rules:
   literal `model`, `output_field`, `frame_stride`, `conf`, `imgsz`, and `name`
   keyword arguments; parsing constructs a validated `DetectSpec`
 - `Window` requires literal `video_field`, `candidate_field`, `output_field`,
-  and `padding_time` arguments and accepts a literal `name`
+  and `padding_time`, either as five positionals after the source or as
+  keywords with a single positional source, plus an optional literal `name`
 - `Coalesce` requires a literal string or string-list/tuple `group_by`, a
   non-empty literal interval field, and an optional literal `name`
 - `VideoMap` and `VideoMapEach` require literal `video_field`, `views_field`,
@@ -276,9 +280,18 @@ Operator semantics:
   right-side hash index; predicate-only joins use quadratic pair matching.
   One-to-one joins score candidates, apply an optional minimum score, and
   greedily retain the highest-scoring pairs with unique left/right identity
-  keys. A self-join whose sources are the same plan object executes and
-  materializes that shared upstream subtree exactly once.
-- `Detect`: reads the video pointed to by `video_field`; if the value is a `VideoView`-shaped dict with `start`/`end`, wraps the source in a `VideoView`, runs YOLOE detection on sampled frames according to `frame_stride`, forwards optional `conf` and `imgsz` inference parameters, and merges a detection list with absolute source-video `frame_idx` values into `output_field`
+  keys. Score ties keep discovery order (left input order, then right
+  matches). `on=` fields are equi-join hash keys; `left_key=` / `right_key=`
+  are side-identity fields used only for one-to-one uniqueness and are easy
+  to confuse with `on=`. Hash-key matching uses Python equality/hashing
+  (not SQL NULL semantics): `None` keys match each other; `1`, `1.0`, and
+  `True` match each other; rows with a missing or unhashable key are dropped
+  silently. A self-join can pair a row with itself unless the predicate
+  excludes that case. Execution shares work by object identity: a node with
+  multiple parents (including `Join(s, s)` and deeper diamonds such as
+  `Join(Filter(s), Map(s))`) is materialized once per `execute()` call;
+  single-parent nodes still stream.
+- `Detect`: reads the video pointed to by `video_field`; if the value is a `VideoView`-shaped dict with `start`/`end`, wraps the source in a `VideoView`, runs YOLOE detection on sampled frames according to `frame_stride`, forwards optional `conf` and `imgsz` inference parameters, and merges a detection list with absolute source-video `frame_idx` values into `output_field`. `frame_stride` skips inference on non-selected frames but still decodes every frame while iterating the video; it saves model time, not decode time.
 - `Window`: reads one `{start, end}` candidate interval per row, applies
   symmetric padding, clamps the start to zero, and stores a non-materialized
   `VideoView` descriptor in `output_field` while preserving the input row
@@ -536,8 +549,10 @@ The rule optimizer lives in [src/mmds/optimizers/rewriter/rule.py](/Users/chanwu
 Current behavior is intentionally conservative:
 
 - recursively rebuild both unary and binary sources
-- structurally deduplicate equivalent nodes through memoization
-- preserve shared source identity, including self-join sources
+- memoize by object identity while rebuilding, so shared DAG edges (including
+  self-join sources) stay one shared object after optimize
+- do **not** fuse structurally equal but distinct subplans; authors share cost
+  by binding a subplan once (e.g. `tracks = ...; Join(tracks, tracks, ...)`)
 
 It does not yet reorder operators, fold operators, infer safety, or reason about prompt/UDF semantics.
 
