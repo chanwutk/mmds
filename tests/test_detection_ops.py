@@ -307,5 +307,31 @@ class DetectionOpsTests(unittest.TestCase):
         )
 
 
+class DetectionFpsFallbackTests(unittest.TestCase):
+    def _fps(self, row):
+        from udfs.detection_ops import _resolve_detection_fps
+
+        return _resolve_detection_fps(row)
+
+    def test_prefers_the_fps_written_by_detect(self) -> None:
+        row = {"_mmds_video_fps": 25.0, "video": {"path": "a.mp4", "fps": 10}}
+        self.assertEqual(self._fps(row), 25.0)
+
+    def test_falls_back_to_a_video_shaped_field(self) -> None:
+        for key in ("source", "path", "uri"):
+            with self.subTest(key=key):
+                self.assertEqual(self._fps({"video": {key: "a.mp4", "fps": 12}}), 12.0)
+
+    def test_ignores_non_video_dicts_with_an_fps_key(self) -> None:
+        row = {"config": {"fps": 1}, "video": {"path": "a.mp4", "fps": 24}}
+        self.assertEqual(self._fps(row), 24.0)
+        self.assertEqual(self._fps({"config": {"fps": 1}}), 30.0)
+
+    def test_invalid_values_fall_back_to_default(self) -> None:
+        for row in ({"_mmds_video_fps": 0}, {"_mmds_video_fps": True}, {"video": {"path": "a", "fps": -1}}):
+            with self.subTest(row=row):
+                self.assertEqual(self._fps(row), 30.0)
+
+
 if __name__ == "__main__":
     unittest.main()

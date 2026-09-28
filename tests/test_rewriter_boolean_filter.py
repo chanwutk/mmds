@@ -244,5 +244,71 @@ output = Filter(
                     )
 
 
+class BooleanMapCodeFilterExecutionTests(unittest.TestCase):
+    """Execute rewritten plans; structure-only checks let a crash slip through."""
+
+    PARAMS = {
+        "flag_field": "contains_dog",
+        "rewritten_map_prompt": "Summarize the clip and decide whether a dog is visible.",
+        "map_schema": MAP_SCHEMA,
+    }
+    ROWS = (
+        {"clip_id": "a", "video": {"type": "Video", "path": "a.mp4"}},
+        {"clip_id": "b", "video": {"type": "Video", "path": "b.mp4"}},
+    )
+
+    def _rewrite_and_run(self, program):
+        directive = BooleanMapCodeFilter()
+        match = directive.find_matches(PlanIndex.build(program.output_expr))[0]
+        rewritten = apply_rewrite(program, directive=directive, match=match, params=self.PARAMS)
+        mapped = rewritten.output_expr.source
+        self.assertIsInstance(rewritten.output_expr.spec, FieldPredicateSpec)
+        self.assertIn(Record["video"], mapped.spec.parts)
+        self.assertNotIn(Record["contains_dog"], mapped.spec.parts)
+        self.assertNotIn(Record["summary"], mapped.spec.parts)
+
+        seen_videos: list[str] = []
+
+        def handler(resolved_prompt, payload, context):
+            video = next(part for part in resolved_prompt.parts if isinstance(part, dict))
+            seen_videos.append(video["path"])
+            return {"summary": f"clip {payload['clip_id']}", "contains_dog": payload["clip_id"] == "a"}
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "clips.jsonl"
+            path.write_text("".join(json.dumps(row) + "\n" for row in self.ROWS), encoding="utf-8")
+            runnable = parse_query(render_query(rewritten).replace('"clips.jsonl"', json.dumps(str(path))))
+            result = execute(
+                runnable,
+                prompt_executor=StaticPromptExecutor(
+                    {("map", runnable.output_expr.source.spec.cache_key()): handler}
+                ),
+            )
+        return result, seen_videos
+
+    def test_rewritten_map_then_filter_executes_and_keeps_flagged_rows(self) -> None:
+        result, seen_videos = self._rewrite_and_run(_map_then_filter_program())
+
+        self.assertEqual(seen_videos, ["a.mp4", "b.mp4"])
+        self.assertEqual(
+            result,
+            [{**self.ROWS[0], "summary": "clip a", "contains_dog": True}],
+        )
+
+    def test_inserted_map_reads_the_filter_inputs_and_executes(self) -> None:
+        program = parse_query(
+            """
+from mmds import Filter, Input, Record
+clips = Input("clips.jsonl")
+output = Filter(clips, ["Keep only clips with a dog: ", Record["video"]])
+"""
+        )
+
+        result, seen_videos = self._rewrite_and_run(program)
+
+        self.assertEqual(seen_videos, ["a.mp4", "b.mp4"])
+        self.assertEqual([row["clip_id"] for row in result], ["a"])
+
+
 if __name__ == "__main__":
     unittest.main()

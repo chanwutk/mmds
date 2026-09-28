@@ -614,7 +614,9 @@ parameters.
 - `BooleanMapCodeFilter` replaces a prompt-backed `Filter` with a Map that
   materializes a boolean keep flag plus a non-LLM `Filter(..., Record[flag])`
   field predicate. When the Filter already sits on a prompt Map, `map_schema`
-  must preserve that Map's declared schema.
+  must preserve that Map's declared schema and the rewritten Map prompt reads
+  that Map's input fields; otherwise the inserted Map reads the Filter's input
+  fields. `map_schema` only declares outputs, never prompt inputs.
 - `DetectGateBeforeMap` inserts `Detect` (YOLOE) and
   `Filter(keep_rows_with_detections)` before a prompt-backed `Map` that reads
   a video field, so empty detections are pruned before the VLM call. The Map
