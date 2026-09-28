@@ -21,6 +21,7 @@ from udfs.trajectory_ops import (  # noqa: E402
     vehicle_id_from_match,
 )
 from udfs.trajectory_ops import join_match_to_trajectory  # noqa: E402
+from udfs.trajectory_ops import promote_vehicle_trajectory_row  # noqa: E402
 
 
 def _track(
@@ -148,6 +149,43 @@ class TrajectoryTests(unittest.TestCase):
         self.assertIn("vehicle_id", exported)
         self.assertIn("timeline", exported)
         self.assertAlmostEqual(exported["match_score"], 0.91)
+
+
+class PromoteVehicleTrajectoryRowTests(unittest.TestCase):
+    VEHICLE = {
+        "vehicle_id": "v-1",
+        "attributes": {"vehicle_class": "suv", "color": "black"},
+        "timeline": [{"camera_id": "cam-a", "entered": 0.0, "exited": 2.0}],
+    }
+
+    def test_keeps_match_score_when_present(self) -> None:
+        row = {"source_id": "x", "vehicles": {**self.VEHICLE, "match_score": 0.8, "extra": 1}}
+
+        self.assertEqual(
+            promote_vehicle_trajectory_row(row),
+            {**self.VEHICLE, "match_score": 0.8},
+        )
+
+    def test_keeps_records_without_match_score(self) -> None:
+        self.assertEqual(
+            promote_vehicle_trajectory_row({"vehicles": dict(self.VEHICLE)}),
+            self.VEHICLE,
+        )
+
+    def test_matches_join_record_shape_without_score(self) -> None:
+        record = {"vehicle_id": "v-2", "attributes": {}, "timeline": []}
+
+        self.assertNotIn("match_score", promote_vehicle_trajectory_row({"vehicles": record}))
+
+    def test_rejects_missing_required_fields_or_non_dict(self) -> None:
+        for missing in ("vehicle_id", "attributes", "timeline"):
+            with self.subTest(missing=missing):
+                vehicle = {k: v for k, v in self.VEHICLE.items() if k != missing}
+                self.assertEqual(promote_vehicle_trajectory_row({"vehicles": vehicle}), {})
+        for value in (None, [], "v-1"):
+            with self.subTest(vehicles=value):
+                self.assertEqual(promote_vehicle_trajectory_row({"vehicles": value}), {})
+        self.assertEqual(promote_vehicle_trajectory_row({}), {})
 
 
 if __name__ == "__main__":

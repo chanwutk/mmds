@@ -118,7 +118,6 @@ def promote_vehicle_trajectory_row(row: dict[str, Any]) -> dict[str, Any]:
     if "match_score" in vehicle:
         promoted["match_score"] = vehicle["match_score"]
     return promoted
-    }
 
 
 __all__ = [
