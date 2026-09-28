@@ -58,8 +58,9 @@ windows can produce separate event arrays for one lecture. Its
 `collect_sorted_events` UDF flattens and sorts those arrays; it deliberately
 does not merge or deduplicate event intervals.
 
-`Window` and `Coalesce` are programmatic-only today, so the two-stage example
-cannot yet run through `examples/run_text.py`.
+The two-stage example is built in Python (a `build_query` function, a shared
+schema constant, and keyword arguments to `Window`), so it cannot run through
+`examples/run_text.py`.
 
 ## Notes
 

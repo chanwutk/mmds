@@ -9,6 +9,8 @@ from .dsl import (
     Map,
     Reduce,
     Unnest,
+    VideoMap,
+    VideoMapEach,
     Window,
 )
 from .execution import PromptExecutor, StaticPromptExecutor, execute
@@ -29,6 +31,7 @@ from .model import (
     ResolvedPrompt,
     Row,
     UdfSpec,
+    VideoMapSpec,
     WindowSpec,
 )
 from .parser import load_query, parse_query
@@ -75,6 +78,9 @@ __all__ = [
     "UdfEntry",
     "UdfSpec",
     "Unnest",
+    "VideoMap",
+    "VideoMapEach",
+    "VideoMapSpec",
     "VideoView",
     "canonicalize",
     "discover_udfs",

@@ -39,6 +39,9 @@ def execute(
         plan = plan_or_query
     else:
         raise TypeError("execute() expects a DatasetExpr or QueryProgram.")
+    from ..optimizers.lowering import lower_video_ops
+
+    plan = lower_video_ops(plan)
     return list(_execute_node(plan, prompt_executor, base_path=base_path))
 
 

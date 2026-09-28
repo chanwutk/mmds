@@ -17,25 +17,15 @@ from .model import (
     Record,
     RecordPath,
     UdfSpec,
+    VideoMapSpec,
     WindowSpec,
     normalize_join_keys,
     normalize_output_schema,
     normalize_group_by,
 )
+from .operator_catalog import SOURCE_OPERATOR_NAMES
 
-_MMDS_IMPORTS = {
-    "Input",
-    "Map",
-    "Filter",
-    "Reduce",
-    "Unnest",
-    "Join",
-    "Detect",
-    "Window",
-    "Coalesce",
-    "Record",
-    "ForEach",
-}
+_MMDS_IMPORTS = SOURCE_OPERATOR_NAMES | {"Record", "ForEach"}
 
 
 def load_query(source: str | Path) -> QueryProgram:
@@ -225,6 +215,64 @@ def _parse_call(
             source=source,
             field=_parse_string(node.args[1], "Unnest field"),
             keep_empty=keep_empty,
+            name=_parse_optional_name(keywords),
+        )
+
+    if operator in {"VideoMap", "VideoMapEach"}:
+        allowed = {
+            "video_field",
+            "views_field",
+            "group_by",
+            "schema",
+            "padding_time",
+            "clip_field",
+            "name",
+        }
+        _expect_args(operator, node.args, 2, keywords, allowed_keywords=allowed)
+        video_field = _parse_string(
+            _require_keyword(operator, keywords, "video_field"),
+            f"{operator} video_field",
+        )
+        views_field = _parse_string(
+            _require_keyword(operator, keywords, "views_field"),
+            f"{operator} views_field",
+        )
+        group_by = _parse_group_by(
+            _require_keyword(operator, keywords, "group_by")
+        )
+        map_spec = _parse_spec(
+            "map",
+            node.args[1],
+            udf_imports,
+            mmds_imports,
+            schema_node=keywords.get("schema"),
+        )
+        if operator == "VideoMap" and isinstance(map_spec, UdfSpec):
+            raise MMDSValidationError(
+                "VideoMap requires a prompt-backed semantic spec."
+            )
+        return DatasetExpr(
+            kind="video_map" if operator == "VideoMap" else "video_map_each",
+            source=_parse_source(node.args[0], bindings),
+            spec=VideoMapSpec(
+                video_field=video_field,
+                views_field=views_field,
+                group_by=group_by,
+                map_spec=map_spec,
+                padding_time=_parse_number(
+                    keywords.get("padding_time"),
+                    f"{operator} padding_time",
+                    default=0.0,
+                ),
+                clip_field=(
+                    _parse_string(
+                        keywords["clip_field"],
+                        f"{operator} clip_field",
+                    )
+                    if "clip_field" in keywords
+                    else "clip"
+                ),
+            ),
             name=_parse_optional_name(keywords),
         )
 
@@ -542,7 +590,16 @@ def _parse_optional_string(
     return default if node is None else _parse_string(node, label)
 
 
-def _parse_number(node: ast.AST, label: str) -> float:
+def _parse_number(
+    node: ast.AST | None,
+    label: str,
+    *,
+    default: float | None = None,
+) -> float:
+    if node is None:
+        if default is None:
+            raise MMDSValidationError(f"{label} is required.")
+        return default
     try:
         value = ast.literal_eval(node)
     except (TypeError, ValueError, SyntaxError) as exc:
@@ -660,3 +717,15 @@ def _expect_args(
     unexpected = set(keywords) - allowed_keywords
     if unexpected:
         raise MMDSValidationError(f"{operator} does not support keyword arguments: {sorted(unexpected)!r}.")
+
+
+def _require_keyword(
+    operator: str,
+    keywords: dict[str, ast.AST],
+    name: str,
+) -> ast.AST:
+    if name not in keywords:
+        raise MMDSValidationError(
+            f"{operator} requires the {name!r} keyword argument."
+        )
+    return keywords[name]
