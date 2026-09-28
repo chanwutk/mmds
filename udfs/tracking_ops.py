@@ -61,16 +61,6 @@ def _row_fps(row: dict[str, Any]) -> float:
     return _DEFAULT_FPS
 
 
-def _clip_start_seconds(row: dict[str, Any]) -> float:
-    """Get the start time from the video. Used for tracking timestamps."""
-    video = row.get("video")
-    if isinstance(video, dict):
-        start = video.get("start")
-        if isinstance(start, (int, float)):
-            return float(start)
-    return 0.0
-
-
 def _frame_to_timestamp(row: dict[str, Any], frame_id: int) -> str:
     """
     Map an absolute ``frame_id`` to an ISO-8601 UTC timestamp string.
@@ -79,7 +69,7 @@ def _frame_to_timestamp(row: dict[str, Any], frame_id: int) -> str:
     Else, timestamp is the epoch + frame_id / fps.
     """
     fps = _row_fps(row)
-    offset_sec = _clip_start_seconds(row) + (frame_id / fps)
+    offset_sec = frame_id / fps
     recorded_at = row.get("recorded_at")
     if isinstance(recorded_at, str) and recorded_at:
         timestamp = recorded_at
@@ -91,7 +81,7 @@ def _frame_to_timestamp(row: dict[str, Any], frame_id: int) -> str:
             base = datetime(1970, 1, 1, tzinfo=timezone.utc)
         if base.tzinfo is None:
             base = base.replace(tzinfo=timezone.utc)
-        moment = base + timedelta(seconds=offset_sec - _clip_start_seconds(row))
+        moment = base + timedelta(seconds=offset_sec)
         return moment.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
     epoch = datetime(1970, 1, 1, tzinfo=timezone.utc) + timedelta(seconds=offset_sec)
     return epoch.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
