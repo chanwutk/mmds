@@ -9,12 +9,14 @@ from .model import (
     WindowSpec,
     ForEachPrompt,
     JsonValue,
+    JoinSpec,
     MMDSValidationError,
     PromptPart,
     PromptSpec,
     Record,
     RecordPath,
     SemanticSpec,
+    normalize_join_keys,
     normalize_output_schema,
     normalize_group_by,
     udf_spec_from_callable,
@@ -36,12 +38,17 @@ def Map(
     spec: str | Sequence[PromptInputPart] | Callable[..., Any],
     *,
     schema: JsonValue | None = None,
+    replace: bool = False,
     name: str | None = None,
 ) -> DatasetExpr:
+    """Map a function over a dataset. Replace means to replace the rows instead of merging the fields."""
+    if not isinstance(replace, bool):
+        raise TypeError("Map replace must be a boolean.")
     return DatasetExpr(
         kind="map",
         source=_normalize_source(data),
         spec=_normalize_spec(spec, op_kind="map", schema=schema),
+        replace=replace,
         name=name,
     )
 
@@ -95,6 +102,58 @@ def Unnest(
     )
 
 
+def Join(
+    left: DatasetExpr,
+    right: DatasetExpr,
+    predicate: Callable[..., Any] | None = None,
+    *,
+    on: str | Sequence[str] | None = None,
+    one_to_one: bool = False,
+    score: Callable[..., Any] | None = None,
+    min_score: float | None = None,
+    left_key: str | Sequence[str] | None = None,
+    right_key: str | Sequence[str] | None = None,
+    name: str | None = None,
+) -> DatasetExpr:
+    """Join two datasets by keys and/or a binary UDF predicate, building a Join node
+    
+    Args:
+        left: Left dataset expression.
+        right: Right dataset expression.
+        predicate: Binary UDF predicate.
+        on: Join keys.
+        one_to_one: Whether to enforce one-to-one matching.
+    """
+    if predicate is not None and not callable(predicate):
+        raise TypeError("Join predicates must be imported UDF callables.")
+    if score is not None and not callable(score):
+        raise TypeError("Join score functions must be imported UDF callables.")
+    if not isinstance(one_to_one, bool):
+        raise TypeError("Join one_to_one must be a boolean.")
+
+    return DatasetExpr(
+        kind="join",
+        source=_normalize_source(left),
+        right_source=_normalize_source(right),
+        spec=JoinSpec(
+            keys=normalize_join_keys(on) if on is not None else (),
+            predicate=(
+                udf_spec_from_callable(predicate) if predicate is not None else None
+            ),
+            one_to_one=one_to_one,
+            score=udf_spec_from_callable(score) if score is not None else None,
+            min_score=min_score,
+            left_key=(
+                normalize_join_keys(left_key) if left_key is not None else ()
+            ),
+            right_key=(
+                normalize_join_keys(right_key) if right_key is not None else ()
+            ),
+        ),
+        name=name,
+    )
+
+
 def Detect(
     data: DatasetExpr,
     video_field: str,
@@ -102,6 +161,9 @@ def Detect(
     *,
     model: str = "yoloe-11s-seg.pt",
     output_field: str = "detections",
+    frame_stride: int = 1,
+    conf: float | None = None,
+    imgsz: int | None = None,
     name: str | None = None,
 ) -> DatasetExpr:
     """Run YOLOE object detection on every frame of a video field.
@@ -115,6 +177,9 @@ def Detect(
         model: YOLOE weights file.  Defaults to ``"yoloe-11s-seg.pt"``.
         output_field: Name of the output field that receives the detection
             list.  Defaults to ``"detections"``.
+        frame_stride: Keep every Nth frame; defaults to ``1``.
+        conf: Optional YOLO confidence floor in ``[0.0, 1.0]``.
+        imgsz: Optional YOLO inference image size.
         name: Optional operator label.
 
     The output field contains a list of objects, one per detected class::
@@ -131,6 +196,22 @@ def Detect(
         raise TypeError("Detect model must be a non-empty string.")
     if not isinstance(output_field, str) or not output_field:
         raise TypeError("Detect output_field must be a non-empty string.")
+    if (
+        isinstance(frame_stride, bool)
+        or not isinstance(frame_stride, int)
+        or frame_stride < 1
+    ):
+        raise TypeError("Detect frame_stride must be an integer >= 1.")
+    if conf is not None and (
+        isinstance(conf, bool)
+        or not isinstance(conf, (int, float))
+        or not 0.0 <= float(conf) <= 1.0
+    ):
+        raise TypeError("Detect conf must be a number in [0.0, 1.0] or None.")
+    if imgsz is not None and (
+        isinstance(imgsz, bool) or not isinstance(imgsz, int) or imgsz < 1
+    ):
+        raise TypeError("Detect imgsz must be a positive integer or None.")
     return DatasetExpr(
         kind="detect",
         source=_normalize_source(data),
@@ -139,9 +220,13 @@ def Detect(
             classes=tuple(classes),
             model=model,
             output_field=output_field,
+            frame_stride=frame_stride,
+            conf=conf,
+            imgsz=imgsz,
         ),
         name=name,
     )
+
 
 def Window(data: DatasetExpr, video_field, candidate_field, output_field, padding_time: int, name: str | None = None) -> DatasetExpr:
     if not isinstance(video_field, str) or not video_field:

@@ -1,5 +1,16 @@
 from typing import TYPE_CHECKING
-from .dsl import Coalesce, Detect, Filter, ForEach, Input, Map, Reduce, Unnest, Window
+from .dsl import (
+    Coalesce,
+    Detect,
+    Filter,
+    ForEach,
+    Input,
+    Join,
+    Map,
+    Reduce,
+    Unnest,
+    Window,
+)
 from .execution import PromptExecutor, StaticPromptExecutor, execute
 from .execution.llm.gemini import GeminiPromptExecutor
 from .optimizers.rewriter.agent import LLMClient, StaticLLMClient
@@ -7,8 +18,8 @@ from .model import (
     Assignment,
     DatasetExpr,
     DetectSpec,
-    WindowSpec,
     ForEachPrompt,
+    JoinSpec,
     JsonValue,
     MMDSValidationError,
     PromptSpec,
@@ -18,6 +29,7 @@ from .model import (
     ResolvedPrompt,
     Row,
     UdfSpec,
+    WindowSpec,
 )
 from .parser import load_query, parse_query
 from .render import program_from_plan, render_query
@@ -43,6 +55,8 @@ __all__ = [
     "ForEachPrompt",
     "GeminiPromptExecutor",
     "Input",
+    "Join",
+    "JoinSpec",
     "JsonValue",
     "LLMClient",
     "MMDSValidationError",
@@ -85,5 +99,6 @@ def __getattr__(name: str):
 
 def main() -> None:
     print(
-        "MMDS exposes a Python DSL. Import Input, Map, Filter, Reduce, Unnest, Record, and ForEach from mmds."
+        "MMDS exposes a Python DSL. Import Input, Map, Filter, Reduce, Unnest, "
+        "Join, Detect, Window, Coalesce, Record, and ForEach from mmds."
     )

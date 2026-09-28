@@ -52,6 +52,28 @@ def _execute_node(
         yield from _load_input_rows(node.input_path, base_path=base_path)
         return
 
+    if node.kind == "join":
+        if node.source is None or node.right_source is None:
+            raise MMDSValidationError("Join nodes require left and right sources.")
+        from .ops.join import _apply_join
+
+        # If right source, execute subtree once and materialize
+        if node.source is node.right_source:
+            shared_rows = list(
+                _execute_node(node.source, prompt_executor, base_path=base_path)
+            )
+            left_rows = shared_rows
+            right_rows = shared_rows
+        else:
+            left_rows = _execute_node(
+                node.source, prompt_executor, base_path=base_path
+            )
+            right_rows = _execute_node(
+                node.right_source, prompt_executor, base_path=base_path
+            )
+        yield from _apply_join(node, left_rows, right_rows)
+        return
+
     source = _execute_node(node.source, prompt_executor, base_path=base_path)
     if node.kind == "map":
         with ThreadPoolExecutor() as ex:
