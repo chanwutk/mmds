@@ -21,6 +21,8 @@ top-level [GET_START.md](../GET_START.md) for setup and [README.md](../README.md
 | [`lecture_event_localization_video_only.py`](lecture_event_localization_video_only.py) | full-video `Map` → `Unnest` | Gemini API key; `data/lectures.jsonl` |
 | [`lecture_event_localization_transcript_only.py`](lecture_event_localization_transcript_only.py) | transcript `Map` → `Unnest` | Gemini API key; `data/lectures.jsonl` |
 | [`lecture_event_localization.py`](lecture_event_localization.py) | transcript `Map` → `Unnest` → `Window` → `Coalesce` → video `Map` → UDF `Map` → `Reduce` → `Unnest` | Gemini API key; `data/lectures.jsonl` |
+| [`join_cross_camera_vehicle.py`](join_cross_camera_vehicle.py) | `Detect` → UDF `Map`s (NMS, frame detections, tracking, embeddings) → `Unnest` → UDF `Map`s (track rows) → `Join` (self-join, `one_to_one`) → UDF `Map` | no API key; downloads YOLOE + ResNet weights; local I24V MP4s (see [`data/i24v_traffic/README.md`](../data/i24v_traffic/README.md)) |
+| [`semantic_join_cross_camera_vehicle.py`](semantic_join_cross_camera_vehicle.py) | `Reduce` (video prompt) + `ForEach` → `Unnest` → UDF `Map` | Gemini API key; local I24V MP4s (see [`data/i24v_traffic/README.md`](../data/i24v_traffic/README.md)) |
 
 ## Drivers
 
