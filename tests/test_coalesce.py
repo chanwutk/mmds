@@ -211,5 +211,49 @@ class CoalesceParseRenderTests(unittest.TestCase):
                     self._parse(f"output = {call}")
 
 
+class CoalesceMediaIdentityTests(unittest.TestCase):
+    def _node(self) -> DatasetExpr:
+        return Coalesce(Input("rows.jsonl"), "id", "clip")
+
+    def test_intervals_from_different_videos_are_not_merged(self) -> None:
+        rows = [
+            {"id": 1, "clip": {"type": "VideoView", "path": "a.mp4", "start": 0, "end": 5}},
+            {"id": 1, "clip": {"type": "VideoView", "path": "b.mp4", "start": 3, "end": 9}},
+        ]
+
+        result = list(_apply_coalesce(self._node(), rows))
+
+        self.assertCountEqual(
+            [(row["clip"]["path"], row["clip"]["start"], row["clip"]["end"]) for row in result],
+            [("a.mp4", 0, 5), ("b.mp4", 3, 9)],
+        )
+
+    def test_overlapping_intervals_from_the_same_video_still_merge(self) -> None:
+        rows = [
+            {"id": 1, "clip": {"type": "VideoView", "path": "a.mp4", "start": 0, "end": 5}},
+            {"id": 1, "clip": {"type": "VideoView", "path": "a.mp4", "start": 3, "end": 9}},
+            {"id": 1, "clip": {"type": "VideoView", "path": "b.mp4", "start": 4, "end": 6}},
+        ]
+
+        result = list(_apply_coalesce(self._node(), rows))
+
+        self.assertCountEqual(
+            [(row["clip"]["path"], row["clip"]["start"], row["clip"]["end"]) for row in result],
+            [("a.mp4", 0, 9), ("b.mp4", 4, 6)],
+        )
+
+    def test_nested_media_fields_are_compared_by_value(self) -> None:
+        video = {"type": "VideoView", "source": {"uri": "a.mp4", "fps": 30}}
+        rows = [
+            {"id": 1, "clip": {**video, "start": 0, "end": 5}},
+            {"id": 1, "clip": {**video, "source": {"fps": 30, "uri": "a.mp4"}, "start": 4, "end": 8}},
+        ]
+
+        result = list(_apply_coalesce(self._node(), rows))
+
+        self.assertEqual(len(result), 1)
+        self.assertEqual((result[0]["clip"]["start"], result[0]["clip"]["end"]), (0, 8))
+
+
 if __name__ == "__main__":
     unittest.main()

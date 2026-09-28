@@ -119,6 +119,10 @@ class VideoMapDSLTests(unittest.TestCase):
                         schema={"answer": "string"},
                     )
 
+    def test_video_field_cannot_be_a_grouping_key(self) -> None:
+        with self.assertRaisesRegex(MMDSValidationError, "video, views, or clip"):
+            _video_map_each(group_by=["lecture_id", "question", "video"])
+
     def test_views_and_clip_fields_cannot_be_grouping_keys(self) -> None:
         for group_by in (
             ["lecture_id", "question", "candidate_views"],
@@ -298,6 +302,40 @@ class VideoMapLoweringTests(unittest.TestCase):
         self.assertEqual(
             [node.kind for node in lowered.walk_postorder()],
             ["input", "unnest", "window", "coalesce", "map", "join"],
+        )
+
+    def test_lowered_plan_keeps_views_from_different_videos_separate(self) -> None:
+        rows = [
+            {
+                "lecture_id": 1,
+                "question": "q",
+                "video": {"type": "Video", "path": "a.mp4"},
+                "candidate_views": [{"start": 0, "end": 5}],
+            },
+            {
+                "lecture_id": 1,
+                "question": "q",
+                "video": {"type": "Video", "path": "b.mp4"},
+                "candidate_views": [{"start": 3, "end": 9}],
+            },
+        ]
+        temp_dir, path = _write_rows(rows)
+        self.addCleanup(temp_dir.cleanup)
+        logical = VideoMapEach(
+            Input(path),
+            _video_prompt(),
+            video_field="video",
+            views_field="candidate_views",
+            group_by=["lecture_id", "question"],
+            schema={"answer": "string"},
+            padding_time=0,
+        )
+
+        coalesced = execute(lower_video_ops(logical).source)
+
+        self.assertCountEqual(
+            [(row["clip"]["path"], row["clip"]["start"], row["clip"]["end"]) for row in coalesced],
+            [("a.mp4", 0.0, 5.0), ("b.mp4", 3.0, 9.0)],
         )
 
     def test_lowering_leaves_plans_without_video_maps_equal(self) -> None:
