@@ -21,6 +21,7 @@ from udfs.tracking_ops import (  # noqa: E402
     promote_track_summary_row,
     strongsort_track_frame_detections,
 )
+from udfs.tracking_ops import _frame_to_timestamp  # noqa: E402
 
 
 class StrongSortTrackerTests(unittest.TestCase):
@@ -208,6 +209,81 @@ class FragmentThresholdTests(unittest.TestCase):
             Path(handle.name).unlink(missing_ok=True)
 
         self.assertEqual([row["track_id"] for row in result], ["veh-1"])
+
+
+class FrameTimestampTests(unittest.TestCase):
+    def test_view_offset_is_not_counted_twice(self) -> None:
+        # Detect reports absolute frame indices even for a VideoView, so frame
+        # 300 at 30 fps is 10 s into the source video wherever the view starts.
+        row = {"fps": 30.0, "video": {"type": "VideoView", "path": "v.mp4", "start": 10, "end": 20}}
+
+        self.assertEqual(_frame_to_timestamp(row, 300), "1970-01-01T00:00:10Z")
+
+    def test_recorded_at_and_epoch_paths_use_the_same_offset(self) -> None:
+        video = {"type": "VideoView", "path": "v.mp4", "start": 10, "end": 20}
+        without = _frame_to_timestamp({"fps": 30.0, "video": video}, 300)
+        with_recorded = _frame_to_timestamp(
+            {"fps": 30.0, "video": video, "recorded_at": "2024-01-01T00:00:00Z"}, 300
+        )
+
+        self.assertEqual(without, "1970-01-01T00:00:10Z")
+        self.assertEqual(with_recorded, "2024-01-01T00:00:10Z")
+
+    def test_naive_recorded_at_is_treated_as_utc(self) -> None:
+        row = {"fps": 25.0, "recorded_at": "2024-01-01T08:00:00"}
+
+        self.assertEqual(_frame_to_timestamp(row, 50), "2024-01-01T08:00:02Z")
+
+    def test_missing_or_invalid_fps_uses_default(self) -> None:
+        for fps in (None, 0, -5, "30"):
+            with self.subTest(fps=fps):
+                row = {} if fps is None else {"fps": fps}
+                self.assertEqual(_frame_to_timestamp(row, 60), "1970-01-01T00:00:02Z")
+
+
+class TrackerEdgeCaseTests(unittest.TestCase):
+    def _det(self, frame_id, bbox, **extra):
+        return {"frame_id": frame_id, "bbox": bbox, "confidence": 0.9, **extra}
+
+    def test_same_frame_detections_get_distinct_tracks(self) -> None:
+        detections = [
+            self._det(1, [0.0, 0.0, 10.0, 10.0]),
+            self._det(1, [100.0, 100.0, 110.0, 110.0]),
+            self._det(2, [1.0, 1.0, 11.0, 11.0]),
+            self._det(2, [101.0, 101.0, 111.0, 111.0]),
+        ]
+
+        tracked = StrongSortTracker(track_prefix="veh").update(detections)
+        ids = {(d["frame_id"], d["bbox"][0]): d["track_id"] for d in tracked}
+
+        self.assertNotEqual(ids[(1, 0.0)], ids[(1, 100.0)])
+        self.assertEqual(ids[(1, 0.0)], ids[(2, 1.0)])
+        self.assertEqual(ids[(1, 100.0)], ids[(2, 101.0)])
+
+    def test_overlapping_boxes_in_one_frame_are_not_merged(self) -> None:
+        detections = [
+            self._det(1, [0.0, 0.0, 10.0, 10.0]),
+            self._det(1, [1.0, 1.0, 11.0, 11.0]),
+        ]
+
+        tracked = StrongSortTracker(track_prefix="veh").update(detections)
+
+        self.assertEqual(len({d["track_id"] for d in tracked}), 2)
+
+    def test_malformed_detections_are_skipped(self) -> None:
+        valid = self._det(1, [0.0, 0.0, 10.0, 10.0])
+        detections = [
+            {"frame_id": 1, "confidence": 0.9},
+            self._det(1, [0.0, 0.0, 10.0]),
+            {"bbox": [0.0, 0.0, 10.0, 10.0], "confidence": 0.9},
+            self._det(1.5, [0.0, 0.0, 10.0, 10.0]),
+            valid,
+        ]
+
+        tracked = StrongSortTracker(track_prefix="veh").update(detections)
+
+        self.assertEqual(len(tracked), 1)
+        self.assertEqual(tracked[0]["bbox"], valid["bbox"])
 
 
 if __name__ == "__main__":
