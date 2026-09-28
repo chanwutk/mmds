@@ -11,10 +11,18 @@ from .context import build_rewrite_context
 from .errors import MMDSRewriteError
 from .engine import RewriteResult, rewrite_once
 from .directives import (
+    BooleanMapCodeFilter,
+    BooleanMapCodeFilterParams,
+    DetectGateBeforeMap,
+    DetectGateBeforeMapParams,
+    DetectedFrameWindowBeforeMap,
+    DetectedFrameWindowBeforeMapParams,
     JointTemporalPushdown,
     ModalitySubstitution,
     ModalitySubstitutionParams,
     PerViewTemporalPushdown,
+    PromptFieldPruning,
+    PromptFieldPruningParams,
     TemporalPushdownParams,
 )
 from .validation import validate_rewrite_structure
@@ -23,6 +31,12 @@ from .selector import (
 )
 
 __all__ = [
+    "BooleanMapCodeFilter",
+    "BooleanMapCodeFilterParams",
+    "DetectGateBeforeMap",
+    "DetectGateBeforeMapParams",
+    "DetectedFrameWindowBeforeMap",
+    "DetectedFrameWindowBeforeMapParams",
     "DirectiveMetadata",
     "GeminiRewriteModel",
     "JointTemporalPushdown",
@@ -32,6 +46,8 @@ __all__ = [
     "NodePath",
     "PlanEntry",
     "PlanIndex",
+    "PromptFieldPruning",
+    "PromptFieldPruningParams",
     "RewriteDirective",
     "RewriteMatch",
     "RewriteResult",

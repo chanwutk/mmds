@@ -128,6 +128,9 @@ def _apply_detect(node: DatasetExpr, row: Row) -> Row:
 
     result = dict(row)
     result[spec.output_field] = detections
+    fps = float(getattr(iterable, "fps", 0.0) or 0.0)
+    if fps > 0:
+        result["_mmds_video_fps"] = fps
     return result
 
 

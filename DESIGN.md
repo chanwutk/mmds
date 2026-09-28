@@ -109,6 +109,8 @@ The core model lives in [src/mmds/model.py](/Users/chanwutk/Documents/mmds/src/m
 - `ForEachPrompt` represents repeated prompt expansion over grouped records.
 - `ResolvedPrompt` is the execution-time prompt after all `Record[...]` references are resolved against data.
 - `UdfSpec` stores a stable import path for a UDF.
+- `FieldPredicateSpec` stores a top-level field name for a non-LLM `Filter`
+  that keeps rows where that field is truthy (`Filter(..., Record["flag"])`).
 - `JoinSpec` stores equi-join keys, an optional binary predicate UDF, and
   optional score, threshold, and side-identity keys for greedy one-to-one
   matching.
@@ -185,6 +187,7 @@ Parser rules:
   - a prompt string
   - a prompt-part list
   - an imported UDF name
+  - for `Filter` only: a bare top-level `Record["field"]` field predicate
 - UDF import aliasing is rejected
 - only absolute imports are allowed
 - `Input(...)` must be a string literal ending in `.json` or `.jsonl`
@@ -193,6 +196,10 @@ Parser rules:
 - `Map.replace` and `Join.one_to_one` must be literal booleans
 - `Map` and `Reduce` prompt specs must include `schema={...}` as an output field map
 - `Filter` does not accept `schema=`
+- `Filter` field predicates must be a single top-level `Record["field"]`
+- `Detect` requires literal `video_field` and a list/tuple of literal class
+  strings; optional `model` / `output_field` / `conf` / `name` keywords use the
+  same defaults as the DSL constructor
 - `Reduce` prompt lists may only use `Record[...]` inside `ForEach([...])`
 - `Join` sources must reference prior assignments; predicates and score
   functions must be imported `udfs.*` names; keys and identity fields must be
@@ -261,7 +268,8 @@ Operator semantics:
 - `Input(path)`: reads rows from the referenced `.json` or `.jsonl` file
 - `Map`: applies prompt/UDF to one row and merges returned fields into that
   row, or returns only the produced mapping when `replace=True`
-- `Filter`: applies prompt/UDF to one row and keeps rows whose result is truthy
+- `Filter`: applies prompt/UDF/field-predicate to one row and keeps rows whose
+  result is truthy; `Filter(..., Record["field"])` is a non-LLM predicate
 - `Reduce`: groups rows by the configured fields, calls the reducer once per group, and merges returned aggregate fields with the group key fields
 - `Unnest`: expands one field; lists and tuples explode into multiple rows, scalars pass through unchanged, and missing/empty values produce no row unless `keep_empty=True`
 - `Join`: emits `{"left": ..., "right": ...}` pairs. Equi-join keys use a
@@ -399,6 +407,12 @@ Design rules:
 ```
 
 - the OpenCV/NumPy stack (and, at run time, `torch`/`ultralytics`) is imported **lazily**: `mmds.execution` imports `.ops.detect` only when a `detect` node actually executes, and `mmds.VideoView` is a lazy export via module `__getattr__`. This keeps `import mmds` and the prompt/UDF execution paths usable without the heavy CV/ML dependencies installed.
+- `Detect` is parsed from and rendered back to DSL text (including `frame_stride`, `conf`, and `imgsz`) so rewrite directives can insert it while preserving render/parse round trips
+- Detect writes `_mmds_video_fps` when the opened video reports a positive fps so
+  detection-window rewrites can convert `frame_idx` values to source time without
+  re-opening the file in the interval UDF
+- `udfs.detection_ops.detections_to_candidate_views` maps Detect boxes to
+  `_mmds_candidate_views` intervals `[frame_idx/fps, (frame_idx+1)/fps)`
 
 ### Vehicle Case-Study Helpers
 
@@ -593,6 +607,30 @@ parameters.
 - `ModalitySubstitution` rewrites a direct `Record[video_field]` reference in
   one prompt-backed `Map` to `Record[transcript_field]` and uses a generated
   replacement instruction.
+- `PromptFieldPruning` removes one or more unused top-level `Record[...]`
+  references from a prompt-backed `Map` and replaces the instruction. It
+  requires every listed drop field to be directly referenced, leaves at least
+  one remaining `Record` reference, and rejects nested drop targets.
+- `BooleanMapCodeFilter` replaces a prompt-backed `Filter` with a Map that
+  materializes a boolean keep flag plus a non-LLM `Filter(..., Record[flag])`
+  field predicate. When the Filter already sits on a prompt Map, `map_schema`
+  must preserve that Map's declared schema and the rewritten Map prompt reads
+  that Map's input fields; otherwise the inserted Map reads the Filter's input
+  fields. `map_schema` only declares outputs, never prompt inputs.
+- `DetectGateBeforeMap` inserts `Detect` (YOLOE) and
+  `Filter(keep_rows_with_detections)` before a prompt-backed `Map` that reads
+  a video field, so empty detections are pruned before the VLM call. The Map
+  prompt and schema are preserved. Classes are model-chosen; the keep UDF is
+  fixed and uses the default `detections` output field.
+- `DetectedFrameWindowBeforeMap` inserts `Detect`, a UDF Map that converts
+  absolute `frame_idx` hits into `_mmds_candidate_views` one-frame intervals,
+  then a joint `VideoMap` over those views. Window padding + lowering's
+  Coalesce merge nearby hits; empty detection lists yield no views so the
+  semantic Map/Reduce is not called. Requires ctor `identity_fields`. Optional
+  `min_confidence` becomes Detect `conf`. The original Map prompt and schema
+  are preserved on the VideoMap. It derives grouping fields and guards
+  downstream field reads exactly like the temporal directives (shared helpers
+  in `temporal.py`; see below).
 - `JointTemporalPushdown` replaces a video `Map` with a transcript candidate
   `Map` followed by logical `VideoMap`. The final prompt sees all coalesced
   candidate views for a group and runs once.
@@ -617,13 +655,12 @@ The internal candidate field is reserved as `_mmds_candidate_views`.
 Generated `rewritten_prompt`/`video_prompt` parameters replace the original
 literal instruction instead of merely prepending to it. This prevents stale
 phrases such as "complete video" or "absolute time" from contradicting a
-transcript-only or per-view rewrite. Structured `Record[...]` references are
-rebuilt deterministically by the directive.
+transcript-only, field-pruned, or per-view rewrite. Structured `Record[...]`
+references are rebuilt deterministically by the directive.
 
 Directive matching is intentionally broader than parameter validation:
 `find_matches()` offers prompt-backed `Map` locations, then `apply_rewrite()`
-validates the chosen video, transcript, and query fields before changing the
-plan.
+validates the chosen fields before changing the plan.
 
 #### Automatic Rewrite Flow
 
@@ -710,8 +747,12 @@ The current suite covers:
   lowering, joint/per-view execution, coalescing, and empty candidates
 - typed rewrite paths, structural indexing, immutable subtree replacement,
   directive parameter validation, and rewrite structural invariants
-- deterministic modality-substitution and joint/per-view temporal-pushdown
-  directives, including plan-shape and end-to-end execution tests
+- deterministic modality-substitution, prompt-field pruning, boolean-map code
+  filter, detect-gate-before-map, detected-frame-window-before-map, and
+  joint/per-view temporal-pushdown directives, including plan-shape and
+  end-to-end execution tests
+- `Filter(..., Record["field"])` field-predicate parse/render/execute round trips
+- `Detect(...)` parse/render round trips, including optional `conf`
 - value-free rewrite context, sequential model selection/parameter calls,
   response validation, null selection, and the Gemini adapter
 - `Detect` behavior, including `VideoView` clip slicing and absolute-frame detection indices

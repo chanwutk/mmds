@@ -102,6 +102,20 @@ class UdfSpec:
 
 
 @dataclass(frozen=True)
+class FieldPredicateSpec:
+    """Code filter that keeps rows where one top-level field is truthy."""
+
+    field: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.field, str) or not self.field.strip():
+            raise MMDSValidationError(
+                "FieldPredicateSpec field must be a non-empty string."
+            )
+        object.__setattr__(self, "field", self.field.strip())
+
+
+@dataclass(frozen=True)
 class JoinSpec:
     """Join keys, optional pair predicate, and optional one-to-one matching."""
 
@@ -214,6 +228,8 @@ class DetectSpec:
             raise MMDSValidationError(
                 "DetectSpec conf must be a finite number in [0.0, 1.0] or None."
             )
+        if self.conf is not None:
+            object.__setattr__(self, "conf", float(self.conf))
         if self.imgsz is not None and (
             isinstance(self.imgsz, bool)
             or not isinstance(self.imgsz, int)
@@ -355,6 +371,7 @@ class VideoMapSpec:
 SemanticSpec: TypeAlias = (
     PromptSpec
     | UdfSpec
+    | FieldPredicateSpec
     | JoinSpec
     | DetectSpec
     | WindowSpec

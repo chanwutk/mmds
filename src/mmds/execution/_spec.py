@@ -5,6 +5,7 @@ from typing import Any, Protocol
 
 from ..model import (
     DatasetExpr,
+    FieldPredicateSpec,
     ForEachPrompt,
     MMDSValidationError,
     PromptSpec,
@@ -71,6 +72,12 @@ def _execute_spec(
     if isinstance(spec, UdfSpec):
         udf = spec.load()
         return udf(payload)
+    if isinstance(spec, FieldPredicateSpec):
+        if not isinstance(payload, Mapping):
+            raise MMDSValidationError(
+                "Field predicates require a mapping-like row payload."
+            )
+        return bool(payload.get(spec.field))
     raise MMDSValidationError(f"{node.kind} requires a semantic spec.")
 
 
