@@ -195,7 +195,9 @@ def _resolve_detection_fps(row: dict[str, Any]) -> float:
         return float(explicit)
 
     for value in row.values():
-        if not isinstance(value, dict):
+        if not isinstance(value, dict) or not any(
+            isinstance(value.get(key), str) for key in ("source", "path", "uri")
+        ):
             continue
         fps = value.get("fps")
         if isinstance(fps, (int, float)) and not isinstance(fps, bool) and fps > 0:
