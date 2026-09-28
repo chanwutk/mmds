@@ -296,9 +296,13 @@ class VideoMapSpec:
             raise MMDSValidationError(
                 "VideoMapSpec group_by fields must be unique."
             )
-        if self.views_field in group_by or self.clip_field in group_by:
+        if (
+            self.video_field in group_by
+            or self.views_field in group_by
+            or self.clip_field in group_by
+        ):
             raise MMDSValidationError(
-                "VideoMapSpec group_by cannot contain the views or clip field."
+                "VideoMapSpec group_by cannot contain the video, views, or clip field."
             )
         object.__setattr__(self, "group_by", group_by)
 
