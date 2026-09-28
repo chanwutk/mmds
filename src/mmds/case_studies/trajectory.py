@@ -107,14 +107,17 @@ def promote_vehicle_trajectory_row(row: dict[str, Any]) -> dict[str, Any]:
     vehicle = row.get("vehicles")
     if not isinstance(vehicle, dict):
         return {}
-    required = ("vehicle_id", "attributes", "timeline", "match_score")
+    required = ("vehicle_id", "attributes", "timeline")
     if any(key not in vehicle for key in required):
         return {}
-    return {
+    promoted = {
         "vehicle_id": vehicle["vehicle_id"],
         "attributes": vehicle["attributes"],
         "timeline": vehicle["timeline"],
-        "match_score": vehicle["match_score"],
+    }
+    if "match_score" in vehicle:
+        promoted["match_score"] = vehicle["match_score"]
+    return promoted
     }
 
 
