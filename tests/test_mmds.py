@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import atexit
+import contextlib
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -590,8 +593,24 @@ class _FakeClient:
         self.files = _FakeFiles()
 
 
+def _remove_temp_file(path: str) -> None:
+    with contextlib.suppress(FileNotFoundError):
+        os.remove(path)
+
+
+def _temp_rows_file(suffix: str):
+    """Open a temp file that is deleted when the test process exits.
+
+    The file must outlive this helper (tests pass its path to Input), so it is
+    created with delete=False and removed at interpreter exit instead.
+    """
+    handle = tempfile.NamedTemporaryFile("w", suffix=suffix, delete=False, encoding="utf-8")
+    atexit.register(_remove_temp_file, handle.name)
+    return handle
+
+
 def _write_json_rows(rows: list[dict]) -> str:
-    handle = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8")
+    handle = _temp_rows_file(".json")
     try:
         json.dump(rows, handle)
         return handle.name
@@ -600,7 +619,7 @@ def _write_json_rows(rows: list[dict]) -> str:
 
 
 def _write_jsonl_rows(rows: list[dict]) -> str:
-    handle = tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False, encoding="utf-8")
+    handle = _temp_rows_file(".jsonl")
     try:
         for row in rows:
             handle.write(json.dumps(row))
