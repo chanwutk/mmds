@@ -9,3 +9,7 @@ __pycache__/
 # YOLOE / Ultralytics artifacts (downloaded when running Detect examples)
 mobileclip_blt.ts
 yoloe-11s-seg.pt
+
+# Licensed/local case-study media
+data/i24v_traffic/videos/*.mp4
+data/uca/videos/*.mp4

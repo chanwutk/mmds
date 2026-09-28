@@ -23,7 +23,7 @@ from mmds import (  # noqa: E402
     UdfSpec,
     parse_query,
 )
-from mmds.model import DatasetExpr  # noqa: E402
+from mmds.model import DatasetExpr, UdfSpec  # noqa: E402
 from mmds.optimizers.rewriter import (  # noqa: E402
     DirectiveMetadata,
     MMDSRewriteError,
@@ -279,6 +279,23 @@ from mmds import Input
 output = Input("rows.jsonl")
 '''
         )
+        # A UDF outside udfs.* renders to an import the parser rejects.
+        rewritten = DatasetExpr(
+            kind="map",
+            source=original.output_expr,
+            spec=UdfSpec(module="os.path", name="basename"),
+        )
+
+        with self.assertRaisesRegex(MMDSRewriteError, "round-trip"):
+            validate_rewrite_structure(original, rewritten)
+
+    def test_physical_video_operators_are_source_visible(self) -> None:
+        original = parse_query(
+            '''
+from mmds import Input
+output = Input("rows.jsonl")
+'''
+        )
         rewritten = DatasetExpr(
             kind="coalesce",
             source=original.output_expr,
@@ -286,8 +303,7 @@ output = Input("rows.jsonl")
             field="clip",
         )
 
-        with self.assertRaisesRegex(MMDSRewriteError, "round-trip"):
-            validate_rewrite_structure(original, rewritten)
+        validate_rewrite_structure(original, rewritten)
 
 
 if __name__ == "__main__":

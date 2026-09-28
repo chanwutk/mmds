@@ -17,6 +17,7 @@ if str(SRC) not in sys.path:
 from mmds import (  # noqa: E402
     ForEachPrompt,
     Input,
+    Join,
     MMDSValidationError,
     PromptSpec,
     Record,
@@ -274,6 +275,39 @@ class VideoMapLoweringTests(unittest.TestCase):
         self.assertTrue(
             any(isinstance(part, ForEachPrompt) for part in lowered.spec.parts)
         )
+
+    def test_lowering_expands_video_maps_on_both_join_inputs(self) -> None:
+        left = _video_map_each(name="left_views")
+        right = _video_map_each(name="right_views")
+
+        lowered = lower_video_ops(Join(left, right, on="lecture_id"))
+
+        self.assertEqual(lowered.kind, "join")
+        self.assertEqual(lowered.source.kind, "map")
+        self.assertEqual(lowered.right_source.kind, "map")
+        self.assertNotIn(
+            "video_map_each", {node.kind for node in lowered.walk_postorder()}
+        )
+
+    def test_lowering_keeps_a_shared_join_input_shared(self) -> None:
+        shared = _video_map_each()
+
+        lowered = lower_video_ops(Join(shared, shared, on="lecture_id"))
+
+        self.assertIs(lowered.source, lowered.right_source)
+        self.assertEqual(
+            [node.kind for node in lowered.walk_postorder()],
+            ["input", "unnest", "window", "coalesce", "map", "join"],
+        )
+
+    def test_lowering_leaves_plans_without_video_maps_equal(self) -> None:
+        source = Input("rows.jsonl")
+        plan = Join(source, source, on="id")
+
+        lowered = lower_video_ops(plan)
+
+        self.assertEqual(lowered, plan)
+        self.assertIs(lowered.source, lowered.right_source)
 
 
 class VideoMapExecutionTests(unittest.TestCase):

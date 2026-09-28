@@ -16,13 +16,30 @@ from ..model import (
 
 
 def lower_video_ops(plan: DatasetExpr) -> DatasetExpr:
-    """Return an executable plan with logical video-map nodes expanded."""
+    """Return an executable plan with logical video-map nodes expanded.
 
-    source = lower_video_ops(plan.source) if plan.source is not None else None
-    rebuilt = replace(plan, source=source)
-    if rebuilt.kind not in {"video_map", "video_map_each"}:
+    Both ``source`` and ``right_source`` are lowered, and a node reached through
+    several parents (e.g. a self-join's shared upstream) is lowered once, so
+    shared subtrees stay one shared object.
+    """
+
+    lowered: dict[int, DatasetExpr] = {}
+
+    def visit(node: DatasetExpr) -> DatasetExpr:
+        cached = lowered.get(id(node))
+        if cached is not None:
+            return cached
+        source = visit(node.source) if node.source is not None else None
+        right_source = (
+            visit(node.right_source) if node.right_source is not None else None
+        )
+        rebuilt = replace(node, source=source, right_source=right_source)
+        if rebuilt.kind in {"video_map", "video_map_each"}:
+            rebuilt = _lower_video_map(rebuilt)
+        lowered[id(node)] = rebuilt
         return rebuilt
-    return _lower_video_map(rebuilt)
+
+    return visit(plan)
 
 
 def _lower_video_map(node: DatasetExpr) -> DatasetExpr:

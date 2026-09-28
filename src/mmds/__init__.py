@@ -5,6 +5,7 @@ from .dsl import (
     Filter,
     ForEach,
     Input,
+    Join,
     Map,
     Reduce,
     Unnest,
@@ -19,8 +20,8 @@ from .model import (
     Assignment,
     DatasetExpr,
     DetectSpec,
-    WindowSpec,
     ForEachPrompt,
+    JoinSpec,
     JsonValue,
     MMDSValidationError,
     PromptSpec,
@@ -31,6 +32,7 @@ from .model import (
     Row,
     UdfSpec,
     VideoMapSpec,
+    WindowSpec,
 )
 from .parser import load_query, parse_query
 from .render import program_from_plan, render_query
@@ -56,6 +58,8 @@ __all__ = [
     "ForEachPrompt",
     "GeminiPromptExecutor",
     "Input",
+    "Join",
+    "JoinSpec",
     "JsonValue",
     "LLMClient",
     "MMDSValidationError",
@@ -101,5 +105,6 @@ def __getattr__(name: str):
 
 def main() -> None:
     print(
-        "MMDS exposes a Python DSL. Import Input, Map, Filter, Reduce, Unnest, Record, and ForEach from mmds."
+        "MMDS exposes a Python DSL. Import Input, Map, Filter, Reduce, Unnest, "
+        "Join, Detect, Window, Coalesce, Record, and ForEach from mmds."
     )
