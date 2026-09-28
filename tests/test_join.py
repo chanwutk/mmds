@@ -251,5 +251,59 @@ class JoinOptimizerTests(unittest.TestCase):
         self.assertEqual(loader.call_count, 1)
 
 
+class JoinParseErrorTests(unittest.TestCase):
+    def _parse(self, call: str):
+        return parse_query(
+            "from mmds import Input, Join\n"
+            "from udfs.test_ops import join_cross_camera_test_bucket, join_test_match_score\n\n"
+            'tracks = Input("tracks.jsonl")\n'
+            f"output = {call}\n"
+        )
+
+    def test_rejects_invalid_join_calls(self) -> None:
+        one_to_one = 'one_to_one=True, score=join_test_match_score, left_key="id", right_key="id"'
+        cases = {
+            "unknown keyword": 'Join(tracks, tracks, on="id", how="left")',
+            "one positional": 'Join(tracks, on="id")',
+            "four positional": "Join(tracks, tracks, join_cross_camera_test_bucket, tracks)",
+            "no keys or predicate": "Join(tracks, tracks)",
+            "predicate not imported": "Join(tracks, tracks, unknown_predicate)",
+            "predicate string": 'Join(tracks, tracks, "predicate")',
+            "score not imported": f'Join(tracks, tracks, on="id", {one_to_one.replace("join_test_match_score", "unknown_score")})',
+            "score without one_to_one": 'Join(tracks, tracks, on="id", score=join_test_match_score)',
+            "min_score without one_to_one": 'Join(tracks, tracks, on="id", min_score=0.5)',
+            "left_key without one_to_one": 'Join(tracks, tracks, on="id", left_key="id")',
+            "one_to_one without score": 'Join(tracks, tracks, on="id", one_to_one=True, left_key="id", right_key="id")',
+            "one_to_one without keys": 'Join(tracks, tracks, on="id", one_to_one=True, score=join_test_match_score)',
+            "one_to_one not bool": 'Join(tracks, tracks, on="id", one_to_one=1)',
+            "min_score string": f'Join(tracks, tracks, on="id", {one_to_one}, min_score="0.5")',
+            "min_score bool": f'Join(tracks, tracks, on="id", {one_to_one}, min_score=True)',
+            "on not string": "Join(tracks, tracks, on=3)",
+            "on list with non-string": 'Join(tracks, tracks, on=["id", 3])',
+            "unknown source": 'Join(tracks, other, on="id")',
+            "inline source": 'Join(tracks, Input("other.jsonl"), on="id")',
+        }
+        for label, call in cases.items():
+            with self.subTest(case=label):
+                with self.assertRaises(MMDSValidationError):
+                    self._parse(call)
+
+    def test_requires_join_import(self) -> None:
+        with self.assertRaisesRegex(MMDSValidationError, "Join must be imported"):
+            parse_query(
+                "from mmds import Input\n\n"
+                'tracks = Input("tracks.jsonl")\n'
+                'output = Join(tracks, tracks, on="id")\n'
+            )
+
+    def test_key_only_join_round_trips(self) -> None:
+        program = self._parse('Join(tracks, tracks, on=["incident_id", "camera_id"], name="pairs")')
+        rendered = render_query(program)
+
+        self.assertEqual(program.output_expr.spec.keys, ("incident_id", "camera_id"))
+        self.assertEqual(parse_query(rendered).output_expr, program.output_expr)
+        self.assertEqual(render_query(parse_query(rendered)), rendered)
+
+
 if __name__ == "__main__":
     unittest.main()

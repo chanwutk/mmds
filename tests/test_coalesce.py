@@ -14,6 +14,7 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from mmds import Coalesce, DatasetExpr, Input, MMDSValidationError, execute  # noqa: E402
+from mmds import parse_query, render_query  # noqa: E402
 from mmds.execution.ops.coalesce import _apply_coalesce  # noqa: E402
 
 
@@ -174,6 +175,40 @@ class CoalesceExecutionTests(unittest.TestCase):
             [(row["clip"]["start"], row["clip"]["end"]) for row in result],
             [(5, 30), (50, 60)],
         )
+
+
+def _query(body: str, imports: str) -> str:
+    return f'from mmds import {imports}\n\nrows = Input("rows.jsonl")\n{body}\n'
+
+
+class CoalesceParseRenderTests(unittest.TestCase):
+    def _parse(self, body: str):
+        return parse_query(_query(body, "Input, Coalesce"))
+
+    def test_round_trips_string_and_list_group_by(self) -> None:
+        for body, group_by in (
+            ('output = Coalesce(rows, "id", "clip")', ("id",)),
+            ('output = Coalesce(rows, ["id", "query"], "clip", name="merged")', ("id", "query")),
+        ):
+            with self.subTest(body=body):
+                program = self._parse(body)
+                self.assertEqual(program.output_expr.group_by, group_by)
+                self.assertEqual(program.output_expr.field, "clip")
+                rendered = render_query(program)
+                self.assertEqual(parse_query(rendered).output_expr, program.output_expr)
+                self.assertEqual(render_query(parse_query(rendered)), rendered)
+
+    def test_rejects_invalid_arguments(self) -> None:
+        cases = {
+            "empty field": 'Coalesce(rows, "id", "")',
+            "non-string group_by": 'Coalesce(rows, 3, "clip")',
+            "missing field": 'Coalesce(rows, "id")',
+            "unknown keyword": 'Coalesce(rows, "id", "clip", how="merge")',
+        }
+        for label, call in cases.items():
+            with self.subTest(case=label):
+                with self.assertRaises(MMDSValidationError):
+                    self._parse(f"output = {call}")
 
 
 if __name__ == "__main__":

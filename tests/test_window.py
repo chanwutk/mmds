@@ -21,6 +21,7 @@ from mmds import (  # noqa: E402
     WindowSpec,
     execute,
 )
+from mmds import parse_query, render_query  # noqa: E402
 from mmds.execution.ops.window import _apply_window  # noqa: E402
 
 
@@ -260,6 +261,47 @@ class WindowExecutionTests(unittest.TestCase):
                 },
             ],
         )
+
+
+def _query(body: str, imports: str) -> str:
+    return f'from mmds import {imports}\n\nrows = Input("rows.jsonl")\n{body}\n'
+
+
+class WindowParseRenderTests(unittest.TestCase):
+    def _parse(self, body: str):
+        return parse_query(_query(body, "Input, Window"))
+
+    def test_round_trips_positional_arguments(self) -> None:
+        program = self._parse('output = Window(rows, "video", "candidate", "clip", 2.5, name="w")')
+        spec = program.output_expr.spec
+
+        self.assertEqual(
+            (spec.video_field, spec.candidate_field, spec.output_field, spec.padding_time),
+            ("video", "candidate", "clip", 2.5),
+        )
+        self.assertEqual(program.output_expr.name, "w")
+        rendered = render_query(program)
+        self.assertEqual(parse_query(rendered).output_expr, program.output_expr)
+        self.assertEqual(render_query(parse_query(rendered)), rendered)
+
+    def test_integer_padding_round_trips(self) -> None:
+        program = self._parse('output = Window(rows, "video", "candidate", "clip", 10)')
+
+        self.assertEqual(program.output_expr.spec.padding_time, 10.0)
+        self.assertEqual(parse_query(render_query(program)).output_expr, program.output_expr)
+
+    def test_rejects_invalid_arguments(self) -> None:
+        cases = {
+            "negative padding": 'Window(rows, "video", "c", "clip", -1)',
+            "string padding": 'Window(rows, "video", "c", "clip", "1")',
+            "empty field": 'Window(rows, "", "c", "clip", 1)',
+            "missing padding": 'Window(rows, "video", "c", "clip")',
+            "unknown keyword": 'Window(rows, "video", "c", "clip", 1, pad=2)',
+        }
+        for label, call in cases.items():
+            with self.subTest(case=label):
+                with self.assertRaises(MMDSValidationError):
+                    self._parse(f"output = {call}")
 
 
 if __name__ == "__main__":
