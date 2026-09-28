@@ -290,6 +290,26 @@ class WindowParseRenderTests(unittest.TestCase):
         self.assertEqual(program.output_expr.spec.padding_time, 10.0)
         self.assertEqual(parse_query(render_query(program)).output_expr, program.output_expr)
 
+    def test_round_trips_keyword_arguments(self) -> None:
+        program = self._parse(
+            "output = Window(\n"
+            "    rows,\n"
+            '    video_field="video",\n'
+            '    candidate_field="candidate",\n'
+            '    output_field="clip",\n'
+            "    padding_time=10,\n"
+            '    name="pad",\n'
+            ")"
+        )
+        spec = program.output_expr.spec
+        self.assertEqual(
+            (spec.video_field, spec.candidate_field, spec.output_field, spec.padding_time),
+            ("video", "candidate", "clip", 10.0),
+        )
+        self.assertEqual(program.output_expr.name, "pad")
+        rendered = render_query(program)
+        self.assertEqual(parse_query(rendered).output_expr, program.output_expr)
+
     def test_rejects_invalid_arguments(self) -> None:
         cases = {
             "negative padding": 'Window(rows, "video", "c", "clip", -1)',
@@ -297,6 +317,12 @@ class WindowParseRenderTests(unittest.TestCase):
             "empty field": 'Window(rows, "", "c", "clip", 1)',
             "missing padding": 'Window(rows, "video", "c", "clip")',
             "unknown keyword": 'Window(rows, "video", "c", "clip", 1, pad=2)',
+            "mixed positional and keyword field": (
+                'Window(rows, "video", "c", "clip", 1, padding_time=2)'
+            ),
+            "keyword missing field": (
+                'Window(rows, video_field="video", candidate_field="c", output_field="clip")'
+            ),
         }
         for label, call in cases.items():
             with self.subTest(case=label):

@@ -187,7 +187,7 @@ class DetectSpec:
     """Spec for the Detect operator: runs YOLOE on every frame of a video field."""
 
     video_field: str
-    classes: tuple[str, ...]
+    classes: tuple[str, ...] | list[str]
     model: str = "yoloe-11s-seg.pt"
     output_field: str = "detections"
     frame_stride: int = 1
@@ -199,12 +199,17 @@ class DetectSpec:
             raise MMDSValidationError(
                 "DetectSpec video_field must be a non-empty string."
             )
+        if isinstance(self.classes, str) or not isinstance(self.classes, (list, tuple)):
+            raise MMDSValidationError(
+                "DetectSpec classes must be a non-empty list of strings."
+            )
         if not self.classes:
             raise MMDSValidationError("DetectSpec classes must be non-empty.")
         if any(not isinstance(c, str) or not c for c in self.classes):
             raise MMDSValidationError(
                 "DetectSpec classes must all be non-empty strings."
             )
+        object.__setattr__(self, "classes", tuple(self.classes))
         if not self.model:
             raise MMDSValidationError("DetectSpec model must be a non-empty string.")
         if not self.output_field:

@@ -118,21 +118,30 @@ def Join(
     right_key: str | Sequence[str] | None = None,
     name: str | None = None,
 ) -> DatasetExpr:
-    """Join two datasets by keys and/or a binary UDF predicate, building a Join node
-    
+    """Join two datasets by keys and/or a binary UDF predicate.
+
     Args:
         left: Left dataset expression.
         right: Right dataset expression.
-        predicate: Binary UDF predicate.
-        on: Join keys.
-        one_to_one: Whether to enforce one-to-one matching.
+        predicate: Optional binary UDF ``predicate(left, right) -> bool``.
+        on: Equi-join field name(s) compared for equality (hash keys).
+        one_to_one: When True, greedily keep highest-scoring pairs with unique
+            side identities (requires ``score``, ``left_key``, and ``right_key``).
+        score: Binary UDF ``score(left, right) -> float`` for one-to-one ranking.
+        min_score: Optional finite score floor for one-to-one matching.
+        left_key: Field name(s) identifying a unique left-side entity when
+            ``one_to_one=True``. Distinct from ``on=`` (which are equi-join keys).
+        right_key: Field name(s) identifying a unique right-side entity when
+            ``one_to_one=True``. Distinct from ``on=``.
+        name: Optional operator label.
+
+    Validation of join options (including ``one_to_one``) is owned by
+    ``JoinSpec``.
     """
     if predicate is not None and not callable(predicate):
         raise TypeError("Join predicates must be imported UDF callables.")
     if score is not None and not callable(score):
         raise TypeError("Join score functions must be imported UDF callables.")
-    if not isinstance(one_to_one, bool):
-        raise TypeError("Join one_to_one must be a boolean.")
 
     return DatasetExpr(
         kind="join",
@@ -180,47 +189,24 @@ def Detect(
         model: YOLOE weights file.  Defaults to ``"yoloe-11s-seg.pt"``.
         output_field: Name of the output field that receives the detection
             list.  Defaults to ``"detections"``.
-        frame_stride: Keep every Nth frame; defaults to ``1``.
+        frame_stride: Run inference on every Nth decoded frame; defaults to ``1``.
+            Skipped frames are still decoded (stride saves model time, not decode).
         conf: Optional YOLO confidence floor in ``[0.0, 1.0]``.
         imgsz: Optional YOLO inference image size.
         name: Optional operator label.
+
+    Validation of Detect parameters is owned by ``DetectSpec``.
 
     The output field contains a list of objects, one per detected class::
 
         [{"type": "dog", "bboxes": [{"frame_idx": 0, "bbox": [x1,y1,x2,y2], "confidence": 0.9}, ...]}, ...]
     """
-    if not isinstance(video_field, str) or not video_field:
-        raise TypeError("Detect video_field must be a non-empty string.")
-    if not isinstance(classes, (list, tuple)) or not classes:
-        raise TypeError("Detect classes must be a non-empty list of strings.")
-    if any(not isinstance(c, str) or not c for c in classes):
-        raise TypeError("Detect classes must all be non-empty strings.")
-    if not isinstance(model, str) or not model:
-        raise TypeError("Detect model must be a non-empty string.")
-    if not isinstance(output_field, str) or not output_field:
-        raise TypeError("Detect output_field must be a non-empty string.")
-    if (
-        isinstance(frame_stride, bool)
-        or not isinstance(frame_stride, int)
-        or frame_stride < 1
-    ):
-        raise TypeError("Detect frame_stride must be an integer >= 1.")
-    if conf is not None and (
-        isinstance(conf, bool)
-        or not isinstance(conf, (int, float))
-        or not 0.0 <= float(conf) <= 1.0
-    ):
-        raise TypeError("Detect conf must be a number in [0.0, 1.0] or None.")
-    if imgsz is not None and (
-        isinstance(imgsz, bool) or not isinstance(imgsz, int) or imgsz < 1
-    ):
-        raise TypeError("Detect imgsz must be a positive integer or None.")
     return DatasetExpr(
         kind="detect",
         source=_normalize_source(data),
         spec=DetectSpec(
             video_field=video_field,
-            classes=tuple(classes),
+            classes=classes,
             model=model,
             output_field=output_field,
             frame_stride=frame_stride,

@@ -158,15 +158,15 @@ class DetectDSLTests(unittest.TestCase):
         self.assertEqual(node.name, "step_detect")
 
     def test_empty_video_field_raises(self) -> None:
-        with self.assertRaises(TypeError):
+        with self.assertRaises(MMDSValidationError):
             Detect(self._source(), "", ["dog"])
 
     def test_empty_classes_raises(self) -> None:
-        with self.assertRaises(TypeError):
+        with self.assertRaises(MMDSValidationError):
             Detect(self._source(), "clip", [])
 
     def test_blank_class_in_list_raises(self) -> None:
-        with self.assertRaises(TypeError):
+        with self.assertRaises(MMDSValidationError):
             Detect(self._source(), "clip", ["dog", ""])
 
     def test_non_string_source_raises(self) -> None:

@@ -297,8 +297,10 @@ output = Filter(mapped, ["keep ", Record["label"]])
 
         rewritten = rewrite(query, client, objective="latency")
         self.assertIn('output = Filter(mapped, ["keep ", Record["label"]])', rewritten)
-        self.assertIn("Record, and ForEach", build_rewrite_prompt(query, objective="latency"))
-        self.assertIn("Preserve the same Input(...) file paths.", build_rewrite_prompt(query))
+        prompt = build_rewrite_prompt(query, objective="latency")
+        self.assertIn("Join, Detect, Window", prompt)
+        self.assertIn("Import operators and Record/ForEach helpers from mmds", prompt)
+        self.assertIn("Preserve the same Input(...) file paths.", prompt)
 
     def test_llm_optimizer_rejects_changed_inputs(self) -> None:
         query = """

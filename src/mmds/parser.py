@@ -191,7 +191,7 @@ def _parse_call(
     if operator == "Reduce":
         _expect_args(operator, node.args, 3, keywords, allowed_keywords={"name", "schema"})
         source = _parse_source(node.args[0], bindings)
-        group_by = _parse_group_by(node.args[1])
+        group_by = _parse_group_by(node.args[1], label="Reduce group_by")
         spec = _parse_spec(
             "reduce",
             node.args[2],
@@ -239,7 +239,8 @@ def _parse_call(
             f"{operator} views_field",
         )
         group_by = _parse_group_by(
-            _require_keyword(operator, keywords, "group_by")
+            _require_keyword(operator, keywords, "group_by"),
+            label=f"{operator} group_by",
         )
         map_spec = _parse_spec(
             "map",
@@ -330,25 +331,64 @@ def _parse_call(
         )
 
     if operator == "Window":
-        _expect_args(
-            operator,
-            node.args,
-            5,
-            keywords,
-            allowed_keywords={"name"},
-        )
+        allowed_keywords = {
+            "video_field",
+            "candidate_field",
+            "output_field",
+            "padding_time",
+            "name",
+        }
+        unexpected = set(keywords) - allowed_keywords
+        if unexpected:
+            raise MMDSValidationError(
+                f"Window does not support keyword arguments: {sorted(unexpected)!r}."
+            )
+        if len(node.args) == 5:
+            duplicated = set(keywords) & {
+                "video_field",
+                "candidate_field",
+                "output_field",
+                "padding_time",
+            }
+            if duplicated:
+                raise MMDSValidationError(
+                    "Window fields must be passed positionally or by keyword, not both: "
+                    f"{sorted(duplicated)!r}."
+                )
+            video_field = _parse_string(node.args[1], "Window video_field")
+            candidate_field = _parse_string(node.args[2], "Window candidate_field")
+            output_field = _parse_string(node.args[3], "Window output_field")
+            padding_time = _parse_number(node.args[4], "Window padding_time")
+        elif len(node.args) == 1:
+            video_field = _parse_string(
+                _require_keyword(operator, keywords, "video_field"),
+                "Window video_field",
+            )
+            candidate_field = _parse_string(
+                _require_keyword(operator, keywords, "candidate_field"),
+                "Window candidate_field",
+            )
+            output_field = _parse_string(
+                _require_keyword(operator, keywords, "output_field"),
+                "Window output_field",
+            )
+            padding_time = _parse_number(
+                _require_keyword(operator, keywords, "padding_time"),
+                "Window padding_time",
+            )
+        else:
+            raise MMDSValidationError(
+                "Window expects exactly 1 positional argument with keyword fields, "
+                "or exactly 5 positional arguments."
+            )
         return DatasetExpr(
             kind="window",
             source=_parse_source(node.args[0], bindings),
             spec=WindowSpec(
-                video_field=_parse_string(node.args[1], "Window video_field"),
-                candidate_field=_parse_string(
-                    node.args[2], "Window candidate_field"
-                ),
-                output_field=_parse_string(node.args[3], "Window output_field"),
-                padding_time=_parse_number(
-                    node.args[4], "Window padding_time"
-                ),
+                video_field=video_field,
+                candidate_field=candidate_field,
+                output_field=output_field,
+                padding_time=padding_time,
             ),
             name=_parse_optional_name(keywords),
         )
@@ -369,7 +409,7 @@ def _parse_call(
         return DatasetExpr(
             kind="coalesce",
             source=_parse_source(node.args[0], bindings),
-            group_by=_parse_group_by(node.args[1]),
+            group_by=_parse_group_by(node.args[1], label="Coalesce group_by"),
             field=field,
             name=_parse_optional_name(keywords),
         )
@@ -415,7 +455,10 @@ def _parse_call(
                     keywords.get("one_to_one"), default=False
                 ),
                 score=score,
-                min_score=_parse_optional_number(keywords.get("min_score")),
+                min_score=_parse_number_or_none(
+                    keywords.get("min_score"),
+                    label="Join min_score",
+                ),
                 left_key=_parse_join_keys(keywords.get("left_key")),
                 right_key=_parse_join_keys(keywords.get("right_key")),
             ),
@@ -548,13 +591,15 @@ def _parse_record_ref(node: ast.AST, mmds_imports: set[str]) -> RecordPath | Non
     return reference
 
 
-def _parse_group_by(node: ast.AST) -> tuple[str, ...]:
+def _parse_group_by(node: ast.AST, *, label: str = "group_by") -> tuple[str, ...]:
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
         return normalize_group_by(node.value)
     if isinstance(node, (ast.List, ast.Tuple)):
-        values = [_parse_string(element, "group_by field") for element in node.elts]
+        values = [_parse_string(element, f"{label} field") for element in node.elts]
         return normalize_group_by(values)
-    raise MMDSValidationError("Reduce group_by must be a string or a list/tuple of strings.")
+    raise MMDSValidationError(
+        f"{label} must be a string or a list/tuple of strings."
+    )
 
 
 def _parse_schema(node: ast.AST | None) -> JsonValue | None:
@@ -706,18 +751,6 @@ def _parse_join_keys(node: ast.AST | None) -> tuple[str, ...]:
     raise MMDSValidationError(
         "Join keys must be a string or a list/tuple of strings."
     )
-
-
-def _parse_optional_number(node: ast.AST | None) -> float | None:
-    if node is None:
-        return None
-    if (
-        not isinstance(node, ast.Constant)
-        or isinstance(node.value, bool)
-        or not isinstance(node.value, (int, float))
-    ):
-        raise MMDSValidationError("Join min_score= must be a numeric literal.")
-    return float(node.value)
 
 
 def _expect_args(
