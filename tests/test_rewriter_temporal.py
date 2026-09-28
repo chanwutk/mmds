@@ -409,5 +409,100 @@ class TemporalDirectiveExecutionTests(unittest.TestCase):
         )
 
 
+class TemporalDownstreamFieldTests(unittest.TestCase):
+    """Temporal rewrites emit only group_by + output fields; guard consumers."""
+
+    def _program(self, downstream: str, *, schema: str | None = None):
+        schema = schema or f'{{"events": {EVENTS_SCHEMA!r}}}'
+        return parse_query(
+            f"""
+from mmds import ForEach, Input, Map, Record, Reduce, Unnest
+from udfs.test_ops import annotate
+rows = Input("lectures.jsonl")
+events = Map(
+    rows,
+    ["Find ", Record["query"], " in ", Record["video"]],
+    schema={schema},
+)
+{downstream}
+"""
+        )
+
+    def _matched_paths(self, program, directive=None):
+        directive = directive or JointTemporalPushdown(identity_fields="lecture_id")
+        index = PlanIndex.build(program.output_expr)
+        return [str(match.path) for match in directive.find_matches(index)]
+
+    def test_not_offered_when_downstream_prompt_reads_a_dropped_field(self) -> None:
+        program = self._program(
+            'output = Map(events, ["Title ", Record["title"], ": ", Record["events"]], '
+            'schema={"summary": "string"})'
+        )
+
+        self.assertNotIn("output.source", self._matched_paths(program))
+
+    def test_offered_when_the_downstream_field_is_an_identity_field(self) -> None:
+        program = self._program(
+            'output = Map(events, ["Title ", Record["title"], ": ", Record["events"]], '
+            'schema={"summary": "string"})'
+        )
+        directive = JointTemporalPushdown(identity_fields=["lecture_id", "title"])
+
+        self.assertIn("output.source", self._matched_paths(program, directive))
+
+    def test_not_offered_when_a_downstream_udf_reads_the_rows(self) -> None:
+        program = self._program("output = Map(events, annotate)")
+
+        self.assertEqual(self._matched_paths(program), [])
+
+    def test_downstream_unnest_of_an_output_field_is_allowed(self) -> None:
+        offered = self._program('output = Unnest(events, "events")')
+        blocked = self._program('output = Unnest(events, "tags")')
+
+        self.assertIn("output.source", self._matched_paths(offered))
+        self.assertNotIn("output.source", self._matched_paths(blocked))
+
+    def test_reads_after_a_row_rebuilding_reduce_do_not_count(self) -> None:
+        program = self._program(
+            'summary = Reduce(events, "course_id", ["Summarize ", ForEach([Record["events"]])], '
+            'schema={"summary": "string"})\n'
+            'output = Map(summary, ["Rate ", Record["summary"], " for ", Record["course_id"]], '
+            'schema={"rating": "string"})'
+        )
+
+        self.assertIn("output.source.source", self._matched_paths(program))
+
+    def test_group_by_excludes_fields_the_map_itself_produces(self) -> None:
+        program = self._program(
+            'output = Reduce(events, "category", ["Count ", ForEach([Record["events"]])], '
+            'schema={"count": "integer"})',
+            schema=f'{{"events": {EVENTS_SCHEMA!r}, "category": "string"}}',
+        )
+        directive = JointTemporalPushdown(identity_fields="lecture_id")
+        match = directive.find_matches(PlanIndex.build(program.output_expr))[0]
+
+        rewritten = apply_rewrite(program, directive=directive, match=match, params=PARAMS)
+
+        video_map = rewritten.output_expr.source
+        self.assertEqual(video_map.kind, "video_map")
+        self.assertNotIn("category", video_map.spec.group_by)
+        self.assertEqual(video_map.spec.group_by, ("lecture_id", "query"))
+
+    def test_apply_rejects_a_downstream_read_of_the_chosen_video_field(self) -> None:
+        program = self._program(
+            'output = Map(events, ["Replay ", Record["video"], " for ", Record["events"]], '
+            'schema={"summary": "string"})'
+        )
+        for directive in (
+            JointTemporalPushdown(identity_fields="lecture_id"),
+            PerViewTemporalPushdown(identity_fields="lecture_id"),
+        ):
+            with self.subTest(directive=type(directive).__name__):
+                matches = directive.find_matches(PlanIndex.build(program.output_expr))
+                match = next(m for m in matches if str(m.path) == "output.source")
+                with self.assertRaisesRegex(MMDSRewriteError, r"drop fields read downstream: \['video'\]"):
+                    apply_rewrite(program, directive=directive, match=match, params=PARAMS)
+
+
 if __name__ == "__main__":
     unittest.main()

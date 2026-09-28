@@ -7,12 +7,14 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from ....model import (
     DatasetExpr,
+    DetectSpec,
     PromptSpec,
     RecordPath,
     UdfSpec,
     VideoMapSpec,
+    WindowSpec,
 )
-from ..core import DirectiveMetadata, PlanIndex, RewriteMatch
+from ..core import DirectiveMetadata, NodePath, PlanIndex, RewriteMatch
 from ..errors import MMDSRewriteError
 from ._prompt import (
     format_record_paths,
@@ -83,6 +85,83 @@ class TemporalPushdownParams(BaseModel):
         return self
 
 
+# Operators whose output rows are rebuilt from their own grouping/aggregate
+# fields; nothing downstream of them can see the rewritten Map's other fields.
+_ROW_RESETTING_KINDS = frozenset({"reduce", "coalesce", "video_map", "video_map_each"})
+
+
+def _prompt_fields(spec: PromptSpec) -> set[str]:
+    return {path.path[0] for path in record_paths(spec.parts) if path.path}
+
+
+def _fields_read(node: DatasetExpr) -> set[str] | None:
+    """Top-level row fields ``node`` reads, or None if they are unknowable."""
+
+    if isinstance(node.spec, UdfSpec):
+        return None
+    fields: set[str] = set()
+    if isinstance(node.spec, PromptSpec):
+        fields |= _prompt_fields(node.spec)
+    if node.kind == "unnest" and node.field is not None:
+        fields.add(node.field)
+    if node.kind in {"reduce", "coalesce"}:
+        fields |= set(node.group_by) - {"_all"}
+    if node.kind == "coalesce" and node.field is not None:
+        fields.add(node.field)
+    if isinstance(node.spec, WindowSpec):
+        fields |= {node.spec.video_field, node.spec.candidate_field}
+    if isinstance(node.spec, DetectSpec):
+        fields.add(node.spec.video_field)
+    if isinstance(node.spec, VideoMapSpec):
+        if isinstance(node.spec.map_spec, UdfSpec):
+            return None
+        fields |= {node.spec.video_field, node.spec.views_field}
+        fields |= set(node.spec.group_by)
+        fields |= _prompt_fields(node.spec.map_spec) - {node.spec.clip_field}
+    return fields
+
+
+def _fields_written(node: DatasetExpr) -> set[str]:
+    if node.kind == "map" and isinstance(node.spec, PromptSpec):
+        return set(node.spec.output_schema or {})
+    if isinstance(node.spec, (WindowSpec, DetectSpec)):
+        return {node.spec.output_field}
+    return set()
+
+
+def _downstream_required_fields(index: PlanIndex, path: NodePath) -> set[str] | None:
+    """Fields that downstream operators read from the rows produced at ``path``.
+
+    Walks consumers from nearest to the output, ignoring fields that an
+    intermediate operator produces itself, and stops after the first operator
+    that rebuilds rows. Returns None if any consumer is a UDF.
+    """
+
+    steps = path.steps
+    consumers = sorted(
+        (
+            entry
+            for entry in index.entries
+            if len(entry.path.steps) < len(steps)
+            and steps[: len(entry.path.steps)] == entry.path.steps
+        ),
+        key=lambda entry: len(entry.path.steps),
+        reverse=True,
+    )
+    required: set[str] = set()
+    produced: set[str] = set()
+    for entry in consumers:
+        node = entry.node
+        reads = _fields_read(node)
+        if reads is None:
+            return None
+        required |= reads - produced
+        produced |= _fields_written(node)
+        if node.kind in _ROW_RESETTING_KINDS or (node.kind == "map" and node.replace):
+            break
+    return required
+
+
 class _TemporalDirective:
     params_type = TemporalPushdownParams
     views_field = "_mmds_candidate_views"
@@ -133,17 +212,48 @@ class _TemporalDirective:
         self.padding_seconds = float(padding_seconds)
 
     def find_matches(self, index: PlanIndex) -> tuple[RewriteMatch, ...]:
-        return tuple(
-            RewriteMatch(
-                path=entry.path,
-                summary=(
-                    "Prompt-backed Map reading "
-                    + format_record_paths(record_paths(entry.node.spec.parts))
-                ),
+        matches: list[RewriteMatch] = []
+        for entry in prompt_map_entries(index):
+            spec = entry.node.spec
+            if not isinstance(spec, PromptSpec):
+                continue
+            paths = record_paths(spec.parts)
+            # The video field is chosen later by the model, so treat every
+            # prompt field as preserved here; _prepare re-checks once it is known.
+            try:
+                group_by = self._derive_group_by(index, entry.path, paths, spec, None)
+            except MMDSRewriteError:
+                continue
+            dropped = self._dropped_downstream_fields(index, entry.path, group_by, spec)
+            if dropped is None or dropped:
+                continue
+            matches.append(
+                RewriteMatch(
+                    path=entry.path,
+                    summary="Prompt-backed Map reading " + format_record_paths(paths),
+                )
             )
-            for entry in prompt_map_entries(index)
-            if isinstance(entry.node.spec, PromptSpec)
-        )
+        return tuple(matches)
+
+    def _dropped_downstream_fields(
+        self,
+        index: PlanIndex,
+        path: NodePath,
+        group_by: tuple[str, ...],
+        spec: PromptSpec,
+    ) -> set[str] | None:
+        """Return downstream-read fields the rewrite would drop.
+
+        The rewritten stage emits only ``group_by`` plus the Map's output
+        schema fields. ``None`` means a downstream UDF makes the needed fields
+        unknowable, which is treated as unsafe.
+        """
+
+        required = _downstream_required_fields(index, path)
+        if required is None:
+            return None
+        preserved = set(group_by) | set(spec.output_schema or {})
+        return required - preserved
 
     def _prepare(
         self,
@@ -195,10 +305,21 @@ class _TemporalDirective:
 
         group_by = self._derive_group_by(
             index,
-            match,
+            match.path,
             paths,
+            node.spec,
             params.video_field,
         )
+        dropped = self._dropped_downstream_fields(index, match.path, group_by, node.spec)
+        if dropped is None:
+            raise MMDSRewriteError(
+                "Temporal pushdown cannot verify fields read by a downstream UDF."
+            )
+        if dropped:
+            raise MMDSRewriteError(
+                "Temporal pushdown would drop fields read downstream: "
+                f"{sorted(dropped)!r}."
+            )
         candidates = DatasetExpr(
             kind="map",
             source=node.source,
@@ -223,12 +344,13 @@ class _TemporalDirective:
     def _derive_group_by(
         self,
         index: PlanIndex,
-        match: RewriteMatch,
+        path: NodePath,
         prompt_paths: tuple[RecordPath, ...],
-        video_field: str,
+        spec: PromptSpec,
+        video_field: str | None,
     ) -> tuple[str, ...]:
         fields: list[str] = list(self.identity_fields)
-        match_steps = match.path.steps
+        match_steps = path.steps
 
         # Nodes with shorter prefix paths are downstream ancestors of the match.
         for entry in index.entries:
@@ -244,7 +366,12 @@ class _TemporalDirective:
             for path in prompt_paths
             if path.path and path.path[0] != video_field
         )
-        group_by = tuple(dict.fromkeys(fields))
+        # Fields the Map itself produces are emitted by the rewritten stage,
+        # not grouped on (they do not exist yet when views are coalesced).
+        produced = set(spec.output_schema or {})
+        group_by = tuple(
+            field for field in dict.fromkeys(fields) if field not in produced
+        )
         if self.views_field in group_by or self.clip_field in group_by:
             raise MMDSRewriteError(
                 "Derived grouping fields collide with reserved rewrite fields."

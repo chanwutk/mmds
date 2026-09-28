@@ -276,7 +276,9 @@ Operator semantics:
   `VideoView` descriptor in `output_field` while preserving the input row
 - `Coalesce`: groups rows by `group_by`, sorts the mappings in `field` by
   `start`, merges overlapping or touching intervals, and emits one row per
-  merged interval containing only the grouping fields and `field`
+  merged interval containing only the grouping fields and `field`. Only
+  intervals whose non-time fields are equal (compared by value, e.g. the same
+  video `path`) merge, so views of different videos in one group stay separate
 - `VideoMap`: logically applies one prompt to all selected video views in each
   group; execution lowers it to `Unnest -> Window -> Coalesce -> Reduce`
 - `VideoMapEach`: logically applies the same map independently to every
@@ -290,8 +292,8 @@ an explicit approximate rewrite rather than part of the logical operators.
 
 `group_by` is also the boundary for row fields preserved through coalescing.
 For prompt-backed video maps, every referenced non-video field must therefore
-appear in `group_by`; construction fails early when it does not. Candidate and
-clip fields cannot be grouping keys. The prompt must reference the complete
+appear in `group_by`; construction fails early when it does not. The video,
+candidate, and clip fields cannot be grouping keys. The prompt must reference the complete
 `Record[video_field]` value directly so lowering can replace it with each
 generated `VideoView`. A UDF-backed `VideoMapEach` receives only the grouping
 fields and generated `clip_field`, matching the row shape emitted by
@@ -600,9 +602,15 @@ parameters.
   and sorts source-time events; it does not merge or deduplicate them.
 
 Temporal directives require explicit `identity_fields`, such as
-`lecture_id`, so intervals from different source videos cannot be grouped
-together. They preserve non-video fields read by the original prompt and
-downstream grouping keys. Candidate intervals use source-video time, while a
+`lecture_id`, as the stable grouping key for each source row. They preserve
+non-video fields read by the original prompt and downstream grouping keys
+(except fields the matched `Map` itself produces). Because the rewritten stage
+emits only those grouping fields plus the `Map`'s output fields, a match is
+offered only when every field read downstream survives: consumers are checked
+from the matched `Map` toward the output, stopping after the first
+row-rebuilding operator (`Reduce`, `Coalesce`, `VideoMap`, `VideoMapEach`). A
+downstream UDF makes the needed fields unknowable, so no match is offered;
+`apply` re-checks once the model has chosen the video field. Candidate intervals use source-video time, while a
 per-view verifier returns clip-relative time that is subsequently rebased.
 The internal candidate field is reserved as `_mmds_candidate_views`.
 
