@@ -19,8 +19,8 @@ def rebase_clip_events(row: dict[str, Any]) -> dict[str, Any]:
     return {"events": events}
 
 
-def reconcile_events(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    """Combine source-time events from several windows and sort them."""
+def collect_sorted_events(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Collect source-time events from several rows and sort without merging."""
     events = [
         dict(event)
         for row in rows
@@ -28,3 +28,8 @@ def reconcile_events(rows: list[dict[str, Any]]) -> dict[str, Any]:
     ]
     events.sort(key=lambda event: event["start"])
     return {"events": events}
+
+
+def reconcile_events(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Compatibility wrapper for the former, less explicit UDF name."""
+    return collect_sorted_events(rows)
