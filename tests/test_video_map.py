@@ -17,6 +17,7 @@ if str(SRC) not in sys.path:
 from mmds import (  # noqa: E402
     ForEachPrompt,
     Input,
+    Join,
     MMDSValidationError,
     PromptSpec,
     Record,
@@ -117,6 +118,10 @@ class VideoMapDSLTests(unittest.TestCase):
                         group_by=["lecture_id", "question"],
                         schema={"answer": "string"},
                     )
+
+    def test_video_field_cannot_be_a_grouping_key(self) -> None:
+        with self.assertRaisesRegex(MMDSValidationError, "video, views, or clip"):
+            _video_map_each(group_by=["lecture_id", "question", "video"])
 
     def test_views_and_clip_fields_cannot_be_grouping_keys(self) -> None:
         for group_by in (
@@ -274,6 +279,73 @@ class VideoMapLoweringTests(unittest.TestCase):
         self.assertTrue(
             any(isinstance(part, ForEachPrompt) for part in lowered.spec.parts)
         )
+
+    def test_lowering_expands_video_maps_on_both_join_inputs(self) -> None:
+        left = _video_map_each(name="left_views")
+        right = _video_map_each(name="right_views")
+
+        lowered = lower_video_ops(Join(left, right, on="lecture_id"))
+
+        self.assertEqual(lowered.kind, "join")
+        self.assertEqual(lowered.source.kind, "map")
+        self.assertEqual(lowered.right_source.kind, "map")
+        self.assertNotIn(
+            "video_map_each", {node.kind for node in lowered.walk_postorder()}
+        )
+
+    def test_lowering_keeps_a_shared_join_input_shared(self) -> None:
+        shared = _video_map_each()
+
+        lowered = lower_video_ops(Join(shared, shared, on="lecture_id"))
+
+        self.assertIs(lowered.source, lowered.right_source)
+        self.assertEqual(
+            [node.kind for node in lowered.walk_postorder()],
+            ["input", "unnest", "window", "coalesce", "map", "join"],
+        )
+
+    def test_lowered_plan_keeps_views_from_different_videos_separate(self) -> None:
+        rows = [
+            {
+                "lecture_id": 1,
+                "question": "q",
+                "video": {"type": "Video", "path": "a.mp4"},
+                "candidate_views": [{"start": 0, "end": 5}],
+            },
+            {
+                "lecture_id": 1,
+                "question": "q",
+                "video": {"type": "Video", "path": "b.mp4"},
+                "candidate_views": [{"start": 3, "end": 9}],
+            },
+        ]
+        temp_dir, path = _write_rows(rows)
+        self.addCleanup(temp_dir.cleanup)
+        logical = VideoMapEach(
+            Input(path),
+            _video_prompt(),
+            video_field="video",
+            views_field="candidate_views",
+            group_by=["lecture_id", "question"],
+            schema={"answer": "string"},
+            padding_time=0,
+        )
+
+        coalesced = execute(lower_video_ops(logical).source)
+
+        self.assertCountEqual(
+            [(row["clip"]["path"], row["clip"]["start"], row["clip"]["end"]) for row in coalesced],
+            [("a.mp4", 0.0, 5.0), ("b.mp4", 3.0, 9.0)],
+        )
+
+    def test_lowering_leaves_plans_without_video_maps_equal(self) -> None:
+        source = Input("rows.jsonl")
+        plan = Join(source, source, on="id")
+
+        lowered = lower_video_ops(plan)
+
+        self.assertEqual(lowered, plan)
+        self.assertIs(lowered.source, lowered.right_source)
 
 
 class VideoMapExecutionTests(unittest.TestCase):

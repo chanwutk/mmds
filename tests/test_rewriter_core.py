@@ -17,13 +17,15 @@ if str(SRC) not in sys.path:
 
 from mmds import (  # noqa: E402
     Input,
+    Join,
     PromptSpec,
     QueryProgram,
     RecordPath,
     UdfSpec,
+    Unnest,
     parse_query,
 )
-from mmds.model import DatasetExpr  # noqa: E402
+from mmds.model import DatasetExpr, UdfSpec  # noqa: E402
 from mmds.optimizers.rewriter import (  # noqa: E402
     DirectiveMetadata,
     MMDSRewriteError,
@@ -173,6 +175,21 @@ class PlanIndexTests(unittest.TestCase):
             index.replace(NodePath(), object())  # type: ignore[arg-type]
 
 
+class MultiInputPlanTests(unittest.TestCase):
+    def test_build_rejects_a_join_at_the_output(self) -> None:
+        rows = Input("rows.jsonl")
+
+        with self.assertRaisesRegex(MMDSRewriteError, "multi-input.*'join' at 'output'"):
+            PlanIndex.build(Join(rows, rows, on="id"))
+
+    def test_build_rejects_a_join_below_the_output(self) -> None:
+        rows = Input("rows.jsonl")
+        plan = Unnest(Join(rows, rows, on="id"), "items")
+
+        with self.assertRaisesRegex(MMDSRewriteError, "'join' at 'output.source'"):
+            PlanIndex.build(plan)
+
+
 class DirectiveContractTests(unittest.TestCase):
     def test_metadata_and_match_text_must_be_non_empty(self) -> None:
         with self.assertRaisesRegex(MMDSRewriteError, "metadata"):
@@ -279,6 +296,23 @@ from mmds import Input
 output = Input("rows.jsonl")
 '''
         )
+        # A UDF outside udfs.* renders to an import the parser rejects.
+        rewritten = DatasetExpr(
+            kind="map",
+            source=original.output_expr,
+            spec=UdfSpec(module="os.path", name="basename"),
+        )
+
+        with self.assertRaisesRegex(MMDSRewriteError, "round-trip"):
+            validate_rewrite_structure(original, rewritten)
+
+    def test_physical_video_operators_are_source_visible(self) -> None:
+        original = parse_query(
+            '''
+from mmds import Input
+output = Input("rows.jsonl")
+'''
+        )
         rewritten = DatasetExpr(
             kind="coalesce",
             source=original.output_expr,
@@ -286,8 +320,7 @@ output = Input("rows.jsonl")
             field="clip",
         )
 
-        with self.assertRaisesRegex(MMDSRewriteError, "round-trip"):
-            validate_rewrite_structure(original, rewritten)
+        validate_rewrite_structure(original, rewritten)
 
 
 if __name__ == "__main__":

@@ -57,6 +57,11 @@ class PlanIndex:
         entries: list[PlanEntry] = []
 
         def visit(node: DatasetExpr, path: NodePath) -> None:
+            if node.right_source is not None:
+                raise MMDSRewriteError(
+                    f"Rewrites do not support multi-input operators yet; found "
+                    f"{node.kind!r} at {str(path)!r}."
+                )
             entries.append(PlanEntry(path=path, node=node))
             if node.source is not None:
                 visit(node.source, path.source())

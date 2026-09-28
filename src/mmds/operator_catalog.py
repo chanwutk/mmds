@@ -18,11 +18,12 @@ OPERATOR_DEFINITIONS: tuple[OperatorDefinition, ...] = (
     OperatorDefinition("Filter", "filter"),
     OperatorDefinition("Reduce", "reduce"),
     OperatorDefinition("Unnest", "unnest"),
+    OperatorDefinition("Join", "join"),
+    OperatorDefinition("Detect", "detect"),
+    OperatorDefinition("Window", "window"),
+    OperatorDefinition("Coalesce", "coalesce"),
     OperatorDefinition("VideoMap", "video_map"),
     OperatorDefinition("VideoMapEach", "video_map_each"),
-    OperatorDefinition("Detect", "detect"),
-    OperatorDefinition("Window", "window", source_visible=False),
-    OperatorDefinition("Coalesce", "coalesce", source_visible=False),
 )
 
 OPERATOR_BY_KIND = {

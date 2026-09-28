@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Iterable, Iterator, Mapping
 from typing import Any
 
@@ -11,9 +12,9 @@ def _apply_coalesce(node: DatasetExpr, rows: Iterable[Row]) -> Iterator[Row]:
     if field is None:
         raise MMDSValidationError("Coalesce requires an interval field.")
 
-    groups: dict[tuple[Any, ...], list[dict[str, Any]]] = {}
+    groups: dict[tuple[tuple[Any, ...], str], list[dict[str, Any]]] = {}
     for row in rows:
-        key = tuple(row[name] for name in node.group_by)
+        group_key = tuple(row[name] for name in node.group_by)
         interval = row[field]
         if not isinstance(interval, Mapping):
             raise MMDSValidationError(
@@ -32,9 +33,13 @@ def _apply_coalesce(node: DatasetExpr, rows: Iterable[Row]) -> Iterator[Row]:
                 "Coalesce interval end must be greater than start."
             )
 
-        groups.setdefault(key, []).append(interval)
+        # Only intervals over the same media (all non-time fields equal, e.g.
+        # the same video path) may merge; different videos stay separate.
+        groups.setdefault((group_key, _interval_identity(interval)), []).append(
+            interval
+        )
 
-    for key, intervals in groups.items():
+    for (key, _identity), intervals in groups.items():
         intervals.sort(key=lambda interval: interval["start"])
         current = intervals[0]
 
@@ -46,6 +51,11 @@ def _apply_coalesce(node: DatasetExpr, rows: Iterable[Row]) -> Iterator[Row]:
                 current = interval
 
         yield _output_row(node, field, key, current)
+
+
+def _interval_identity(interval: Mapping[str, Any]) -> str:
+    identity = {k: v for k, v in interval.items() if k not in {"start", "end"}}
+    return json.dumps(identity, sort_keys=True, default=repr)
 
 
 def _output_row(

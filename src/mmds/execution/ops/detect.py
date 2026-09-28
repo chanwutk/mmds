@@ -121,7 +121,9 @@ def _apply_detect(node: DatasetExpr, row: Row) -> Row:
         iterable,
         list(spec.classes),
         spec.model,
+        frame_stride=spec.frame_stride,
         conf=spec.conf,
+        imgsz=spec.imgsz,
     )
 
     result = dict(row)
@@ -137,7 +139,9 @@ def _detect_in_video(
     classes: list[str],
     model_name: str,
     *,
+    frame_stride: int = 1,
     conf: float | None = None,
+    imgsz: int | None = None,
 ) -> list[dict[str, Any]]:
     """Run detection on every frame and group bboxes by detected class.
 
@@ -150,6 +154,15 @@ def _detect_in_video(
 
         {"type": <class_name>, "bboxes": [{"frame_idx": int, "bbox": [x1,y1,x2,y2], "confidence": float}, ...]}
     """
+    if frame_stride < 1:
+        raise MMDSValidationError("_detect_in_video frame_stride must be >= 1.")
+
+    predict_kwargs: dict[str, Any] = {}
+    if conf is not None:
+        predict_kwargs["conf"] = conf
+    if imgsz is not None:
+        predict_kwargs["imgsz"] = imgsz
+
     model = _get_model(model_name)
 
     with _model_lock:
@@ -157,15 +170,16 @@ def _detect_in_video(
         model.set_classes(classes, text_pe)
 
     base_frame_idx = video.start_frame if isinstance(video, VideoView) else 0
-    predict_kwargs: dict[str, Any] = {"verbose": False, "device": _get_device()}
-    if conf is not None:
-        predict_kwargs["conf"] = conf
 
     by_class: dict[str, list[dict[str, Any]]] = {}
     for relative_frame_idx, frame in enumerate(video):
+        if relative_frame_idx % frame_stride != 0:
+            continue
         frame_idx = base_frame_idx + relative_frame_idx
         with _model_lock:
-            results = model.predict(frame, **predict_kwargs)
+            results = model.predict(
+                frame, verbose=False, device=_get_device(), **predict_kwargs
+            )
         for result in results:
             boxes = result.boxes
             if boxes is None:
