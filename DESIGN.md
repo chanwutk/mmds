@@ -361,6 +361,66 @@ Design rules:
 
 - the OpenCV/NumPy stack (and, at run time, `torch`/`ultralytics`) is imported **lazily**: `mmds.execution` imports `.ops.detect` only when a `detect` node actually executes, and `mmds.VideoView` is a lazy export via module `__getattr__`. This keeps `import mmds` and the prompt/UDF execution paths usable without the heavy CV/ML dependencies installed.
 
+### Vehicle Case-Study Helpers
+
+The cross-camera vehicle case study adds reusable helpers plus UDF modules
+built on `Detect` output. None of them are DSL operators; queries use them as
+ordinary `Map`, `Filter`, and `Join` UDFs.
+
+Shared utilities:
+
+- [src/mmds/utilities/media.py](src/mmds/utilities/media.py):
+  `resolve_video_source` extracts a path/URL from a video field value (a string,
+  or a dict with a `source`, `path`, or `uri` string key; otherwise
+  `MMDSValidationError`). `resolve_local_media_path` resolves a local path and
+  requires it to stay under a given media root.
+- `read_frames_at_indices(video_path, frame_indices)` in
+  [src/mmds/utilities/video.py](src/mmds/utilities/video.py) decodes the
+  requested frames with a single `cv2.VideoCapture`, in ascending order. It
+  ignores duplicate, negative, and non-integer indices and omits frames that
+  fail to decode, so the result may be missing requested frames (or be empty if
+  the file cannot be opened).
+- [src/mmds/case_studies/](src/mmds/case_studies/) holds the case-study logic,
+  lazily exported from `mmds.case_studies`. `predicates` has the cross-camera
+  pair checks (`different_cameras`, `canonical_corridor_pair`,
+  `travel_time_compatible`, `direction_compatible`, `speed_compatible`, combined
+  as `same_vehicle`), `temporal_overlap`/`temporal_iou`, and the fallback
+  `vehicle_match_score`. Camera order comes from a `highway<N>` suffix on
+  `camera_id`. `trajectory` converts a Join match into the
+  `vehicle_id`/`attributes`/`timeline`/`match_score` trajectory record.
+
+UDF modules under [udfs/](udfs/) (`join_ops` and `trajectory_ops` are thin
+wrappers over `mmds.case_studies`):
+
+- `detection_ops.build_vehicle_frame_detections` flattens vehicle `Detect`
+  output into per-frame records (`frame_id`, `camera_id`, `bbox`, `confidence`,
+  `vehicle_class`, `color`, `subtype`). Color comes from the learned classifier
+  in `vehicle_color_model` when weights are available and falls back to an HSV
+  heuristic otherwise; subtype comes from box geometry. Frames for all detected
+  boxes are decoded up front, so memory grows with the number of detected
+  frames.
+- `tracking_ops.strongsort_track_frame_detections` runs a greedy IoU tracker
+  (with velocity prediction and gap bridging) over those records and emits
+  `track_summaries` with ISO-8601 `start_time`/`end_time`, attributes, average
+  image-plane speed, and entry/exit directions. Timestamps are
+  `recorded_at + frame_id / fps` when the row has `recorded_at`, otherwise
+  epoch + `frame_id / fps`; `frame_id` is the absolute source-video frame index
+  that `Detect` reports, including for `VideoView` rows.
+  `is_substantial_track` filters short or low-confidence tracks.
+- `reid_ops.attach_track_summary_embeddings` embeds one representative crop per
+  track through `vehicle_reid_model` (a frozen torchvision ResNet50, falling back
+  to an RGB histogram when torch or its weights are unavailable).
+  `appearance_match_score` is the Join `score=` UDF: cosine similarity of the two
+  embeddings, or `vehicle_match_score` when either side has none.
+- `vehicle_color_model` loads MobileNetV3-small color weights from
+  `MMDS_VEHICLE_COLOR_WEIGHTS` (or the default `models/` path); train them with
+  [scripts/train_vehicle_color_model.py](scripts/train_vehicle_color_model.py).
+  Missing weights or ML dependencies make it return `None` rather than raise.
+
+These helpers degrade instead of failing: an unreadable video yields no crops,
+so colors fall back to the heuristic and embeddings are empty. Callers that need
+a hard failure must check inputs themselves.
+
 ### UDF Contract
 
 UDF discovery lives in [src/mmds/udf_catalog.py](/Users/chanwutk/Documents/mmds/src/mmds/udf_catalog.py).
