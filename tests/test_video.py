@@ -4,7 +4,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
@@ -25,6 +25,7 @@ from mmds.utilities.video import (  # noqa: E402
     _resolve,
     _yt_download,
     open_video,
+    read_frames_at_indices,
 )
 
 
@@ -338,6 +339,42 @@ class VideoIterationTests(unittest.TestCase):
             v = Video(Path("/tmp/test.mp4"))
             self.assertEqual(len(list(v)), 1)
             self.assertEqual(len(list(v)), 1)
+
+
+class MultiFrameReaderTests(unittest.TestCase):
+    def test_reads_sorted_unique_indices_with_one_capture(self) -> None:
+        frames = {
+            2: np.full((2, 2, 3), 2, dtype=np.uint8),
+            5: np.full((2, 2, 3), 5, dtype=np.uint8),
+        }
+        cap = MagicMock()
+        cap.read.side_effect = [(True, frames[2]), (True, frames[5])]
+
+        with patch(
+            "mmds.utilities.video.cv2.VideoCapture", return_value=cap
+        ) as capture:
+            result = read_frames_at_indices(
+                "/tmp/test.mp4", [5, 2, 5, -1, True, 2]
+            )
+
+        self.assertEqual(list(result), [2, 5])
+        capture.assert_called_once_with("/tmp/test.mp4")
+        self.assertEqual(
+            cap.set.call_args_list,
+            [
+                call(cv2.CAP_PROP_POS_FRAMES, 2),
+                call(cv2.CAP_PROP_POS_FRAMES, 5),
+            ],
+        )
+        cap.release.assert_called_once()
+
+    def test_omits_frames_that_fail_to_decode(self) -> None:
+        frame = np.full((2, 2, 3), 3, dtype=np.uint8)
+        cap = MagicMock()
+        cap.read.side_effect = [(False, None), (True, frame)]
+        with patch("mmds.utilities.video.cv2.VideoCapture", return_value=cap):
+            result = read_frames_at_indices("/tmp/test.mp4", [1, 3])
+        self.assertEqual(list(result), [3])
 
 
 class VideoViewTests(unittest.TestCase):
