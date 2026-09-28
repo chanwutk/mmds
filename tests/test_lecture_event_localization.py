@@ -23,6 +23,7 @@ from examples.lecture_event_localization_video_only import (  # noqa: E402
 )
 from mmds import StaticPromptExecutor, execute  # noqa: E402
 from mmds.model import DatasetExpr, PromptSpec  # noqa: E402
+from mmds.model import MMDSValidationError  # noqa: E402
 
 
 def nodes_by_name(plan: DatasetExpr) -> dict[str, DatasetExpr]:
@@ -208,6 +209,129 @@ class LectureEventLocalizationPlanTests(unittest.TestCase):
             [{**row, "events": {"start": 110, "end": 116}}],
         )
 
+
+class TranscriptGatedEdgeCaseTests(unittest.TestCase):
+    """Pipeline behavior at the edges of the transcript-gated query."""
+
+    def _row(self, **overrides) -> dict:
+        row = {
+            "lecture_id": "lecture-1",
+            "query_text": "Find the physical demonstration.",
+            "video": {"type": "Video", "path": "/tmp/lecture.mp4"},
+            "transcript": [{"start": 100, "end": 120, "text": "A demonstration begins."}],
+        }
+        row.update(overrides)
+        return row
+
+    def _run(self, rows, candidate_handler, verification_handler):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "lectures.jsonl"
+            path.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+            plan = build_two_stage_query(str(path))
+            nodes = nodes_by_name(plan)
+            executor = StaticPromptExecutor(
+                {
+                    ("map", nodes["transcript_candidates"].spec.cache_key()): candidate_handler,
+                    ("map", nodes["verify_video_events"].spec.cache_key()): verification_handler,
+                }
+            )
+            return execute(plan, prompt_executor=executor)
+
+    def test_same_query_on_two_lectures_stays_separate(self) -> None:
+        rows = [self._row(lecture_id="lecture-1"), self._row(lecture_id="lecture-2")]
+
+        def candidate_handler(resolved_prompt, payload, context):
+            return {"candidates": [{"start": 100, "end": 110}]}
+
+        def verification_handler(resolved_prompt, payload, context):
+            return {"clip_events": [{"start": 10, "end": 12}]}
+
+        result = self._run(rows, candidate_handler, verification_handler)
+
+        self.assertCountEqual(
+            result,
+            [
+                {"lecture_id": "lecture-1", "events": {"start": 100.0, "end": 102.0}},
+                {"lecture_id": "lecture-2", "events": {"start": 100.0, "end": 102.0}},
+            ],
+        )
+
+    def test_disjoint_candidates_are_verified_as_separate_clips(self) -> None:
+        seen_clips: list[tuple[float, float]] = []
+
+        def candidate_handler(resolved_prompt, payload, context):
+            return {"candidates": [{"start": 300, "end": 310}, {"start": 100, "end": 110}]}
+
+        def verification_handler(resolved_prompt, payload, context):
+            seen_clips.append((payload["clip"]["start"], payload["clip"]["end"]))
+            return {"clip_events": [{"start": 5, "end": 6}]}
+
+        result = self._run([self._row()], candidate_handler, verification_handler)
+
+        self.assertCountEqual(seen_clips, [(90.0, 120.0), (290.0, 320.0)])
+        self.assertEqual(
+            result,
+            [
+                {"lecture_id": "lecture-1", "events": {"start": 95.0, "end": 96.0}},
+                {"lecture_id": "lecture-1", "events": {"start": 295.0, "end": 296.0}},
+            ],
+        )
+
+    def test_candidate_near_video_start_clamps_clip_to_zero(self) -> None:
+        seen_clips: list[tuple[float, float]] = []
+
+        def candidate_handler(resolved_prompt, payload, context):
+            return {"candidates": [{"start": 3, "end": 8}]}
+
+        def verification_handler(resolved_prompt, payload, context):
+            seen_clips.append((payload["clip"]["start"], payload["clip"]["end"]))
+            return {"clip_events": [{"start": 1, "end": 2}]}
+
+        result = self._run([self._row()], candidate_handler, verification_handler)
+
+        self.assertEqual(seen_clips, [(0, 18)])
+        self.assertEqual(
+            result,
+            [{"lecture_id": "lecture-1", "events": {"start": 1, "end": 2}}],
+        )
+
+    def test_no_candidates_skips_video_stage_and_produces_no_rows(self) -> None:
+        verification_calls: list[dict] = []
+
+        def candidate_handler(resolved_prompt, payload, context):
+            return {"candidates": []}
+
+        def verification_handler(resolved_prompt, payload, context):
+            verification_calls.append(payload)
+            return {"clip_events": []}
+
+        result = self._run([self._row()], candidate_handler, verification_handler)
+
+        self.assertEqual(result, [])
+        self.assertEqual(verification_calls, [])
+
+    def test_no_verified_events_produces_no_rows(self) -> None:
+        def candidate_handler(resolved_prompt, payload, context):
+            return {"candidates": [{"start": 100, "end": 110}]}
+
+        def verification_handler(resolved_prompt, payload, context):
+            return {"clip_events": []}
+
+        result = self._run([self._row()], candidate_handler, verification_handler)
+
+        self.assertEqual(result, [])
+
+    def test_reversed_candidate_interval_fails_explicitly(self) -> None:
+        # Current behavior: candidates are not sanitized, so a model interval
+        # with end <= start stops the run at Window instead of being dropped.
+        def candidate_handler(resolved_prompt, payload, context):
+            return {"candidates": [{"start": 120, "end": 100}]}
+
+        def verification_handler(resolved_prompt, payload, context):
+            return {"clip_events": []}
+
+        with self.assertRaisesRegex(MMDSValidationError, "Window end must be greater than start"):
+            self._run([self._row()], candidate_handler, verification_handler)
 
 if __name__ == "__main__":
     unittest.main()
