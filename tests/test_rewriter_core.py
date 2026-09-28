@@ -17,10 +17,12 @@ if str(SRC) not in sys.path:
 
 from mmds import (  # noqa: E402
     Input,
+    Join,
     PromptSpec,
     QueryProgram,
     RecordPath,
     UdfSpec,
+    Unnest,
     parse_query,
 )
 from mmds.model import DatasetExpr, UdfSpec  # noqa: E402
@@ -171,6 +173,21 @@ class PlanIndexTests(unittest.TestCase):
             index.replace(missing, Input("replacement.jsonl"))
         with self.assertRaisesRegex(TypeError, "DatasetExpr"):
             index.replace(NodePath(), object())  # type: ignore[arg-type]
+
+
+class MultiInputPlanTests(unittest.TestCase):
+    def test_build_rejects_a_join_at_the_output(self) -> None:
+        rows = Input("rows.jsonl")
+
+        with self.assertRaisesRegex(MMDSRewriteError, "multi-input.*'join' at 'output'"):
+            PlanIndex.build(Join(rows, rows, on="id"))
+
+    def test_build_rejects_a_join_below_the_output(self) -> None:
+        rows = Input("rows.jsonl")
+        plan = Unnest(Join(rows, rows, on="id"), "items")
+
+        with self.assertRaisesRegex(MMDSRewriteError, "'join' at 'output.source'"):
+            PlanIndex.build(plan)
 
 
 class DirectiveContractTests(unittest.TestCase):

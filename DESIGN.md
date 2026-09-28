@@ -57,7 +57,7 @@ The current implementation supports:
 - UDF discovery from `.py` and `.pyi`
 - a conservative rule optimizer and a validation-heavy LLM optimizer scaffold
 - `Detect` operator for frame-level YOLOE object detection on video fields
-- programmatic `Window` and `Coalesce` operators for constructing padded
+- `Window` and `Coalesce` operators for constructing padded
   source-time video views and merging overlapping candidate intervals
 - logical `VideoMap` and `VideoMapEach` operators that lower candidate intervals
   into non-materialized video-view execution plans
@@ -539,6 +539,9 @@ It is deliberately independent of model selection and dataset profiling.
   location. It contains no field or schema analysis.
 - `PlanIndex` traverses the plan, resolves addresses, and replaces a subtree
   by rebuilding only its ancestors. It never mutates or copies the full plan.
+  Addresses follow `source` edges only, so `PlanIndex.build` raises
+  `MMDSRewriteError` for any plan containing a multi-input operator (`Join`);
+  the rewriter does not support those plans yet.
 - `RewriteMatch` records that a directive can be applied at one path.
 - `RewriteDirective` separates applicability (`find_matches`) from a
   deterministic structural transformation (`apply`).

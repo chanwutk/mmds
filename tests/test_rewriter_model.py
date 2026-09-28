@@ -150,6 +150,25 @@ class RewriteModelFlowTests(unittest.TestCase):
         self.assertIs(result.program, program)
         self.assertEqual(len(model.prompts), 1)
 
+    def test_join_plans_are_rejected_before_any_model_call(self) -> None:
+        program = parse_query(
+            '''
+from mmds import Input, Join
+rows = Input("rows.jsonl")
+output = Join(rows, rows, on="lecture_id")
+'''
+        )
+        model = SequenceModel()
+
+        with self.assertRaisesRegex(MMDSRewriteError, "multi-input"):
+            rewrite_once(
+                program,
+                directives=[PerViewTemporalPushdown(identity_fields="lecture_id")],
+                model=model,
+            )
+
+        self.assertEqual(model.prompts, [])
+
     def test_invalid_selection_stops_before_parameter_call(self) -> None:
         model = SequenceModel('{"option_id": "99"}')
 
