@@ -207,6 +207,49 @@ class JoinOptimizerTests(unittest.TestCase):
         self.assertIsNot(optimized.source, source)
         self.assertEqual(optimized, plan)
 
+    def test_rule_optimizer_preserves_identity_in_nested_self_joins(self) -> None:
+        source = Map(Input("tracks.jsonl"), empty_update)
+        inner = Join(source, source, join_cross_camera_test_bucket)
+        plan = Join(inner, source, join_cross_camera_test_bucket)
+
+        optimized = optimize(plan)
+
+        self.assertIs(optimized.source.source, optimized.source.right_source)
+        self.assertIs(optimized.right_source, optimized.source.source)
+        self.assertEqual(optimized, plan)
+
+    def test_rule_optimizer_self_join_renders_shared_upstream_once(self) -> None:
+        source = Map(Input("tracks.jsonl"), empty_update, name="tracks_mapped")
+        plan = Join(source, source, join_cross_camera_test_bucket)
+
+        rendered = render_query(optimize(plan))
+
+        self.assertEqual(rendered.count('Input("tracks.jsonl")'), 1)
+        self.assertEqual(rendered.count("Map("), 1)
+        self.assertRegex(rendered, r"Join\((\w+), \1, join_cross_camera_test_bucket\)")
+
+    def test_rule_optimizer_self_join_executes_shared_upstream_once(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = _write_jsonl(
+                Path(temp_dir),
+                "tracks.jsonl",
+                [
+                    {"incident_id": "a", "camera_id": "left"},
+                    {"incident_id": "a", "camera_id": "right"},
+                ],
+            )
+            source = Input(path)
+            plan = Join(source, source, join_cross_camera_test_bucket, on="incident_id")
+            original_loader = execution_module._load_input_rows
+            with patch.object(
+                execution_module,
+                "_load_input_rows",
+                wraps=original_loader,
+            ) as loader:
+                execute(optimize(plan))
+
+        self.assertEqual(loader.call_count, 1)
+
 
 if __name__ == "__main__":
     unittest.main()
