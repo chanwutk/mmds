@@ -162,6 +162,68 @@ def _downstream_required_fields(index: PlanIndex, path: NodePath) -> set[str] | 
     return required
 
 
+def derive_view_group_by(
+    index: PlanIndex,
+    path: NodePath,
+    *,
+    identity_fields: tuple[str, ...],
+    prompt_paths: tuple[RecordPath, ...],
+    spec: PromptSpec,
+    video_field: str | None,
+    reserved: set[str],
+) -> tuple[str, ...]:
+    """Grouping fields for a video-view rewrite of the Map at ``path``.
+
+    Identity fields, downstream grouping keys, and the Map's non-video prompt
+    fields, excluding fields the Map itself produces (they are emitted by the
+    rewritten stage and do not exist yet when views are coalesced).
+    """
+
+    fields: list[str] = list(identity_fields)
+    match_steps = path.steps
+
+    # Nodes with shorter prefix paths are downstream ancestors of the match.
+    for entry in index.entries:
+        entry_steps = entry.path.steps
+        if (
+            len(entry_steps) < len(match_steps)
+            and match_steps[: len(entry_steps)] == entry_steps
+        ):
+            fields.extend(entry.node.group_by)
+
+    fields.extend(
+        prompt_path.path[0]
+        for prompt_path in prompt_paths
+        if prompt_path.path and prompt_path.path[0] != video_field
+    )
+    produced = set(spec.output_schema or {})
+    group_by = tuple(field for field in dict.fromkeys(fields) if field not in produced)
+    if reserved.intersection(group_by):
+        raise MMDSRewriteError(
+            "Derived grouping fields collide with reserved rewrite fields."
+        )
+    return group_by
+
+
+def fields_dropped_downstream(
+    index: PlanIndex,
+    path: NodePath,
+    group_by: tuple[str, ...],
+    spec: PromptSpec,
+) -> set[str] | None:
+    """Downstream-read fields a video-view rewrite of the Map at ``path`` drops.
+
+    The rewritten stage emits only ``group_by`` plus the Map's output schema
+    fields. ``None`` means a downstream UDF makes the needed fields unknowable,
+    which callers must treat as unsafe.
+    """
+
+    required = _downstream_required_fields(index, path)
+    if required is None:
+        return None
+    return required - (set(group_by) | set(spec.output_schema or {}))
+
+
 class _TemporalDirective:
     params_type = TemporalPushdownParams
     views_field = "_mmds_candidate_views"
@@ -249,11 +311,7 @@ class _TemporalDirective:
         unknowable, which is treated as unsafe.
         """
 
-        required = _downstream_required_fields(index, path)
-        if required is None:
-            return None
-        preserved = set(group_by) | set(spec.output_schema or {})
-        return required - preserved
+        return fields_dropped_downstream(index, path, group_by, spec)
 
     def _prepare(
         self,
@@ -349,34 +407,15 @@ class _TemporalDirective:
         spec: PromptSpec,
         video_field: str | None,
     ) -> tuple[str, ...]:
-        fields: list[str] = list(self.identity_fields)
-        match_steps = path.steps
-
-        # Nodes with shorter prefix paths are downstream ancestors of the match.
-        for entry in index.entries:
-            entry_steps = entry.path.steps
-            if (
-                len(entry_steps) < len(match_steps)
-                and match_steps[: len(entry_steps)] == entry_steps
-            ):
-                fields.extend(entry.node.group_by)
-
-        fields.extend(
-            path.path[0]
-            for path in prompt_paths
-            if path.path and path.path[0] != video_field
+        return derive_view_group_by(
+            index,
+            path,
+            identity_fields=self.identity_fields,
+            prompt_paths=prompt_paths,
+            spec=spec,
+            video_field=video_field,
+            reserved={self.views_field, self.clip_field},
         )
-        # Fields the Map itself produces are emitted by the rewritten stage,
-        # not grouped on (they do not exist yet when views are coalesced).
-        produced = set(spec.output_schema or {})
-        group_by = tuple(
-            field for field in dict.fromkeys(fields) if field not in produced
-        )
-        if self.views_field in group_by or self.clip_field in group_by:
-            raise MMDSRewriteError(
-                "Derived grouping fields collide with reserved rewrite fields."
-            )
-        return group_by
 
     def _video_spec(
         self,

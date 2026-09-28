@@ -14,6 +14,7 @@ from ....model import (
 )
 from ..core import (
     DirectiveMetadata,
+    NodePath,
     PlanIndex,
     RewriteMatch,
 )
@@ -24,12 +25,14 @@ from ._prompt import (
     record_paths,
 )
 from .detect_gate import _source_has_detect_gate
+from .temporal import derive_view_group_by, fields_dropped_downstream
 
 
 _DEFAULT_MODEL = "yoloe-11s-seg.pt"
 _OUTPUT_FIELD = "detections"
 _VIEWS_FIELD = "_mmds_candidate_views"
 _CLIP_FIELD = "clip"
+_RESERVED_FIELDS = {_VIEWS_FIELD, _CLIP_FIELD, _OUTPUT_FIELD, "_mmds_video_fps"}
 _INTERVAL_UDF = UdfSpec(
     module="udfs.detection_ops",
     name="detections_to_candidate_views",
@@ -152,8 +155,7 @@ class DetectedFrameWindowBeforeMap:
             raise ValueError(
                 "DetectedFrameWindowBeforeMap identity_fields must be unique."
             )
-        reserved = {_VIEWS_FIELD, _CLIP_FIELD, _OUTPUT_FIELD, "_mmds_video_fps"}
-        if reserved.intersection(normalized):
+        if _RESERVED_FIELDS.intersection(normalized):
             raise ValueError(
                 "DetectedFrameWindowBeforeMap identity_fields cannot use reserved "
                 "rewrite fields."
@@ -161,17 +163,28 @@ class DetectedFrameWindowBeforeMap:
         self.identity_fields = normalized
 
     def find_matches(self, index: PlanIndex) -> tuple[RewriteMatch, ...]:
-        return tuple(
-            RewriteMatch(
-                path=entry.path,
-                summary=(
-                    "Prompt-backed Map reading "
-                    + format_record_paths(record_paths(entry.node.spec.parts))
-                ),
+        matches: list[RewriteMatch] = []
+        for entry in prompt_map_entries(index):
+            spec = entry.node.spec
+            if not isinstance(spec, PromptSpec):
+                continue
+            paths = record_paths(spec.parts)
+            # The video field is chosen later, so treat every prompt field as
+            # preserved here; apply() re-checks once it is known.
+            try:
+                group_by = self._derive_group_by(index, entry.path, paths, spec, None)
+            except MMDSRewriteError:
+                continue
+            dropped = fields_dropped_downstream(index, entry.path, group_by, spec)
+            if dropped is None or dropped:
+                continue
+            matches.append(
+                RewriteMatch(
+                    path=entry.path,
+                    summary="Prompt-backed Map reading " + format_record_paths(paths),
+                )
             )
-            for entry in prompt_map_entries(index)
-            if isinstance(entry.node.spec, PromptSpec)
-        )
+        return tuple(matches)
 
     def apply(
         self,
@@ -218,7 +231,20 @@ class DetectedFrameWindowBeforeMap:
                 f"{params.video_field!r}."
             )
 
-        group_by = self._derive_group_by(index, match, paths, params.video_field)
+        group_by = self._derive_group_by(
+            index, match.path, paths, node.spec, params.video_field
+        )
+        dropped = fields_dropped_downstream(index, match.path, group_by, node.spec)
+        if dropped is None:
+            raise MMDSRewriteError(
+                "DetectedFrameWindowBeforeMap cannot verify fields read by a "
+                "downstream UDF."
+            )
+        if dropped:
+            raise MMDSRewriteError(
+                "DetectedFrameWindowBeforeMap would drop fields read downstream: "
+                f"{sorted(dropped)!r}."
+            )
         detected = DatasetExpr(
             kind="detect",
             source=node.source,
@@ -255,30 +281,17 @@ class DetectedFrameWindowBeforeMap:
     def _derive_group_by(
         self,
         index: PlanIndex,
-        match: RewriteMatch,
+        path: NodePath,
         prompt_paths: tuple[RecordPath, ...],
-        video_field: str,
+        spec: PromptSpec,
+        video_field: str | None,
     ) -> tuple[str, ...]:
-        fields: list[str] = list(self.identity_fields)
-        match_steps = match.path.steps
-
-        for entry in index.entries:
-            entry_steps = entry.path.steps
-            if (
-                len(entry_steps) < len(match_steps)
-                and match_steps[: len(entry_steps)] == entry_steps
-            ):
-                fields.extend(entry.node.group_by)
-
-        fields.extend(
-            path.path[0]
-            for path in prompt_paths
-            if path.path and path.path[0] != video_field
+        return derive_view_group_by(
+            index,
+            path,
+            identity_fields=self.identity_fields,
+            prompt_paths=prompt_paths,
+            spec=spec,
+            video_field=video_field,
+            reserved=_RESERVED_FIELDS,
         )
-        group_by = tuple(dict.fromkeys(fields))
-        reserved = {_VIEWS_FIELD, _CLIP_FIELD, _OUTPUT_FIELD, "_mmds_video_fps"}
-        if reserved.intersection(group_by):
-            raise MMDSRewriteError(
-                "Derived grouping fields collide with reserved rewrite fields."
-            )
-        return group_by

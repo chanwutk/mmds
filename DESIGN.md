@@ -628,7 +628,9 @@ parameters.
   Coalesce merge nearby hits; empty detection lists yield no views so the
   semantic Map/Reduce is not called. Requires ctor `identity_fields`. Optional
   `min_confidence` becomes Detect `conf`. The original Map prompt and schema
-  are preserved on the VideoMap.
+  are preserved on the VideoMap. It derives grouping fields and guards
+  downstream field reads exactly like the temporal directives (shared helpers
+  in `temporal.py`; see below).
 - `JointTemporalPushdown` replaces a video `Map` with a transcript candidate
   `Map` followed by logical `VideoMap`. The final prompt sees all coalesced
   candidate views for a group and runs once.

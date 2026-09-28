@@ -200,5 +200,68 @@ output = Map(
                     construct()
 
 
+class DetectedFrameWindowDownstreamFieldTests(unittest.TestCase):
+    """Same guard as temporal pushdown: the rewrite emits only group_by + outputs."""
+
+    PARAMS = {"video_field": "video", "classes": ["dog"], "padding_seconds": 1.0}
+
+    def _program(self, downstream: str, *, schema: str = '{"has_dog": "boolean"}'):
+        return parse_query(
+            f"""
+from mmds import ForEach, Input, Map, Record, Reduce
+from udfs.test_ops import annotate
+clips = Input("clips.jsonl")
+answers = Map(clips, ["Is there a dog in ", Record["video"], "?"], schema={schema})
+{downstream}
+"""
+        )
+
+    def _offered(self, program, identity_fields="clip_id"):
+        directive = DetectedFrameWindowBeforeMap(identity_fields=identity_fields)
+        return [str(m.path) for m in directive.find_matches(PlanIndex.build(program.output_expr))]
+
+    def test_not_offered_when_downstream_reads_a_dropped_field(self) -> None:
+        program = self._program(
+            'output = Map(answers, ["Title ", Record["title"], ": ", Record["has_dog"]], '
+            'schema={"line": "string"})'
+        )
+
+        self.assertNotIn("output.source", self._offered(program))
+        self.assertIn("output.source", self._offered(program, ["clip_id", "title"]))
+
+    def test_not_offered_when_a_downstream_udf_reads_the_rows(self) -> None:
+        program = self._program("output = Map(answers, annotate)")
+
+        self.assertNotIn("output.source", self._offered(program))
+
+    def test_group_by_excludes_fields_the_map_itself_produces(self) -> None:
+        program = self._program(
+            'output = Reduce(answers, "category", ["Count ", ForEach([Record["has_dog"]])], '
+            'schema={"count": "integer"})',
+            schema='{"has_dog": "boolean", "category": "string"}',
+        )
+        directive = DetectedFrameWindowBeforeMap(identity_fields="clip_id")
+        match = directive.find_matches(PlanIndex.build(program.output_expr))[0]
+
+        rewritten = apply_rewrite(program, directive=directive, match=match, params=self.PARAMS)
+
+        self.assertEqual(rewritten.output_expr.source.spec.group_by, ("clip_id",))
+
+    def test_apply_rejects_a_downstream_read_of_the_chosen_video_field(self) -> None:
+        program = self._program(
+            'output = Map(answers, ["Replay ", Record["video"], ": ", Record["has_dog"]], '
+            'schema={"line": "string"})'
+        )
+        directive = DetectedFrameWindowBeforeMap(identity_fields="clip_id")
+        match = next(
+            m
+            for m in directive.find_matches(PlanIndex.build(program.output_expr))
+            if str(m.path) == "output.source"
+        )
+
+        with self.assertRaisesRegex(MMDSRewriteError, r"drop fields read downstream: \['video'\]"):
+            apply_rewrite(program, directive=directive, match=match, params=self.PARAMS)
+
+
 if __name__ == "__main__":
     unittest.main()
