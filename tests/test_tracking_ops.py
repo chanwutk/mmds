@@ -14,6 +14,7 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from mmds import Filter, Input, execute  # noqa: E402
+from mmds.model import MMDSValidationError  # noqa: E402
 from udfs.tracking_ops import (  # noqa: E402
     StrongSortTracker,
     is_substantial_track,
@@ -234,6 +235,10 @@ class FrameTimestampTests(unittest.TestCase):
 
         self.assertEqual(_frame_to_timestamp(row, 50), "2024-01-01T08:00:02Z")
 
+    def test_invalid_recorded_at_raises(self) -> None:
+        with self.assertRaises(MMDSValidationError):
+            _frame_to_timestamp({"fps": 30.0, "recorded_at": "not-a-timestamp"}, 0)
+
     def test_missing_or_invalid_fps_uses_default(self) -> None:
         for fps in (None, 0, -5, "30"):
             with self.subTest(fps=fps):
@@ -277,6 +282,8 @@ class TrackerEdgeCaseTests(unittest.TestCase):
             self._det(1, [0.0, 0.0, 10.0]),
             {"bbox": [0.0, 0.0, 10.0, 10.0], "confidence": 0.9},
             self._det(1.5, [0.0, 0.0, 10.0, 10.0]),
+            {"frame_id": None, "bbox": [0.0, 0.0, 10.0, 10.0], "confidence": 0.9},
+            {"frame_id": 1, "bbox": None, "confidence": 0.9},
             valid,
         ]
 
@@ -284,6 +291,19 @@ class TrackerEdgeCaseTests(unittest.TestCase):
 
         self.assertEqual(len(tracked), 1)
         self.assertEqual(tracked[0]["bbox"], valid["bbox"])
+
+    def test_explicit_none_bbox_or_frame_id_does_not_crash_sort(self) -> None:
+        detections = [
+            {"frame_id": None, "bbox": None, "confidence": 0.5},
+            self._det(2, [0.0, 0.0, 8.0, 8.0]),
+            {"frame_id": 1, "bbox": None, "confidence": 0.5},
+            {"frame_id": None, "bbox": [0.0, 0.0, 5.0, 5.0], "confidence": 0.5},
+        ]
+
+        tracked = StrongSortTracker(track_prefix="veh").update(detections)
+
+        self.assertEqual(len(tracked), 1)
+        self.assertEqual(tracked[0]["frame_id"], 2)
 
 
 if __name__ == "__main__":

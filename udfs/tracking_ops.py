@@ -5,8 +5,10 @@ from datetime import datetime, timedelta, timezone
 from numbers import Real
 from typing import Any
 
-_VEHICLE_CLASSES = frozenset({"sedan", "suv", "truck"})
-_DEFAULT_FPS = 30.0 # Default fps for tracking timestamps
+from mmds.utilities.timestamps import require_iso_timestamp
+from udfs.vehicle_geometry import VEHICLE_CLASSES, bbox_iou
+
+_DEFAULT_FPS = 30.0 # Default fps for tracking timestamps when row lacks fps
 
 
 def _finite_number(value: Any) -> float | None:
@@ -24,27 +26,6 @@ _MAX_TRACK_FRAME_GAP = 30
 # EMA weight for the smoothed per-frame center velocity (0..1). Higher = more
 # responsive to the latest motion; lower = smoother/steadier prediction.
 _VELOCITY_SMOOTHING = 0.5
-# Margin (fraction of frame width/height) for edge exit detection.
-_EDGE_MARGIN = 0.05
-
-
-def _bbox_iou(left: list[float], right: list[float]) -> float:
-    """Intersection Over Union (IoU) between two bounding boxes. Returns a value between 0 and 1."""
-    x1 = max(left[0], right[0])
-    y1 = max(left[1], right[1])
-    x2 = min(left[2], right[2])
-    y2 = min(left[3], right[3])
-    inter_w = max(0.0, x2 - x1)
-    inter_h = max(0.0, y2 - y1)
-    intersection = inter_w * inter_h
-    if intersection <= 0:
-        return 0.0
-    left_area = max(0.0, left[2] - left[0]) * max(0.0, left[3] - left[1])
-    right_area = max(0.0, right[2] - right[0]) * max(0.0, right[3] - right[1])
-    union = left_area + right_area - intersection
-    if union <= 0:
-        return 0.0
-    return intersection / union
 
 
 def _bbox_centroid(bbox: list[float]) -> tuple[float, float]:
@@ -64,23 +45,17 @@ def _row_fps(row: dict[str, Any]) -> float:
 def _frame_to_timestamp(row: dict[str, Any], frame_id: int) -> str:
     """
     Map an absolute ``frame_id`` to an ISO-8601 UTC timestamp string.
-    
-    If record_at is provided, timestamp is the recorded_at + frame_id / fps.
-    Else, timestamp is the epoch + frame_id / fps.
+
+    If ``recorded_at`` is provided, timestamp is recorded_at + frame_id / fps.
+    Else, timestamp is the Unix epoch + frame_id / fps.
+
+    A present but unparseable ``recorded_at`` raises ``MMDSValidationError``.
     """
     fps = _row_fps(row)
     offset_sec = frame_id / fps
     recorded_at = row.get("recorded_at")
     if isinstance(recorded_at, str) and recorded_at:
-        timestamp = recorded_at
-        if timestamp.endswith("Z"):
-            timestamp = timestamp[:-1] + "+00:00"
-        try:
-            base = datetime.fromisoformat(timestamp)
-        except ValueError:
-            base = datetime(1970, 1, 1, tzinfo=timezone.utc)
-        if base.tzinfo is None:
-            base = base.replace(tzinfo=timezone.utc)
+        base = require_iso_timestamp(recorded_at, label="recorded_at")
         moment = base + timedelta(seconds=offset_sec)
         return moment.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
     epoch = datetime(1970, 1, 1, tzinfo=timezone.utc) + timedelta(seconds=offset_sec)
@@ -112,33 +87,6 @@ def _direction_from_points(
 ) -> str:
     """Map a start and end point to a compass label."""
     return _compass_direction(end[0] - start[0], end[1] - start[1])
-
-
-def _frame_dimensions(row: dict[str, Any]) -> tuple[float, float]:
-    """Get the width and height from the row. Used for tracking."""
-    width = row.get("width")
-    height = row.get("height")
-    if isinstance(width, (int, float)) and isinstance(height, (int, float)):
-        return float(width), float(height)
-    return 1920.0, 1080.0
-
-
-def _is_near_frame_edge(
-    centroid: tuple[float, float],
-    *,
-    width: float,
-    height: float,
-) -> bool:
-    """Check if the centroid is near 5% of frame edge. Use to infer entry/exit direction."""
-    x, y = centroid
-    margin_x = width * _EDGE_MARGIN
-    margin_y = height * _EDGE_MARGIN
-    return (
-        x <= margin_x
-        or y <= margin_y
-        or x >= width - margin_x
-        or y >= height - margin_y
-    )
 
 
 def _predicted_bbox(
@@ -205,9 +153,20 @@ def _assign_track_ids(
     Returns:
         The detections tagged with an assigned ``track_id``.
     """
+    valid: list[dict[str, Any]] = []
+    for detection in detections:
+        frame_id = detection.get("frame_id")
+        bbox = detection.get("bbox")
+        if (
+            isinstance(frame_id, int)
+            and not isinstance(frame_id, bool)
+            and isinstance(bbox, list)
+            and len(bbox) == 4
+        ):
+            valid.append(detection)
     ordered = sorted(
-        detections,
-        key=lambda item: (item.get("frame_id", 0), item.get("bbox", [0])[0]),
+        valid,
+        key=lambda item: (item["frame_id"], item["bbox"][0]),
     )
     # Track state: last_frame/bbox/center, smoothed velocity, and how many
     # detections it has (to seed velocity on the first observed motion).
@@ -216,10 +175,8 @@ def _assign_track_ids(
     tracked: list[dict[str, Any]] = []
 
     for detection in ordered:
-        frame_id = detection.get("frame_id")
-        bbox = detection.get("bbox")
-        if not isinstance(frame_id, int) or not isinstance(bbox, list) or len(bbox) != 4:
-            continue
+        frame_id = detection["frame_id"]
+        bbox = detection["bbox"]
 
         det_bbox = [float(v) for v in bbox]
         det_center = _bbox_centroid(det_bbox)
@@ -236,7 +193,7 @@ def _assign_track_ids(
             # Better of the predicted box and the last box: prediction adds reach
             # for moving objects without ever losing a last-box overlap match.
             assoc_iou = max(
-                _bbox_iou(det_bbox, pred_bbox), _bbox_iou(det_bbox, state["last_bbox"])
+                bbox_iou(det_bbox, pred_bbox), bbox_iou(det_bbox, state["last_bbox"])
             )
             if assoc_iou > best_iou:
                 best_iou = assoc_iou
@@ -378,9 +335,10 @@ def _summarize_track(
 ) -> dict[str, Any]:
     """
     Summarize each track by:
-    - Extracting camera_id, fps, width, height.
-    - Calculating centroid path, entry/exit points, and directions.
-    - Closing tracks that exit through the frame edge.
+    - Extracting camera_id, fps.
+    - Calculating centroid path, entry/exit directions from the first/last
+      two path points (noisy on short tracks; edge-exit refinement is not
+      applied).
     - Calculating confidence as the mean of detection confidences.
     """
     ordered = sorted(detections, key=lambda item: item.get("frame_id", 0))
@@ -392,29 +350,19 @@ def _summarize_track(
         camera_id = ordered[0].get("camera_id", "")
 
     fps = _row_fps(row)
-    width, height = _frame_dimensions(row)
     path = _centroid_path(ordered)
-    first_centroid = (path[0]["x"], path[0]["y"])
-    last_centroid = (path[-1]["x"], path[-1]["y"])
-    entry_point = (path[0]["x"], path[0]["y"])
-    exit_point = (path[-1]["x"], path[-1]["y"])
     if len(path) >= 2:
-        entry_point = (path[0]["x"], path[0]["y"])
-        entry_next = (path[1]["x"], path[1]["y"])
-        exit_prev = (path[-2]["x"], path[-2]["y"])
-        exit_point = (path[-1]["x"], path[-1]["y"])
-        entry_direction = _direction_from_points(entry_point, entry_next)
-        exit_direction = _direction_from_points(exit_prev, exit_point)
+        entry_direction = _direction_from_points(
+            (path[0]["x"], path[0]["y"]),
+            (path[1]["x"], path[1]["y"]),
+        )
+        exit_direction = _direction_from_points(
+            (path[-2]["x"], path[-2]["y"]),
+            (path[-1]["x"], path[-1]["y"]),
+        )
     else:
         entry_direction = "stationary"
         exit_direction = "stationary"
-
-    # Close tracks that exit through the frame edge.
-    if _is_near_frame_edge((last_centroid[0], last_centroid[1]), width=width, height=height):
-        exit_direction = _direction_from_points(
-            (path[-2]["x"], path[-2]["y"]) if len(path) >= 2 else first_centroid,
-            last_centroid,
-        )
 
     confidences = [
         confidence
@@ -512,7 +460,7 @@ def strongsort_track_frame_detections(
     vehicle_detections = [
         detection
         for detection in frame_detections
-        if isinstance(detection, dict) and detection.get("vehicle_class") in _VEHICLE_CLASSES
+        if isinstance(detection, dict) and detection.get("vehicle_class") in VEHICLE_CLASSES
     ]
     if not vehicle_detections:
         return {summaries_field: []}

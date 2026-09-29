@@ -348,6 +348,7 @@ class MultiFrameReaderTests(unittest.TestCase):
             5: np.full((2, 2, 3), 5, dtype=np.uint8),
         }
         cap = MagicMock()
+        cap.isOpened.return_value = True
         cap.read.side_effect = [(True, frames[2]), (True, frames[5])]
 
         with patch(
@@ -371,10 +372,21 @@ class MultiFrameReaderTests(unittest.TestCase):
     def test_omits_frames_that_fail_to_decode(self) -> None:
         frame = np.full((2, 2, 3), 3, dtype=np.uint8)
         cap = MagicMock()
+        cap.isOpened.return_value = True
         cap.read.side_effect = [(False, None), (True, frame)]
         with patch("mmds.utilities.video.cv2.VideoCapture", return_value=cap):
             result = read_frames_at_indices("/tmp/test.mp4", [1, 3])
         self.assertEqual(list(result), [3])
+
+    def test_raises_when_capture_cannot_open(self) -> None:
+        from mmds.model import MMDSValidationError
+
+        cap = MagicMock()
+        cap.isOpened.return_value = False
+        with patch("mmds.utilities.video.cv2.VideoCapture", return_value=cap):
+            with self.assertRaisesRegex(MMDSValidationError, "Unable to open video file"):
+                read_frames_at_indices("/tmp/missing.mp4", [0, 1])
+        cap.release.assert_called_once()
 
 
 class VideoViewTests(unittest.TestCase):

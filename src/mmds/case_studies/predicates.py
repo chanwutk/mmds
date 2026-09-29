@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import math
 import re
-from datetime import datetime, timezone
 from numbers import Real
 from typing import Any
+
+from mmds.utilities.timestamps import parse_iso_timestamp
 
 VEHICLE_APPEARANCE_KEYS: tuple[str, ...] = ("vehicle_class", "color", "subtype")
 
@@ -49,19 +50,6 @@ def _track_camera_id(track: dict[str, Any]) -> str | None:
     if isinstance(camera_id, str) and camera_id:
         return camera_id
     return None
-
-
-def _parse_iso_timestamp(value: Any) -> datetime | None:
-    if not isinstance(value, str) or not value:
-        return None
-    timestamp = value[:-1] + "+00:00" if value.endswith("Z") else value
-    try:
-        parsed = datetime.fromisoformat(timestamp)
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        return parsed.replace(tzinfo=timezone.utc)
-    return parsed
 
 
 def _camera_index(camera_id: str) -> int | None:
@@ -116,18 +104,18 @@ def canonical_corridor_pair(left: dict[str, Any], right: dict[str, Any]) -> bool
 
 def travel_time_compatible(left: dict[str, Any], right: dict[str, Any]) -> bool:
     """Track times must allow a plausible cross-camera hand-off."""
-    left_start = _parse_iso_timestamp(left.get("start_time"))
-    left_end = _parse_iso_timestamp(left.get("end_time"))
-    right_start = _parse_iso_timestamp(right.get("start_time"))
-    right_end = _parse_iso_timestamp(right.get("end_time"))
+    left_start = parse_iso_timestamp(left.get("start_time"))
+    left_end = parse_iso_timestamp(left.get("end_time"))
+    right_start = parse_iso_timestamp(right.get("start_time"))
+    right_end = parse_iso_timestamp(right.get("end_time"))
     if None not in {left_start, left_end, right_start, right_end}:
         assert left_start is not None and left_end is not None
         assert right_start is not None and right_end is not None
         if left_start <= right_end and right_start <= left_end:
             return True
         upstream, downstream = orient_upstream_downstream(left, right)
-        up_end = _parse_iso_timestamp(upstream.get("end_time"))
-        down_start = _parse_iso_timestamp(downstream.get("start_time"))
+        up_end = parse_iso_timestamp(upstream.get("end_time"))
+        down_start = parse_iso_timestamp(downstream.get("start_time"))
         if up_end is None or down_start is None:
             return False
         gap_sec = (down_start - up_end).total_seconds()
@@ -204,8 +192,8 @@ def temporal_iou(left: dict[str, Any], right: dict[str, Any]) -> float:
 
 
 def _track_interval_seconds(track: dict[str, Any]) -> tuple[float, float] | None:
-    start = _parse_iso_timestamp(track.get("start_time"))
-    end = _parse_iso_timestamp(track.get("end_time"))
+    start = parse_iso_timestamp(track.get("start_time"))
+    end = parse_iso_timestamp(track.get("end_time"))
     if start is None or end is None or end < start:
         return None
     return start.timestamp(), end.timestamp()

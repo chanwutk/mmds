@@ -3,28 +3,15 @@
 from __future__ import annotations
 
 import hashlib
-from datetime import datetime, timezone
 from typing import Any
+
+from mmds.utilities.timestamps import parse_iso_timestamp
 
 from .predicates import orient_upstream_downstream
 
 Track = dict[str, Any]
 TimelineSegment = dict[str, Any]
 TrajectoryRecord = dict[str, Any]
-
-
-def parse_iso_timestamp(value: Any) -> datetime | None:
-    """Parse an ISO-8601 timestamp string to a timezone-aware datetime."""
-    if not isinstance(value, str) or not value:
-        return None
-    timestamp = value[:-1] + "+00:00" if value.endswith("Z") else value
-    try:
-        parsed = datetime.fromisoformat(timestamp)
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        return parsed.replace(tzinfo=timezone.utc)
-    return parsed
 
 
 def track_time_to_seconds(track: Track, *, field: str) -> float | None:

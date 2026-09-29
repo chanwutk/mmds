@@ -425,41 +425,63 @@ Shared utilities:
 - [src/mmds/utilities/media.py](src/mmds/utilities/media.py):
   `resolve_video_source` extracts a path/URL from a video field value (a string,
   or a dict with a `source`, `path`, or `uri` string key; otherwise
-  `MMDSValidationError`). `resolve_local_media_path` resolves a local path and
-  requires it to stay under a given media root.
+  `MMDSValidationError`). Detect execution uses this same helper. 
+  `resolve_local_media_path` resolves a local path and requires it to stay under
+  a given media root.
+- [src/mmds/utilities/timestamps.py](src/mmds/utilities/timestamps.py):
+  `parse_iso_timestamp` returns a timezone-aware datetime or `None` (soft);
+  `require_iso_timestamp` raises `MMDSValidationError` on missing/invalid input
+  (used for track `recorded_at`).
 - `read_frames_at_indices(video_path, frame_indices)` in
   [src/mmds/utilities/video.py](src/mmds/utilities/video.py) decodes the
   requested frames with a single `cv2.VideoCapture`, in ascending order. It
   ignores duplicate, negative, and non-integer indices and omits frames that
-  fail to decode, so the result may be missing requested frames (or be empty if
-  the file cannot be opened).
-- [src/mmds/case_studies/](src/mmds/case_studies/) holds the case-study logic,
-  lazily exported from `mmds.case_studies`. `predicates` has the cross-camera
-  pair checks (`different_cameras`, `canonical_corridor_pair`,
-  `travel_time_compatible`, `direction_compatible`, `speed_compatible`, combined
-  as `same_vehicle`), `temporal_overlap`/`temporal_iou`, and the fallback
-  `vehicle_match_score`. Camera order comes from a `highway<N>` suffix on
-  `camera_id`. `trajectory` converts a Join match into the
-  `vehicle_id`/`attributes`/`timeline`/`match_score` trajectory record.
+  fail to decode (so some requested indices may be missing). It raises
+  `MMDSValidationError` if the file cannot be opened. Each index is seeked
+  individually, so dense consecutive ranges still pay seek cost.
+- [src/mmds/case_studies/](src/mmds/case_studies/) holds I24V / cross-camera
+  case-study logic (predicates and trajectory export), lazily exported from
+  `mmds.case_studies`. It lives in the installable package so examples and
+  tests can import it without putting `udfs/` on `PYTHONPATH`; `udfs/join_ops`
+  and `udfs/trajectory_ops` remain thin wrappers so DSL queries can import
+  `udfs.*` callables. `predicates` has the cross-camera pair checks
+  (`different_cameras`, `canonical_corridor_pair`, `travel_time_compatible`,
+  `direction_compatible`, `speed_compatible`, combined as `same_vehicle`),
+  `temporal_overlap`/`temporal_iou`, and the fallback `vehicle_match_score`.
+  Camera order comes from a `highway<N>` suffix on `camera_id`.
+  `speed_compatible` compares **image-plane pixels/second** and assumes similar
+  camera resolution/FOV; it is not metric speed. `trajectory` converts a Join
+  match into the `vehicle_id`/`attributes`/`timeline`/`match_score` trajectory
+  record.
 
 UDF modules under [udfs/](udfs/) (`join_ops` and `trajectory_ops` are thin
 wrappers over `mmds.case_studies`):
 
+- `vehicle_geometry` shares `VEHICLE_CLASSES` and `bbox_iou` for detection and
+  tracking.
 - `detection_ops.build_vehicle_frame_detections` flattens vehicle `Detect`
   output into per-frame records (`frame_id`, `camera_id`, `bbox`, `confidence`,
   `vehicle_class`, `color`, `subtype`). Color comes from the learned classifier
   in `vehicle_color_model` when weights are available and falls back to an HSV
-  heuristic otherwise; subtype comes from box geometry. Frames for all detected
-  boxes are decoded up front, so memory grows with the number of detected
-  frames.
+  heuristic (then `"gray"`) otherwise; subtype comes from box geometry (default
+  `"sedan"`). Frames for all detected boxes are decoded up front, so memory
+  grows with the number of detected frames (~6 MB per 1080p frame); that is
+  acceptable for the documented short clips but not for long `frame_stride=1`
+  videos. Missing or unreadable videos raise `MMDSValidationError` instead of
+  silently inventing attributes.
 - `tracking_ops.strongsort_track_frame_detections` runs a greedy IoU tracker
-  (with velocity prediction and gap bridging) over those records and emits
-  `track_summaries` with ISO-8601 `start_time`/`end_time`, attributes, average
-  image-plane speed, and entry/exit directions. Timestamps are
-  `recorded_at + frame_id / fps` when the row has `recorded_at`, otherwise
-  epoch + `frame_id / fps`; `frame_id` is the absolute source-video frame index
-  that `Detect` reports, including for `VideoView` rows.
-  `is_substantial_track` filters short or low-confidence tracks.
+  (with velocity prediction and gap bridging; not a full StrongSORT backend)
+  over those records and emits `track_summaries` with ISO-8601
+  `start_time`/`end_time`, attributes, average image-plane speed, and
+  entry/exit directions. Directions use only the first/last two centroid path
+  points (noisy on short tracks). Timestamps are
+  `recorded_at + frame_id / fps` when the row has `recorded_at` (invalid
+  `recorded_at` raises), otherwise epoch + `frame_id / fps` when `recorded_at`
+  is absent; default fps is `30` when the row omits it. `frame_id` is the
+  absolute source-video frame index that `Detect` reports, including for
+  `VideoView` rows. The in-memory active-track table is not pruned for this
+  short-clip pipeline. `is_substantial_track` filters short or low-confidence
+  tracks.
 - `reid_ops.attach_track_summary_embeddings` embeds one representative crop per
   track through `vehicle_reid_model` (a frozen torchvision ResNet50, falling back
   to an RGB histogram when torch or its weights are unavailable).
@@ -470,9 +492,10 @@ wrappers over `mmds.case_studies`):
   [scripts/train_vehicle_color_model.py](scripts/train_vehicle_color_model.py).
   Missing weights or ML dependencies make it return `None` rather than raise.
 
-These helpers degrade instead of failing: an unreadable video yields no crops,
-so colors fall back to the heuristic and embeddings are empty. Callers that need
-a hard failure must check inputs themselves.
+Demo defaults that can look like real values when inputs omit fields: color
+`"gray"`, subtype/class `"sedan"`, and fps `30`. They are intentional for the
+documented two-camera five-second example. Video open failures and bad
+`recorded_at` strings are hard errors, not soft defaults.
 
 ### UDF Contract
 
