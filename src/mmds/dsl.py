@@ -17,6 +17,7 @@ from .model import (
     Record,
     RecordPath,
     SemanticSpec,
+    SplitSpec,
     VideoMapSpec,
     WindowSpec,
     normalize_join_keys,
@@ -152,6 +153,56 @@ def Join(
             right_key=(
                 normalize_join_keys(right_key) if right_key is not None else ()
             ),
+        ),
+        name=name,
+    )
+
+
+def Split(
+    data: DatasetExpr,
+    video_field: str,
+    *,
+    chunk_sec: float = 30.0,
+    doc_id_key: str = "id",
+    output_prefix: str = "split_video",
+    duration_field: str = "duration_sec",
+    name: str | None = None,
+) -> DatasetExpr:
+    """Fan out each row into fixed-duration video chunks.
+
+    Reads ``video_field`` as a ``VideoView`` (``start``/``end`` seconds) or a
+    string path / video dict plus row ``duration_field``. Each output row keeps
+    parent fields, **overwrites** ``video_field`` with a narrowed ``VideoView``
+    for that chunk (the full-clip media is not preserved), and adds:
+
+    - ``{output_prefix}_id`` — value of ``doc_id_key``
+    - ``{output_prefix}_chunk_num`` — 0-based chunk index
+    - ``{output_prefix}_chunk_start`` / ``{output_prefix}_chunk_end`` — absolute seconds
+    """
+    if not isinstance(video_field, str) or not video_field:
+        raise TypeError("Split video_field must be a non-empty string.")
+    if (
+        isinstance(chunk_sec, bool)
+        or not isinstance(chunk_sec, (int, float))
+        or not isfinite(float(chunk_sec))
+        or float(chunk_sec) <= 0
+    ):
+        raise TypeError("Split chunk_sec must be a positive finite number.")
+    if not isinstance(doc_id_key, str) or not doc_id_key:
+        raise TypeError("Split doc_id_key must be a non-empty string.")
+    if not isinstance(output_prefix, str) or not output_prefix:
+        raise TypeError("Split output_prefix must be a non-empty string.")
+    if not isinstance(duration_field, str) or not duration_field:
+        raise TypeError("Split duration_field must be a non-empty string.")
+    return DatasetExpr(
+        kind="split",
+        source=_normalize_source(data),
+        spec=SplitSpec(
+            video_field=video_field,
+            chunk_sec=float(chunk_sec),
+            doc_id_key=doc_id_key,
+            output_prefix=output_prefix,
+            duration_field=duration_field,
         ),
         name=name,
     )

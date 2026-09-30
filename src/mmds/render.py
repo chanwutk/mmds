@@ -16,6 +16,7 @@ from .model import (
     PromptSpec,
     QueryProgram,
     RecordPath,
+    SplitSpec,
     UdfSpec,
     VideoMapSpec,
     WindowSpec,
@@ -111,6 +112,10 @@ def _render_expr(expr: DatasetExpr, node_names: dict[int, str]) -> str:
         if expr.name is not None:
             flags.append(f"name={_quote(expr.name)}")
         return f"Unnest({source_name}, {', '.join(flags)})"
+    if expr.kind == "split":
+        if not isinstance(expr.spec, SplitSpec):
+            raise ValueError("Split nodes require a SplitSpec.")
+        return _render_split_call(source_name, expr.spec, expr.name)
     if expr.kind in {"video_map", "video_map_each"}:
         if not isinstance(expr.spec, VideoMapSpec):
             raise ValueError("VideoMap nodes require a VideoMapSpec.")
@@ -179,6 +184,27 @@ def _render_map_call(
     return (
         f"Map({source_name}, {_render_spec(spec, include_schema=True)}{suffix})"
     )
+
+
+def _render_split_call(
+    source_name: str,
+    spec: SplitSpec,
+    name: str | None,
+) -> str:
+    flags: list[str] = []
+    if spec.chunk_sec != 30.0:
+        flags.append(f"chunk_sec={spec.chunk_sec}")
+    if spec.doc_id_key != "id":
+        flags.append(f"doc_id_key={_quote(spec.doc_id_key)}")
+    if spec.output_prefix != "split_video":
+        flags.append(f"output_prefix={_quote(spec.output_prefix)}")
+    if spec.duration_field != "duration_sec":
+        flags.append(f"duration_field={_quote(spec.duration_field)}")
+    if name is not None:
+        flags.append(f"name={_quote(name)}")
+    if flags:
+        return f"Split({source_name}, {_quote(spec.video_field)}, {', '.join(flags)})"
+    return f"Split({source_name}, {_quote(spec.video_field)})"
 
 
 def _render_join_call(

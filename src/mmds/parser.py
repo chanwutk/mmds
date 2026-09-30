@@ -17,6 +17,7 @@ from .model import (
     QueryProgram,
     Record,
     RecordPath,
+    SplitSpec,
     UdfSpec,
     VideoMapSpec,
     WindowSpec,
@@ -273,6 +274,55 @@ def _parse_call(
                     if "clip_field" in keywords
                     else "clip"
                 ),
+            ),
+            name=_parse_optional_name(keywords),
+        )
+
+    if operator == "Split":
+        _expect_args(
+            operator,
+            node.args,
+            2,
+            keywords,
+            allowed_keywords={
+                "chunk_sec",
+                "doc_id_key",
+                "output_prefix",
+                "duration_field",
+                "name",
+            },
+        )
+        source = _parse_source(node.args[0], bindings)
+        video_field = _parse_string(node.args[1], "Split video_field")
+        chunk_sec = _parse_optional_number(keywords.get("chunk_sec"))
+        if chunk_sec is None:
+            chunk_sec = 30.0
+        elif chunk_sec <= 0:
+            raise MMDSValidationError("Split chunk_sec must be a positive number.")
+        doc_id_key = _parse_optional_string(
+            keywords.get("doc_id_key"),
+            label="Split doc_id_key",
+            default="id",
+        )
+        output_prefix = _parse_optional_string(
+            keywords.get("output_prefix"),
+            label="Split output_prefix",
+            default="split_video",
+        )
+        duration_field = _parse_optional_string(
+            keywords.get("duration_field"),
+            label="Split duration_field",
+            default="duration_sec",
+        )
+        return DatasetExpr(
+            kind="split",
+            source=source,
+            spec=SplitSpec(
+                video_field=video_field,
+                chunk_sec=chunk_sec,
+                doc_id_key=doc_id_key,
+                output_prefix=output_prefix,
+                duration_field=duration_field,
             ),
             name=_parse_optional_name(keywords),
         )
@@ -716,7 +766,7 @@ def _parse_optional_number(node: ast.AST | None) -> float | None:
         or isinstance(node.value, bool)
         or not isinstance(node.value, (int, float))
     ):
-        raise MMDSValidationError("Join min_score= must be a numeric literal.")
+        raise MMDSValidationError("Numeric keyword arguments must be numeric literals.")
     return float(node.value)
 
 
