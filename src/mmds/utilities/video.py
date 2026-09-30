@@ -31,6 +31,8 @@ from typing import Iterator
 import cv2
 import numpy as np
 
+from ..model import MMDSValidationError
+
 
 _CACHE_DIR = Path.home() / ".cache" / "mmds" / "videos"
 _VIDEO_EXTENSIONS = {".mp4", ".avi", ".mov", ".mkv", ".wmv", ".flv", ".webm", ".m4v"}
@@ -299,6 +301,10 @@ def read_frames_at_indices(
 
     Duplicate indices are decoded once. Negative and non-integer indices are
     ignored, and frames that cannot be decoded are omitted from the result.
+    Each index is seeked individually (consecutive indices still pay seek cost).
+
+    Raises:
+        MMDSValidationError: if the video file cannot be opened.
     """
     ordered_indices = sorted(
         {
@@ -312,8 +318,11 @@ def read_frames_at_indices(
     if not ordered_indices:
         return {}
 
-    cap = cv2.VideoCapture(str(video_path))
+    path = str(video_path)
+    cap = cv2.VideoCapture(path)
     try:
+        if not cap.isOpened():
+            raise MMDSValidationError(f"Unable to open video file {path!r}.")
         frames: dict[int, np.ndarray] = {}
         for frame_index in ordered_indices:
             cap.set(cv2.CAP_PROP_POS_FRAMES, frame_index)
