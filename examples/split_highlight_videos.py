@@ -3,10 +3,14 @@
 Uses a Warriors/Lakers highlight from ``data/nba_warriors.jsonl``.
 
 Pipeline:
-1. **Split** — slice each video into fixed-duration chunks (``chunk_sec=30``).
+1. **Split** — slice each video into 3-minute chunks (``chunk_sec=180``).
 2. **Map** — one LLM call **per chunk** scores excitement (one video part per request).
 3. **Reduce** — one LLM call per source video reads the text scores and picks the best chunk
    (no video parts — only numeric scores and reasons from step 2).
+
+Cost note: fan-out is ``ceil(duration_sec / chunk_sec)`` Map calls per video
+(30 chunks for the 5400s fixture at ``chunk_sec=180``). Prefer larger chunks
+for exploratory runs.
 
 Run:
   uv run python examples/run_expr.py examples/split_highlight_videos.py
@@ -19,7 +23,7 @@ clips = Input("data/nba_warriors.jsonl")
 chunks = Split(
     clips,
     "video",
-    chunk_sec=30.0,
+    chunk_sec=180.0,
     doc_id_key="video_id",
 )
 

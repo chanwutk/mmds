@@ -194,10 +194,12 @@ def _render_split_call(
     flags: list[str] = []
     if spec.chunk_sec != 30.0:
         flags.append(f"chunk_sec={spec.chunk_sec}")
-    if spec.doc_id_key != "camera_id":
+    if spec.doc_id_key != "id":
         flags.append(f"doc_id_key={_quote(spec.doc_id_key)}")
     if spec.output_prefix != "split_video":
         flags.append(f"output_prefix={_quote(spec.output_prefix)}")
+    if spec.duration_field != "duration_sec":
+        flags.append(f"duration_field={_quote(spec.duration_field)}")
     if name is not None:
         flags.append(f"name={_quote(name)}")
     if flags:

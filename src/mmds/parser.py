@@ -284,7 +284,13 @@ def _parse_call(
             node.args,
             2,
             keywords,
-            allowed_keywords={"chunk_sec", "doc_id_key", "output_prefix", "name"},
+            allowed_keywords={
+                "chunk_sec",
+                "doc_id_key",
+                "output_prefix",
+                "duration_field",
+                "name",
+            },
         )
         source = _parse_source(node.args[0], bindings)
         video_field = _parse_string(node.args[1], "Split video_field")
@@ -296,12 +302,17 @@ def _parse_call(
         doc_id_key = _parse_optional_string(
             keywords.get("doc_id_key"),
             label="Split doc_id_key",
-            default="camera_id",
+            default="id",
         )
         output_prefix = _parse_optional_string(
             keywords.get("output_prefix"),
             label="Split output_prefix",
             default="split_video",
+        )
+        duration_field = _parse_optional_string(
+            keywords.get("duration_field"),
+            label="Split duration_field",
+            default="duration_sec",
         )
         return DatasetExpr(
             kind="split",
@@ -311,6 +322,7 @@ def _parse_call(
                 chunk_sec=chunk_sec,
                 doc_id_key=doc_id_key,
                 output_prefix=output_prefix,
+                duration_field=duration_field,
             ),
             name=_parse_optional_name(keywords),
         )

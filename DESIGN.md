@@ -84,7 +84,7 @@ The main entrypoints are exported from [src/mmds/__init__.py](/Users/chanwutk/Do
 - `Filter(data, spec, *, name=None)`
 - `Reduce(data, group_by, reducer, *, schema=None, name=None)`
 - `Unnest(data, field, *, keep_empty=False, name=None)`
-- `Split(data, video_field, *, chunk_sec=30, doc_id_key="camera_id", output_prefix="split_video", name=None)`
+- `Split(data, video_field, *, chunk_sec=30, doc_id_key="id", output_prefix="split_video", duration_field="duration_sec", name=None)`
 - `Join(left, right, predicate=None, *, on=None, one_to_one=False, score=None, min_score=None, left_key=None, right_key=None, name=None)`
 - `Detect(data, video_field, classes, *, model="yoloe-11s-seg.pt", output_field="detections", frame_stride=1, conf=None, imgsz=None, name=None)`
 - `Window(data, video_field, candidate_field, output_field, padding_time, name=None)`
@@ -113,7 +113,7 @@ The core model lives in [src/mmds/model.py](/Users/chanwutk/Documents/mmds/src/m
 - `FieldPredicateSpec` stores a top-level field name for a non-LLM `Filter`
   that keeps rows where that field is truthy (`Filter(..., Record["flag"])`).
 - `SplitSpec` stores fixed-duration video chunking parameters: `video_field`,
-  `chunk_sec`, `doc_id_key`, and `output_prefix`.
+  `chunk_sec`, `doc_id_key`, `output_prefix`, and `duration_field`.
 - `JoinSpec` stores equi-join keys, an optional binary predicate UDF, and
   optional score, threshold, and side-identity keys for greedy one-to-one
   matching.
@@ -276,11 +276,17 @@ Operator semantics:
 - `Reduce`: groups rows by the configured fields, calls the reducer once per group, and merges returned aggregate fields with the group key fields
 - `Unnest`: expands one field; lists and tuples explode into multiple rows, scalars pass through unchanged, and missing/empty values produce no row unless `keep_empty=True`
 - `Split`: reads the `VideoView` (or string path / video dict plus row
-  `duration_sec`) at `video_field`, slices the clip into contiguous
-  `chunk_sec` intervals, and fans out one output row per chunk; each chunk
-  row adds `{output_prefix}_id`, `{output_prefix}_chunk_num`,
-  `{output_prefix}_chunk_start`, `{output_prefix}_chunk_end`, and narrows
-  `video_field` to the chunk's absolute `start`/`end`
+  `duration_field`, default `duration_sec`) at `video_field`, slices the clip
+  into contiguous `chunk_sec` intervals, and fans out one output row per chunk.
+  Each chunk row **overwrites** `video_field` with a narrowed `VideoView`
+  (`type` forced to `"VideoView"`) for that chunk's absolute `start`/`end` —
+  the full-clip media is not preserved — and adds `{output_prefix}_id`,
+  `{output_prefix}_chunk_num`, `{output_prefix}_chunk_start`, and
+  `{output_prefix}_chunk_end`. Existing keys with those names are rejected.
+  Callers choose `chunk_sec`; there is no executor cap on fan-out size.
+  `Split` amplifies downstream `Map`/`Reduce` work and memory (Reduce still
+  materializes its input). The LLM rewriter prompt does not emit `Split`;
+  treat Split plans as rewrite-opaque for now.
 - `Join`: emits `{"left": ..., "right": ...}` pairs. Equi-join keys use a
   right-side hash index; predicate-only joins use quadratic pair matching.
   One-to-one joins score candidates, apply an optional minimum score, and

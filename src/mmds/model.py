@@ -189,8 +189,9 @@ class SplitSpec:
 
     video_field: str
     chunk_sec: float = 30.0
-    doc_id_key: str = "camera_id"
+    doc_id_key: str = "id"
     output_prefix: str = "split_video"
+    duration_field: str = "duration_sec"
 
     def __post_init__(self) -> None:
         if not self.video_field:
@@ -213,6 +214,10 @@ class SplitSpec:
         if not self.output_prefix:
             raise MMDSValidationError(
                 "SplitSpec output_prefix must be a non-empty string."
+            )
+        if not self.duration_field:
+            raise MMDSValidationError(
+                "SplitSpec duration_field must be a non-empty string."
             )
         object.__setattr__(self, "chunk_sec", float(self.chunk_sec))
 
