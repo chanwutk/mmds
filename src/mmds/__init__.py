@@ -8,6 +8,7 @@ from .dsl import (
     Join,
     Map,
     Reduce,
+    Split,
     Unnest,
     VideoMap,
     VideoMapEach,
@@ -31,6 +32,7 @@ from .model import (
     RecordPath,
     ResolvedPrompt,
     Row,
+    SplitSpec,
     UdfSpec,
     VideoMapSpec,
     WindowSpec,
@@ -74,6 +76,8 @@ __all__ = [
     "Reduce",
     "ResolvedPrompt",
     "Row",
+    "Split",
+    "SplitSpec",
     "StaticLLMClient",
     "StaticPromptExecutor",
     "UdfCatalog",
@@ -108,5 +112,5 @@ def __getattr__(name: str):
 def main() -> None:
     print(
         "MMDS exposes a Python DSL. Import Input, Map, Filter, Reduce, Unnest, "
-        "Join, Detect, Window, Coalesce, Record, and ForEach from mmds."
+        "Split, Join, Detect, Window, Coalesce, Record, and ForEach from mmds."
     )

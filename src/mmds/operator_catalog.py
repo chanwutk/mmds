@@ -19,6 +19,7 @@ OPERATOR_DEFINITIONS: tuple[OperatorDefinition, ...] = (
     OperatorDefinition("Reduce", "reduce"),
     OperatorDefinition("Unnest", "unnest"),
     OperatorDefinition("Join", "join"),
+    OperatorDefinition("Split", "split"),
     OperatorDefinition("Detect", "detect"),
     OperatorDefinition("Window", "window"),
     OperatorDefinition("Coalesce", "coalesce"),

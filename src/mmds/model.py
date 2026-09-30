@@ -19,6 +19,7 @@ OperatorKind: TypeAlias = Literal[
     "reduce",
     "unnest",
     "join",
+    "split",
     "detect",
     "window",
     "coalesce",
@@ -180,6 +181,40 @@ class JoinSpec:
 
     def load_score(self) -> Callable[..., Any] | None:
         return None if self.score is None else self.score.load()
+
+
+@dataclass(frozen=True)
+class SplitSpec:
+    """Spec for the Split operator: fan out rows into fixed-duration video chunks."""
+
+    video_field: str
+    chunk_sec: float = 30.0
+    doc_id_key: str = "camera_id"
+    output_prefix: str = "split_video"
+
+    def __post_init__(self) -> None:
+        if not self.video_field:
+            raise MMDSValidationError(
+                "SplitSpec video_field must be a non-empty string."
+            )
+        if (
+            isinstance(self.chunk_sec, bool)
+            or not isinstance(self.chunk_sec, Real)
+            or not isfinite(float(self.chunk_sec))
+            or float(self.chunk_sec) <= 0
+        ):
+            raise MMDSValidationError(
+                "SplitSpec chunk_sec must be a positive finite number."
+            )
+        if not self.doc_id_key:
+            raise MMDSValidationError(
+                "SplitSpec doc_id_key must be a non-empty string."
+            )
+        if not self.output_prefix:
+            raise MMDSValidationError(
+                "SplitSpec output_prefix must be a non-empty string."
+            )
+        object.__setattr__(self, "chunk_sec", float(self.chunk_sec))
 
 
 @dataclass(frozen=True)
@@ -373,6 +408,7 @@ SemanticSpec: TypeAlias = (
     | UdfSpec
     | FieldPredicateSpec
     | JoinSpec
+    | SplitSpec
     | DetectSpec
     | WindowSpec
     | VideoMapSpec
@@ -431,6 +467,8 @@ class DatasetExpr:
             raise MMDSValidationError("replace=True is only supported on Map nodes.")
         if self.kind == "detect" and not isinstance(self.spec, DetectSpec):
             raise MMDSValidationError("detect nodes require a DetectSpec.")
+        if self.kind == "split" and not isinstance(self.spec, SplitSpec):
+            raise MMDSValidationError("split nodes require a SplitSpec.")
         if self.kind == "window" and not isinstance(self.spec, WindowSpec):
             raise MMDSValidationError("window nodes require a WindowSpec.")
         if self.kind == "coalesce":
