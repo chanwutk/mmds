@@ -28,18 +28,42 @@ def parse_iso_timestamp(value: Any) -> datetime | None:
 
 
 def track_time_to_seconds(track: Track, *, field: str) -> float | None:
-    """Convert a track timestamp to UTC epoch seconds."""
+    """Convert a track ISO timestamp field to UTC epoch seconds.
+
+    Prefer :func:`timeline_segment_from_track` for the shared trajectory schema,
+    which uses source-absolute ``frame_id / fps`` instead of wall-clock time.
+    """
     parsed = parse_iso_timestamp(track.get(field))
     return parsed.timestamp() if parsed is not None else None
 
 
+def _source_seconds_from_frame(track: Track, *, frame_field: str) -> float | None:
+    """Map an absolute source-video frame index to seconds (``frame_id / fps``)."""
+    frame_id = track.get(frame_field)
+    if isinstance(frame_id, bool) or not isinstance(frame_id, int) or frame_id < 0:
+        return None
+    fps = track.get("fps")
+    if (
+        isinstance(fps, bool)
+        or not isinstance(fps, (int, float))
+        or not float(fps) > 0
+    ):
+        return None
+    return float(frame_id) / float(fps)
+
+
 def timeline_segment_from_track(track: Track) -> TimelineSegment | None:
-    """Build one ``{camera_id, entered, exited}`` trajectory segment."""
+    """Build one ``{camera_id, entered, exited}`` trajectory segment.
+
+    ``entered`` / ``exited`` are seconds from the start of the underlying source
+    video (Detect absolute frame timeline), not clip-local offsets and not Unix
+    wall-clock time.
+    """
     camera_id = track.get("camera_id")
     if not isinstance(camera_id, str) or not camera_id:
         return None
-    entered = track_time_to_seconds(track, field="start_time")
-    exited = track_time_to_seconds(track, field="end_time")
+    entered = _source_seconds_from_frame(track, frame_field="first_frame_id")
+    exited = _source_seconds_from_frame(track, frame_field="last_frame_id")
     if entered is None or exited is None:
         return None
     return {"camera_id": camera_id, "entered": entered, "exited": exited}

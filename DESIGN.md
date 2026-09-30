@@ -511,6 +511,19 @@ same default manifest and final row schema
   track, and self-joins those rows before mapping each match to the trajectory
   output schema.
 
+Attribute labels and timeline units are a shared comparison contract defined in
+[`udfs/vehicle_labels.py`](/Users/chanwutk/Documents/mmds/udfs/vehicle_labels.py):
+
+- **class** ∈ `{sedan, suv, truck}`
+- **color** ∈ the full HSV export vocab (white/silver/gray/black/beige/yellow/red/green/brown/blue); the learned color model may only emit a Chen subset, with HSV fallback covering the rest
+- **subtype** uses snake_case UDF labels (`tractor_trailer`, `flatbed_truck`, `box_truck`, `pickup`, `coupe`, `suv`, `sedan`)
+- **timeline** `entered` / `exited` are **source-absolute seconds** (`frame_id / fps` on the Detect absolute frame timeline), not clip-local offsets and not Unix wall-clock time
+
+The semantic prompt is built from `format_attribute_vocab_for_prompt()` so it
+cannot drift from the UDF vocab. `vehicle_id` minting and `match_score`
+semantics may still differ between the two paths; evaluators should treat those
+as out of scope for exact string/value equality.
+
 The self-join uses `same_vehicle` to enforce camera ordering and source-time
 compatibility, `appearance_match_score` to score candidate associations, and
 `(camera_id, track_id)` as each side's identity. It intentionally has no exact
@@ -521,11 +534,9 @@ memory before greedy score ordering. This is acceptable for the documented
 two-camera five-second example, but larger feeds need a measured blocking or
 approximate-neighbor strategy.
 
-Input track intervals remain in absolute source time on the rewrite path. The
-semantic baseline reports clip-relative entered/exited times in the same
-timeline field shape. Controlled rewrite-contract tests start from the
-semantic baseline text and accept a static Detect–Track–Join target; they do
-not claim that a live model invents the rewrite.
+Controlled rewrite-contract tests start from the semantic baseline text and
+accept a static Detect–Track–Join target; they do not claim that a live model
+invents the rewrite.
 
 ### Optimizers
 

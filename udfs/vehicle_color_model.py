@@ -48,7 +48,7 @@ CHEN_COLOR_CLASSES: tuple[str, ...] = (
 )
 
 # Map each Chen class onto the project's color vocabulary
-# (``VEHICLE_COLOR_VOCAB`` in ``udfs.detection_ops``). "cyan" has no vocabulary
+# (``VEHICLE_COLOR_VOCAB`` in ``udfs.vehicle_labels``). "cyan" has no vocabulary
 # entry, so it maps to the nearest available color ("blue"); every other Chen
 # class is already in the vocabulary.
 _CHEN_TO_VOCAB: dict[str, str] = {

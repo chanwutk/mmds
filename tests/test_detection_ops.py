@@ -236,13 +236,33 @@ class DetectionOpsTests(unittest.TestCase):
         self.assertEqual(classify_vehicle_color((20.0, 8.0, 8.0)), "black")
 
     def test_classify_vehicle_color_outputs_are_in_vocab(self) -> None:
-        from udfs.detection_ops import VEHICLE_COLOR_VOCAB, classify_vehicle_color
+        from udfs.detection_ops import classify_vehicle_color
+        from udfs.vehicle_labels import VEHICLE_COLOR_VOCAB
 
         for rgb in [
             (0, 0, 0), (128, 128, 128), (255, 255, 255), (200, 20, 20),
             (230, 220, 30), (30, 160, 60), (30, 60, 200), (120, 80, 40),
         ]:
             self.assertIn(classify_vehicle_color(rgb), VEHICLE_COLOR_VOCAB)
+
+    def test_vehicle_sub_type_from_geometry_uses_snake_case_labels(self) -> None:
+        from udfs.detection_ops import vehicle_sub_type_from_geometry
+        from udfs.vehicle_labels import VEHICLE_SUBTYPES
+
+        cases = {
+            ("truck", (0.0, 0.0, 320.0, 100.0)): "tractor_trailer",
+            ("truck", (0.0, 0.0, 240.0, 100.0)): "flatbed_truck",
+            ("truck", (0.0, 0.0, 180.0, 100.0)): "box_truck",
+            ("truck", (0.0, 0.0, 100.0, 100.0)): "pickup",
+            ("sedan", (0.0, 0.0, 220.0, 100.0)): "coupe",
+            ("sedan", (0.0, 0.0, 100.0, 100.0)): "suv",
+            ("sedan", (0.0, 0.0, 160.0, 100.0)): "sedan",
+        }
+        for (vehicle_class, bbox), expected in cases.items():
+            with self.subTest(vehicle_class=vehicle_class, bbox=bbox):
+                subtype = vehicle_sub_type_from_geometry(vehicle_class, bbox)
+                self.assertEqual(subtype, expected)
+                self.assertIn(subtype, VEHICLE_SUBTYPES)
 
     def test_dominant_rgb_uses_center_region(self) -> None:
         from udfs.detection_ops import _dominant_rgb_from_crop

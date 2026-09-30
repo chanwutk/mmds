@@ -17,6 +17,7 @@ from __future__ import annotations
 from mmds import ForEach, Input, Map, Record, Reduce, Unnest
 from mmds.model import DatasetExpr
 from udfs.trajectory_ops import promote_vehicle_trajectory_row
+from udfs.vehicle_labels import format_attribute_vocab_for_prompt
 
 DEFAULT_MANIFEST = "data/i24v_traffic_highway2_highway3_5s.jsonl"
 
@@ -56,6 +57,16 @@ _VEHICLE_TRAJECTORY_SCHEMA = {
 }
 
 
+def stitch_prompt_preamble() -> str:
+    """Return the shared Reduce prompt intro (vocab + timeline contract)."""
+    return (
+        "You are a traffic analyst. Watch the synchronized adjacent-camera "
+        "clips and stitch each vehicle that appears across both feeds into "
+        "one continuous trajectory. Match by vehicle class, color, and "
+        f"subtype. {format_attribute_vocab_for_prompt()}\n"
+    )
+
+
 def build_query(feeds_jsonl: str = DEFAULT_MANIFEST) -> DatasetExpr:
     """Build the prompt-backed Reduce–Unnest cross-camera stitch."""
     feeds = Input(feeds_jsonl)
@@ -63,15 +74,7 @@ def build_query(feeds_jsonl: str = DEFAULT_MANIFEST) -> DatasetExpr:
         feeds,
         "_all",
         [
-            "You are a traffic analyst. Watch the synchronized adjacent-camera "
-            "clips and stitch each vehicle that appears across both feeds into "
-            "one continuous trajectory. Match by vehicle class, color, and "
-            "subtype. Colors must be one of: white, silver, gray, black, beige, "
-            "yellow, red, blue, green, brown. Truck subtypes must be one of: "
-            "tractor trailer, flatbed, box truck, pickup. Car subtypes must be "
-            "one of: coupe, suv, sedan. For each vehicle, report camera-local "
-            "entered/exited times in seconds from the start of each clip, plus "
-            "a match_score in [0, 1].\n",
+            stitch_prompt_preamble(),
             ForEach(
                 [
                     "Camera ",

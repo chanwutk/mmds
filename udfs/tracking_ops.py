@@ -5,8 +5,9 @@ from datetime import datetime, timedelta, timezone
 from numbers import Real
 from typing import Any
 
-_VEHICLE_CLASSES = frozenset({"sedan", "suv", "truck"})
-_DEFAULT_FPS = 30.0 # Default fps for tracking timestamps
+from udfs.vehicle_labels import VEHICLE_CLASSES
+
+_DEFAULT_FPS = 30.0 # Default fps for tracking timestamps when row lacks fps
 
 
 def _finite_number(value: Any) -> float | None:
@@ -450,6 +451,9 @@ def _summarize_track(
         "camera_id": camera_id,
         "start_time": _frame_to_timestamp(row, first_frame),
         "end_time": _frame_to_timestamp(row, last_frame),
+        "first_frame_id": first_frame,
+        "last_frame_id": last_frame,
+        "fps": fps,
         "vehicle_class": _majority_label(ordered, "vehicle_class", "sedan"),
         "color": _majority_label(ordered, "color", "gray"),
         "subtype": _majority_label(ordered, "subtype", "sedan"),
@@ -512,7 +516,7 @@ def strongsort_track_frame_detections(
     vehicle_detections = [
         detection
         for detection in frame_detections
-        if isinstance(detection, dict) and detection.get("vehicle_class") in _VEHICLE_CLASSES
+        if isinstance(detection, dict) and detection.get("vehicle_class") in VEHICLE_CLASSES
     ]
     if not vehicle_detections:
         return {summaries_field: []}
@@ -570,6 +574,9 @@ _TRACK_JOIN_FIELDS: tuple[str, ...] = (
     "camera_id",
     "start_time",
     "end_time",
+    "first_frame_id",
+    "last_frame_id",
+    "fps",
     "vehicle_class",
     "color",
     "subtype",

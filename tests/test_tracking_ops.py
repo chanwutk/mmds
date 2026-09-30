@@ -111,6 +111,9 @@ class TrackSummaryTests(unittest.TestCase):
         self.assertEqual(summary["subtype"], "suv")
         self.assertIn("start_time", summary)
         self.assertIn("end_time", summary)
+        self.assertEqual(summary["first_frame_id"], 10)
+        self.assertEqual(summary["last_frame_id"], 14)
+        self.assertAlmostEqual(summary["fps"], 30.0)
         self.assertGreater(summary["avg_speed"], 0.0)
         self.assertIn(summary["entry_direction"], {"E", "NE", "N", "NW", "W", "SW", "S", "SE", "stationary"})
         self.assertEqual(len(summary["centroid_path"]), 5)
@@ -147,6 +150,9 @@ class TrackSummaryTests(unittest.TestCase):
             "entry_direction": "NE",
             "exit_direction": "NE",
             "confidence": 0.89,
+            "first_frame_id": 11,
+            "last_frame_id": 13,
+            "fps": 30.0,
             "detections": [{"type": "suv", "bboxes": []}],
             "frame_detections": [{"frame_id": 1, "bbox": [0, 0, 1, 1]}],
             "video": {"start": 0, "end": 5},
@@ -154,6 +160,9 @@ class TrackSummaryTests(unittest.TestCase):
         projected = project_track_summary_row(row)
         self.assertEqual(projected["track_id"], "suv-1")
         self.assertEqual(projected["camera_id"], "cam-i24v-highway2")
+        self.assertEqual(projected["first_frame_id"], 11)
+        self.assertEqual(projected["last_frame_id"], 13)
+        self.assertEqual(projected["fps"], 30.0)
         self.assertNotIn("detections", projected)
         self.assertNotIn("frame_detections", projected)
         self.assertNotIn("video", projected)

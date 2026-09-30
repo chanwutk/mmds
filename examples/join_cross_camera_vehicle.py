@@ -1,4 +1,18 @@
-"""Build a cross-camera vehicle join over an I24V feed manifest."""
+"""Build a cross-camera vehicle join over an I24V feed manifest.
+
+UDF Detect–Track–Join counterpart to ``examples/semantic_join_cross_camera_vehicle.py``.
+Both pipelines default to the same highway2/3 manifest and emit rows with:
+
+- ``vehicle_id``
+- ``attributes`` ``{class, color, subtype}``
+- ``timeline`` ``[{camera_id, entered, exited}, ...]`` (source-absolute seconds)
+- ``match_score``
+
+Attribute labels come from ``udfs.vehicle_labels`` (shared with the semantic baseline).
+
+Run (after importing local highway2/3 MP4s under ``data/i24v_traffic/``):
+  ./run examples/join_cross_camera_vehicle.py
+"""
 
 from __future__ import annotations
 
@@ -13,10 +27,10 @@ from udfs.tracking_ops import (
     strongsort_track_frame_detections,
 )
 from udfs.trajectory_ops import join_match_to_trajectory
+from udfs.vehicle_labels import VEHICLE_CLASSES
 
 DEFAULT_MANIFEST = "data/i24v_traffic_highway2_highway3_5s.jsonl"
 
-"""Run: ./run examples/join_cross_camera_vehicle.py after importing MP4s"""
 
 def build_query(
     feeds_jsonl: str = DEFAULT_MANIFEST,
@@ -28,7 +42,7 @@ def build_query(
     detected = Detect(
         feeds,
         "video",
-        ["sedan", "suv", "truck"],
+        sorted(VEHICLE_CLASSES),
         output_field="detections",
         frame_stride=1,
         conf=0.1,

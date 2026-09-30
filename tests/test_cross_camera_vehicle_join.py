@@ -28,12 +28,18 @@ def _track(
     embedding: list[float] | None = None,
     start_time: str = "2024-01-01T00:00:01Z",
     end_time: str = "2024-01-01T00:00:02Z",
+    first_frame_id: int = 30,
+    last_frame_id: int = 60,
+    fps: float = 30.0,
 ) -> dict:
     return {
         "camera_id": camera_id,
         "track_id": track_id,
         "start_time": start_time,
         "end_time": end_time,
+        "first_frame_id": first_frame_id,
+        "last_frame_id": last_frame_id,
+        "fps": fps,
         "vehicle_class": "sedan",
         "color": "white",
         "subtype": "compact",
@@ -113,6 +119,8 @@ class CrossCameraVehicleJoinTests(unittest.TestCase):
                 embedding=[1.0, 0.0],
                 start_time="2024-01-01T00:00:03Z",
                 end_time="2024-01-01T00:00:04Z",
+                first_frame_id=90,
+                last_frame_id=120,
             ),
             _track("cam-i24v-highway2", "up-b", embedding=[0.0, 1.0]),
             _track(
@@ -121,6 +129,8 @@ class CrossCameraVehicleJoinTests(unittest.TestCase):
                 embedding=[0.0, 1.0],
                 start_time="2024-01-01T00:00:05Z",
                 end_time="2024-01-01T00:00:06Z",
+                first_frame_id=150,
+                last_frame_id=180,
             ),
         ]
         with tempfile.TemporaryDirectory() as temp_dir:

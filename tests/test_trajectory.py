@@ -16,7 +16,6 @@ if str(SRC) not in sys.path:
 from mmds import Input, Map, execute  # noqa: E402
 from udfs.trajectory_ops import (  # noqa: E402
     join_match_to_trajectory_record,
-    parse_iso_timestamp,
     timeline_segment_from_track,
     vehicle_id_from_match,
 )
@@ -28,17 +27,23 @@ def _track(
     *,
     camera_id: str,
     track_id: str,
-    start: str,
-    end: str,
+    first_frame_id: int,
+    last_frame_id: int,
+    fps: float = 30.0,
+    start: str = "2024-01-01T00:00:00Z",
+    end: str = "2024-01-01T00:00:01Z",
     vehicle_class: str = "suv",
     color: str = "white",
-    subtype: str = "hatchback",
+    subtype: str = "suv",
 ) -> dict:
     return {
         "camera_id": camera_id,
         "track_id": track_id,
         "start_time": start,
         "end_time": end,
+        "first_frame_id": first_frame_id,
+        "last_frame_id": last_frame_id,
+        "fps": fps,
         "vehicle_class": vehicle_class,
         "color": color,
         "subtype": subtype,
@@ -47,25 +52,36 @@ def _track(
 
 
 class TrajectoryTests(unittest.TestCase):
-    def test_timeline_segment_from_track(self) -> None:
+    def test_timeline_segment_from_track_uses_source_absolute_seconds(self) -> None:
         track = _track(
             camera_id="cam-i24v-highway2",
             track_id="suv-1",
-            start="2024-01-01T00:01:42.400000Z",
-            end="2024-01-01T00:01:48.800000Z",
+            first_frame_id=90,
+            last_frame_id=150,
+            fps=30.0,
+            # Wall-clock ISO that would yield huge Unix timestamps if misused.
+            start="2024-01-01T12:00:03Z",
+            end="2024-01-01T12:00:05Z",
         )
         segment = timeline_segment_from_track(track)
         assert segment is not None
         self.assertEqual(segment["camera_id"], "cam-i24v-highway2")
-        expected_entered = parse_iso_timestamp(track["start_time"])
-        expected_exited = parse_iso_timestamp(track["end_time"])
-        assert expected_entered is not None and expected_exited is not None
-        self.assertAlmostEqual(segment["entered"], expected_entered.timestamp(), places=6)
-        self.assertAlmostEqual(segment["exited"], expected_exited.timestamp(), places=6)
+        self.assertAlmostEqual(segment["entered"], 3.0, places=6)
+        self.assertAlmostEqual(segment["exited"], 5.0, places=6)
+
+    def test_timeline_segment_requires_frame_ids_and_fps(self) -> None:
+        track = _track(
+            camera_id="cam-a",
+            track_id="t1",
+            first_frame_id=10,
+            last_frame_id=20,
+        )
+        del track["fps"]
+        self.assertIsNone(timeline_segment_from_track(track))
 
     def test_vehicle_id_is_stable(self) -> None:
-        up = _track(camera_id="cam-a", track_id="t1", start="...", end="...")
-        down = _track(camera_id="cam-b", track_id="t2", start="...", end="...")
+        up = _track(camera_id="cam-a", track_id="t1", first_frame_id=0, last_frame_id=1)
+        down = _track(camera_id="cam-b", track_id="t2", first_frame_id=2, last_frame_id=3)
         self.assertEqual(
             vehicle_id_from_match(up, down),
             vehicle_id_from_match(up, down),
@@ -76,14 +92,14 @@ class TrajectoryTests(unittest.TestCase):
         left = _track(
             camera_id="cam-i24v-highway3",
             track_id="suv-2",
-            start="2024-01-01T00:01:57.100000Z",
-            end="2024-01-01T00:02:03.500000Z",
+            first_frame_id=300,
+            last_frame_id=360,
         )
         right = _track(
             camera_id="cam-i24v-highway2",
             track_id="suv-1",
-            start="2024-01-01T00:01:42.400000Z",
-            end="2024-01-01T00:01:48.800000Z",
+            first_frame_id=100,
+            last_frame_id=160,
         )
         record = join_match_to_trajectory_record(left, right, match_score=0.88)
         assert record is not None
@@ -92,20 +108,21 @@ class TrajectoryTests(unittest.TestCase):
         self.assertEqual(record["attributes"]["class"], "suv")
         self.assertEqual(record["attributes"]["color"], "white")
         self.assertAlmostEqual(record["match_score"], 0.88)
+        self.assertAlmostEqual(record["timeline"][0]["entered"], 100 / 30.0, places=6)
 
     def test_join_match_to_trajectory_udf(self) -> None:
         row = {
             "left": _track(
                 camera_id="cam-i24v-highway2",
                 track_id="suv-1",
-                start="2024-01-01T00:01:42.400000Z",
-                end="2024-01-01T00:01:48.800000Z",
+                first_frame_id=100,
+                last_frame_id=160,
             ),
             "right": _track(
                 camera_id="cam-i24v-highway3",
                 track_id="suv-2",
-                start="2024-01-01T00:01:57.100000Z",
-                end="2024-01-01T00:02:03.500000Z",
+                first_frame_id=300,
+                last_frame_id=360,
             ),
             "match_score": 0.91,
         }
@@ -119,73 +136,63 @@ class TrajectoryTests(unittest.TestCase):
             "left": _track(
                 camera_id="cam-i24v-highway2",
                 track_id="suv-1",
-                start="2024-01-01T00:01:42.400000Z",
-                end="2024-01-01T00:01:48.800000Z",
+                first_frame_id=100,
+                last_frame_id=160,
             ),
             "right": _track(
                 camera_id="cam-i24v-highway3",
                 track_id="suv-2",
-                start="2024-01-01T00:01:57.100000Z",
-                end="2024-01-01T00:02:03.500000Z",
+                first_frame_id=300,
+                last_frame_id=360,
             ),
-            "match_score": 0.91,
-            "detections": [{"should": "not appear"}],
+            "match_score": 0.77,
+            "extra": "drop-me",
         }
-        handle = tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False, encoding="utf-8")
-        try:
-            handle.write(json.dumps(join_row))
-            handle.write("\n")
-            handle.close()
-            plan = Map(Input(handle.name), join_match_to_trajectory, replace=True)
-            result = execute(plan)
-        finally:
-            Path(handle.name).unlink(missing_ok=True)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "matches.jsonl"
+            path.write_text(json.dumps(join_row) + "\n", encoding="utf-8")
+            result = execute(Map(Input(str(path)), join_match_to_trajectory, replace=True))
 
         self.assertEqual(len(result), 1)
         exported = result[0]
         self.assertNotIn("left", exported)
         self.assertNotIn("right", exported)
-        self.assertNotIn("detections", exported)
+        self.assertNotIn("extra", exported)
         self.assertIn("vehicle_id", exported)
         self.assertIn("timeline", exported)
-        self.assertAlmostEqual(exported["match_score"], 0.91)
 
 
 class PromoteVehicleTrajectoryRowTests(unittest.TestCase):
-    VEHICLE = {
-        "vehicle_id": "v-1",
-        "attributes": {"vehicle_class": "suv", "color": "black"},
-        "timeline": [{"camera_id": "cam-a", "entered": 0.0, "exited": 2.0}],
-    }
+    def _vehicle(self, **overrides) -> dict:
+        record = {
+            "vehicle_id": "v-1",
+            "attributes": {"class": "suv", "color": "white", "subtype": "suv"},
+            "timeline": [{"camera_id": "cam-a", "entered": 0.0, "exited": 2.0}],
+        }
+        record.update(overrides)
+        return record
 
     def test_keeps_match_score_when_present(self) -> None:
-        row = {"source_id": "x", "vehicles": {**self.VEHICLE, "match_score": 0.8, "extra": 1}}
-
-        self.assertEqual(
-            promote_vehicle_trajectory_row(row),
-            {**self.VEHICLE, "match_score": 0.8},
-        )
+        row = {"vehicles": self._vehicle(match_score=0.55)}
+        promoted = promote_vehicle_trajectory_row(row)
+        self.assertEqual(promoted["match_score"], 0.55)
 
     def test_keeps_records_without_match_score(self) -> None:
-        self.assertEqual(
-            promote_vehicle_trajectory_row({"vehicles": dict(self.VEHICLE)}),
-            self.VEHICLE,
-        )
+        row = {"vehicles": self._vehicle()}
+        promoted = promote_vehicle_trajectory_row(row)
+        self.assertNotIn("match_score", promoted)
 
     def test_matches_join_record_shape_without_score(self) -> None:
         record = {"vehicle_id": "v-2", "attributes": {}, "timeline": []}
-
-        self.assertNotIn("match_score", promote_vehicle_trajectory_row({"vehicles": record}))
+        promoted = promote_vehicle_trajectory_row({"vehicles": record})
+        self.assertEqual(set(promoted), {"vehicle_id", "attributes", "timeline"})
 
     def test_rejects_missing_required_fields_or_non_dict(self) -> None:
+        self.assertEqual(promote_vehicle_trajectory_row({"vehicles": "x"}), {})
         for missing in ("vehicle_id", "attributes", "timeline"):
-            with self.subTest(missing=missing):
-                vehicle = {k: v for k, v in self.VEHICLE.items() if k != missing}
-                self.assertEqual(promote_vehicle_trajectory_row({"vehicles": vehicle}), {})
-        for value in (None, [], "v-1"):
-            with self.subTest(vehicles=value):
-                self.assertEqual(promote_vehicle_trajectory_row({"vehicles": value}), {})
-        self.assertEqual(promote_vehicle_trajectory_row({}), {})
+            vehicle = self._vehicle()
+            del vehicle[missing]
+            self.assertEqual(promote_vehicle_trajectory_row({"vehicles": vehicle}), {})
 
 
 if __name__ == "__main__":

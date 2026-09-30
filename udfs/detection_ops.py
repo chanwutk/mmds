@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Sequence
 
 from udfs.vehicle_color_model import predict_color_from_crop, predict_colors_from_crops
+from udfs.vehicle_labels import VEHICLE_CLASSES, VEHICLE_COLOR_VOCAB
 
 
 # YOLOE conf scores are model-internal (0–1); Ultralytics defaults drop boxes below ~0.25.
@@ -212,30 +213,13 @@ def _resolve_detection_fps(row: dict[str, Any]) -> float:
 # Vehicle detection (I24V / cross-camera join)
 # ---------------------------------------------------------------------------
 
-_VEHICLE_CLASSES = frozenset({"sedan", "suv", "truck"})
 _VEHICLE_NMS_IOU = 0.65 # Two boxes are considered the same if their Intersection Over Union (IoU) ≥ threshold
 # Transient key used to carry a box's class through class-agnostic NMS; popped
 # before the box is emitted, so it never leaks into output records.
 _NMS_CLASS_KEY = "_nms_vehicle_class"
 
-# The named-color vocabulary produced by the heuristic color classifier and the
-# learned model's label mapping (see udfs/vehicle_color_model.py). Neutral
-# colors (white/silver/gray/black) are decided by brightness; chromatic colors
-# by hue — see classify_vehicle_color.
-VEHICLE_COLOR_VOCAB: frozenset[str] = frozenset(
-    {
-        "white",
-        "silver",
-        "gray",
-        "black",
-        "beige",
-        "yellow",
-        "red",
-        "green",
-        "brown",
-        "blue",
-    }
-)
+# Re-export for callers that historically imported the vocab from this module.
+# Canonical definition: ``udfs.vehicle_labels``.
 
 # Saturation/brightness gates (on a 0..1 scale) separating neutral (achromatic)
 # vehicles from chromatic ones. Tuned for traffic-camera crops where paint is
@@ -361,7 +345,7 @@ def nms_vehicle_detections(
             continue
         vehicle_class = item.get("type")
         bboxes = item.get("bboxes")
-        if vehicle_class not in _VEHICLE_CLASSES or not isinstance(bboxes, list):
+        if vehicle_class not in VEHICLE_CLASSES or not isinstance(bboxes, list):
             continue
         if vehicle_class not in class_order:
             class_order.append(vehicle_class)
@@ -435,9 +419,9 @@ def classify_vehicle_color(rgb: tuple[float, float, float]) -> str:
     return "blue"
 
 
-def vehicle_sub_type_from_geometry(vehicle_class: str, bbox: list[float]) -> str:
+def vehicle_sub_type_from_geometry(vehicle_class: str, bbox: Sequence[float]) -> str:
     """Coarse subtype from class and box aspect ratio. Helper function for predict_vehicle_attributes."""
-    if not isinstance(bbox, list) or len(bbox) != 4:
+    if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
         return "sedan"
     x1, y1, x2, y2 = (float(value) for value in bbox)
     width = max(1.0, abs(x2 - x1))
@@ -648,7 +632,7 @@ def build_vehicle_frame_detections(
         if not isinstance(item, dict):
             continue
         vehicle_class = item.get("type")
-        if vehicle_class not in _VEHICLE_CLASSES:
+        if vehicle_class not in VEHICLE_CLASSES:
             continue
         bboxes = item.get("bboxes")
         if not isinstance(bboxes, list):

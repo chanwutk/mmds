@@ -6,7 +6,7 @@ The manifest is committed at
 `data/i24v_traffic_highway2_highway3_5s.jsonl`; the media files are not.
 
 After obtaining the dataset under its terms from
-[i24motion.org/data](https://i24motion.org/data), copy or symlink the two clips
+[i24motion.org/data](https://i24motion.org/data) and are clipped in https://drive.google.com/drive/folders/1VbP9S8bChJY_6H7C-2ax0GGixztoA9Wo?usp=sharing, copy or symlink the two clips
 into:
 
 ```text
