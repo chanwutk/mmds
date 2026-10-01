@@ -4,6 +4,7 @@ import contextlib
 import importlib.util
 import io
 import json
+import os
 import sys
 import unittest
 from pathlib import Path
@@ -137,7 +138,7 @@ class ReportFormattingTests(unittest.TestCase):
             "recall": 1.0,
             "f1": 1.0,
         }
-        gate_cost = EVAL.CostReport(
+        presence_cost = EVAL.CostReport(
             label="Detect presence", wall_time_sec=3.0, prompt_calls=2, n_rows=2, total_tokens=400
         )
         semantic_cost = EVAL.CostReport(
@@ -153,7 +154,7 @@ class ReportFormattingTests(unittest.TestCase):
         with contextlib.redirect_stdout(buffer):
             EVAL._print_comparison(
                 [
-                    ("Detect presence", report, gate_cost),
+                    ("Detect presence", report, presence_cost),
                     ("Semantic map", dict(report), semantic_cost),
                 ]
             )
@@ -163,7 +164,38 @@ class ReportFormattingTests(unittest.TestCase):
         self.assertIn("Semantic map", out)
         self.assertRegex(out, r"prompt calls\s+2\s+6")
         self.assertRegex(out, r"total tokens\s+400\s+5800")
-        json.dumps(gate_cost.to_dict())
+        json.dumps(presence_cost.to_dict())
+
+
+class PromptKeyTests(unittest.TestCase):
+    def test_presence_plan_does_not_need_a_prompt_key(self) -> None:
+        output = EVAL._load_query_output(EVAL.DEFAULT_PRESENCE_QUERY)
+        self.assertFalse(EVAL._plan_uses_prompt(output))
+        saved = {
+            name: os.environ.pop(name, None)
+            for name in ("GEMINI_API_KEY", "GOOGLE_API_KEY")
+        }
+        try:
+            EVAL._require_prompt_key(output)
+        finally:
+            for name, value in saved.items():
+                if value is not None:
+                    os.environ[name] = value
+
+    def test_semantic_plan_requires_a_prompt_key(self) -> None:
+        output = EVAL._load_query_output(EVAL.DEFAULT_SEMANTIC_QUERY)
+        self.assertTrue(EVAL._plan_uses_prompt(output))
+        saved = {
+            name: os.environ.pop(name, None)
+            for name in ("GEMINI_API_KEY", "GOOGLE_API_KEY")
+        }
+        try:
+            with self.assertRaises(SystemExit):
+                EVAL._require_prompt_key(output)
+        finally:
+            for name, value in saved.items():
+                if value is not None:
+                    os.environ[name] = value
 
 
 if __name__ == "__main__":

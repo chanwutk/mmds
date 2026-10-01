@@ -16,7 +16,7 @@ Examples::
 
   uv run python examples/eval_animals_bear.py
   uv run python examples/eval_animals_bear.py --compare-semantic
-  uv run python examples/eval_animals_bear.py --pred-json /tmp/gate.json --semantic-json /tmp/map.json
+  uv run python examples/eval_animals_bear.py --pred-json /tmp/presence.json --semantic-json /tmp/map.json
 """
 
 from __future__ import annotations
@@ -40,7 +40,13 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from mmds import GeminiPromptExecutor, execute  # noqa: E402
-from mmds.model import MMDSValidationError, PromptSpec, ResolvedPrompt  # noqa: E402
+from mmds.model import (  # noqa: E402
+    DatasetExpr,
+    MMDSValidationError,
+    PromptSpec,
+    ResolvedPrompt,
+    VideoMapSpec,
+)
 
 DEFAULT_PRESENCE_QUERY = ROOT / "examples" / "animals_bear_detect_presence.py"
 DEFAULT_SEMANTIC_QUERY = ROOT / "examples" / "animals_bear_map.py"
@@ -279,12 +285,29 @@ def _require_detect_runtime() -> None:
         ) from exc
 
 
+def _plan_uses_prompt(plan: DatasetExpr) -> bool:
+    for node in plan.walk_postorder():
+        spec = node.spec
+        if isinstance(spec, PromptSpec):
+            return True
+        if isinstance(spec, VideoMapSpec) and isinstance(spec.map_spec, PromptSpec):
+            return True
+    return False
+
+
+def _require_prompt_key(plan: DatasetExpr) -> None:
+    if not _plan_uses_prompt(plan):
+        return
+    if os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY"):
+        return
+    raise SystemExit("Set GEMINI_API_KEY before running a prompt-backed pipeline.")
+
+
 def _run_pipeline(query_path: Path, *, label: str) -> tuple[list[Any], CostReport]:
     if query_path.name == DEFAULT_PRESENCE_QUERY.name:
         _require_detect_runtime()
-    if not os.environ.get("GEMINI_API_KEY") and not os.environ.get("GOOGLE_API_KEY"):
-        raise SystemExit("Set GEMINI_API_KEY before running a bear-presence pipeline.")
     output = _load_query_output(query_path)
+    _require_prompt_key(output)
     executor = _CountingExecutor()
     started = time.perf_counter()
     rows = list(execute(output, prompt_executor=executor))
@@ -440,9 +463,9 @@ def main() -> None:
 
     if args.pred_json is not None:
         pred_rows = _load_json_array(args.pred_json)
-        gate_cost = _loaded_cost(f"{args.pred_json.stem} (loaded)", pred_rows)
+        presence_cost = _loaded_cost(f"{args.pred_json.stem} (loaded)", pred_rows)
     else:
-        pred_rows, gate_cost = _run_pipeline(args.query, label="Detect presence")
+        pred_rows, presence_cost = _run_pipeline(args.query, label="Detect presence")
 
     if args.save_pred is not None:
         args.save_pred.write_text(
@@ -468,13 +491,13 @@ def main() -> None:
             print(f"Saved semantic predictions -> {args.save_semantic}")
 
     results: list[tuple[str, dict[str, Any], CostReport]] = []
-    gate_report = _print_report(
+    presence_report = _print_report(
         pred_rows,
         ground_truth,
         label="Detect presence",
-        cost=gate_cost,
+        cost=presence_cost,
     )
-    results.append(("Detect presence", gate_report, gate_cost))
+    results.append(("Detect presence", presence_report, presence_cost))
     if semantic_rows is not None and semantic_cost is not None:
         print()
         semantic_report = _print_report(

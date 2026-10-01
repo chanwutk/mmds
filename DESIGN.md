@@ -202,10 +202,6 @@ Parser rules:
 - `Map` and `Reduce` prompt specs must include `schema={...}` as an output field map
 - `Filter` does not accept `schema=`
 - `Filter` field predicates must be a single top-level `Record["field"]`
-- `Detect` requires literal `video_field` and a list/tuple of literal class
-  strings; optional `model` / `output_field` / `frame_stride` / `conf` /
-  `imgsz` / `stop_after_n` / `name` keywords use the same defaults as the DSL
-  constructor
 - `Reduce` prompt lists may only use `Record[...]` inside `ForEach([...])`
 - `Join` sources must reference prior assignments; predicates and score
   functions must be imported `udfs.*` names; keys and identity fields must be
