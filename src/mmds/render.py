@@ -38,7 +38,8 @@ def render_query(plan_or_query: DatasetExpr | QueryProgram) -> str:
 
     grouped_udfs: dict[str, list[str]] = defaultdict(list)
     for spec in program.used_udfs():
-        grouped_udfs[spec.module].append(spec.name)
+        if spec.name not in grouped_udfs[spec.module]:
+            grouped_udfs[spec.module].append(spec.name)
     for module in sorted(grouped_udfs):
         names = ", ".join(sorted(grouped_udfs[module]))
         lines.append(f"from {module} import {names}")
@@ -231,6 +232,8 @@ def _render_detect_call(
         flags.append(f"conf={spec.conf!r}")
     if spec.imgsz is not None:
         flags.append(f"imgsz={spec.imgsz!r}")
+    if spec.stop_after_n is not None:
+        flags.append(f"stop_after_n={spec.stop_after_n!r}")
     if name is not None:
         flags.append(f"name={_quote(name)}")
     return f"Detect({', '.join(arguments + flags)})"
@@ -255,7 +258,10 @@ def _render_spec(
             prompt = f"{prompt}, schema={_render_literal(spec.output_schema)}"
         return prompt
     if isinstance(spec, UdfSpec):
-        return spec.name
+        if not spec.args:
+            return spec.name
+        rendered_args = ", ".join(_quote(arg) for arg in spec.args)
+        return f"{spec.name}({rendered_args})"
     if isinstance(spec, FieldPredicateSpec):
         return _render_prompt_part(RecordPath((spec.field,)))
     raise ValueError("Expected a prompt, UDF, or field-predicate spec.")

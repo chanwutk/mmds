@@ -145,6 +145,25 @@ def keep_rows_with_detections(row: dict[str, Any]) -> bool:
     return False
 
 
+def map_detection_presence(row: dict[str, Any], flag_field: str) -> dict[str, Any]:
+    """Set ``flag_field`` from whether ``Detect`` found any boxes.
+
+    This is the code Map for a presence question. ``True`` means at least one
+    requested-class box was found. The scan that produced those boxes may have
+    stopped at the first track. Rewrite plans pass ``flag_field`` as a bound
+    UDF argument. Executable examples that import this file as Python should
+    pass :func:`map_bear_present` instead, because a call here runs immediately.
+    """
+    if not isinstance(flag_field, str) or not flag_field:
+        raise ValueError("flag_field must be a non-empty string.")
+    return {flag_field: keep_rows_with_detections(row)}
+
+
+def map_bear_present(row: dict[str, Any]) -> dict[str, Any]:
+    """Set ``bear_present`` from whether ``Detect`` found any boxes."""
+    return map_detection_presence(row, "bear_present")
+
+
 _VIEWS_FIELD = "_mmds_candidate_views"
 _DEFAULT_FPS = 30.0
 

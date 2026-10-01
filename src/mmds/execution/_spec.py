@@ -71,6 +71,8 @@ def _execute_spec(
         )
     if isinstance(spec, UdfSpec):
         udf = spec.load()
+        if spec.args:
+            return udf(payload, *spec.args)
         return udf(payload)
     if isinstance(spec, FieldPredicateSpec):
         if not isinstance(payload, Mapping):

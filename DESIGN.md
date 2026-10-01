@@ -85,7 +85,7 @@ The main entrypoints are exported from [src/mmds/__init__.py](/Users/chanwutk/Do
 - `Reduce(data, group_by, reducer, *, schema=None, name=None)`
 - `Unnest(data, field, *, keep_empty=False, name=None)`
 - `Join(left, right, predicate=None, *, on=None, one_to_one=False, score=None, min_score=None, left_key=None, right_key=None, name=None)`
-- `Detect(data, video_field, classes, *, model="yoloe-11s-seg.pt", output_field="detections", frame_stride=1, conf=None, imgsz=None, name=None)`
+- `Detect(data, video_field, classes, *, model="yoloe-11s-seg.pt", output_field="detections", frame_stride=1, conf=None, imgsz=None, stop_after_n=None, name=None)`
 - `Window(data, video_field, candidate_field, output_field, padding_time, name=None)`
 - `Coalesce(data, group_by, field, *, name=None)`
 - `VideoMap(data, spec, *, video_field, views_field, group_by, schema, padding_time=0, clip_field="clip", name=None)`
@@ -115,7 +115,8 @@ The core model lives in [src/mmds/model.py](/Users/chanwutk/Documents/mmds/src/m
   optional score, threshold, and side-identity keys for greedy one-to-one
   matching.
 - `DetectSpec` stores the parameters for a `Detect` node: `video_field`,
-  `classes`, `model`, `output_field`, `frame_stride`, `conf`, and `imgsz`.
+  `classes`, `model`, `output_field`, `frame_stride`, `conf`, `imgsz`, and
+  `stop_after_n`.
 - `WindowSpec` stores the parameters for a `Window` node: `video_field`,
   `candidate_field`, `output_field`, and `padding_time`.
 - `VideoMapSpec` stores the candidate-view field, source-video field, grouping
@@ -186,7 +187,11 @@ Parser rules:
 - semantic specs must be:
   - a prompt string
   - a prompt-part list
-  - an imported UDF name
+  - an imported UDF name, or a call of that name with positional string
+    literal arguments (`map_detection_presence("bear_present")`). Those
+    arguments are stored on `UdfSpec.args` and passed to the callable after
+    the row. A bare name is the no-argument form; `udf()` is rejected so the
+    rendered text stays stable
   - for `Filter` only: a bare top-level `Record["field"]` field predicate
 - UDF import aliasing is rejected
 - only absolute imports are allowed
@@ -198,8 +203,9 @@ Parser rules:
 - `Filter` does not accept `schema=`
 - `Filter` field predicates must be a single top-level `Record["field"]`
 - `Detect` requires literal `video_field` and a list/tuple of literal class
-  strings; optional `model` / `output_field` / `conf` / `name` keywords use the
-  same defaults as the DSL constructor
+  strings; optional `model` / `output_field` / `frame_stride` / `conf` /
+  `imgsz` / `stop_after_n` / `name` keywords use the same defaults as the DSL
+  constructor
 - `Reduce` prompt lists may only use `Record[...]` inside `ForEach([...])`
 - `Join` sources must reference prior assignments; predicates and score
   functions must be imported `udfs.*` names; keys and identity fields must be
@@ -207,7 +213,8 @@ Parser rules:
 - operators and `Record`/`ForEach` helpers must be imported from `mmds`
   before they are used; unused imports remain allowed
 - `Detect` requires literal `video_field` and class-list arguments and accepts
-  literal `model`, `output_field`, `frame_stride`, `conf`, `imgsz`, and `name`
+  literal `model`, `output_field`, `frame_stride`, `conf`, `imgsz`,
+  `stop_after_n`, and `name`
   keyword arguments; parsing constructs a validated `DetectSpec`
 - `Window` requires literal `video_field`, `candidate_field`, `output_field`,
   and `padding_time` arguments and accepts a literal `name`
@@ -278,7 +285,7 @@ Operator semantics:
   greedily retain the highest-scoring pairs with unique left/right identity
   keys. A self-join whose sources are the same plan object executes and
   materializes that shared upstream subtree exactly once.
-- `Detect`: reads the video pointed to by `video_field`; if the value is a `VideoView`-shaped dict with `start`/`end`, wraps the source in a `VideoView`, runs YOLOE detection on sampled frames according to `frame_stride`, forwards optional `conf` and `imgsz` inference parameters, and merges a detection list with absolute source-video `frame_idx` values into `output_field`
+- `Detect`: reads the video pointed to by `video_field`; if the value is a `VideoView`-shaped dict with `start`/`end`, wraps the source in a `VideoView`, runs YOLOE detection on sampled frames according to `frame_stride`, forwards optional `conf` and `imgsz` inference parameters, and merges a detection list with absolute source-video `frame_idx` values into `output_field`. `stop_after_n` ends the scan once that many distinct tracks of the requested classes exist; overlapping boxes of the same class within 30 source frames stay one track, and `None` scans every sampled frame
 - `Window`: reads one `{start, end}` candidate interval per row, applies
   symmetric padding, clamps the start to zero, and stores a non-materialized
   `VideoView` descriptor in `output_field` while preserving the input row
@@ -407,12 +414,21 @@ Design rules:
 ```
 
 - the OpenCV/NumPy stack (and, at run time, `torch`/`ultralytics`) is imported **lazily**: `mmds.execution` imports `.ops.detect` only when a `detect` node actually executes, and `mmds.VideoView` is a lazy export via module `__getattr__`. This keeps `import mmds` and the prompt/UDF execution paths usable without the heavy CV/ML dependencies installed.
-- `Detect` is parsed from and rendered back to DSL text (including `frame_stride`, `conf`, and `imgsz`) so rewrite directives can insert it while preserving render/parse round trips
+- `Detect` is parsed from and rendered back to DSL text (including `frame_stride`, `conf`, `imgsz`, and `stop_after_n`) so rewrite directives can insert it while preserving render/parse round trips
+- `stop_after_n` counts tracks, not raw boxes. A box joins the same-class track with the highest intersection-over-union of at least 0.3 whose last box is at most 30 source frames earlier and has not already been matched in this frame. Boxes that match none of those tracks open a new track, and overlapping unmatched boxes in the same frame share that new track. The scan returns the boxes seen so far and does not read later frames. Fewer than `n` tracks still reads the video to the end
 - Detect writes `_mmds_video_fps` when the opened video reports a positive fps so
   detection-window rewrites can convert `frame_idx` values to source time without
   re-opening the file in the interval UDF
 - `udfs.detection_ops.detections_to_candidate_views` maps Detect boxes to
   `_mmds_candidate_views` intervals `[frame_idx/fps, (frame_idx+1)/fps)`
+- `udfs.detection_ops.keep_rows_with_detections` keeps a row when any class
+  entry has a non-empty `bboxes` list
+- `udfs.detection_ops.map_detection_presence(row, flag_field)` returns
+  `{flag_field: true}` when that keep check passes, otherwise
+  `{flag_field: false}`. Rewrite text binds the field as
+  `map_detection_presence("bear_present")`. `map_bear_present(row)` is the
+  same check with `flag_field` fixed to `"bear_present"`, so an example file
+  imported as Python can pass the function itself
 
 ### Vehicle Case-Study Helpers
 
@@ -617,11 +633,23 @@ parameters.
   must preserve that Map's declared schema and the rewritten Map prompt reads
   that Map's input fields; otherwise the inserted Map reads the Filter's input
   fields. `map_schema` only declares outputs, never prompt inputs.
-- `DetectGateBeforeMap` inserts `Detect` (YOLOE) and
-  `Filter(keep_rows_with_detections)` before a prompt-backed `Map` that reads
-  a video field, so empty detections are pruned before the VLM call. The Map
-  prompt and schema are preserved. Classes are model-chosen; the keep UDF is
-  fixed and uses the default `detections` output field.
+- `DetectPresenceMap` replaces a prompt `Map` whose schema is exactly one
+  boolean field. `find_matches` offers only those Maps. `apply` requires
+  `flag_field` to be that field, `video_field` to be a direct top-level
+  `Record` reference in the prompt, and `classes` to be non-empty unique
+  YOLOE names. `model` defaults to `yoloe-11s-seg.pt`. The prompt is removed.
+  The rewritten plan is `Detect` (`stop_after_n=1`, `output_field="detections"`)
+  → `Filter(keep_rows_with_detections)` →
+  `Map(map_detection_presence(flag_field))`. One track of any requested class
+  keeps the row and the code Map sets the boolean to true. A row with no boxes
+  is dropped, which scores as false for an evaluator that treats a missing row
+  as false. `stop_after_n=1` is fixed: the boolean means presence, so the scan
+  ends at the first track and does not answer an exact count. The runnable
+  form is [`examples/animals_bear_detect_presence.py`](examples/animals_bear_detect_presence.py)
+  against [`examples/animals_bear_map.py`](examples/animals_bear_map.py), scored
+  by [`examples/eval_animals_bear.py`](examples/eval_animals_bear.py). That
+  example imports `map_bear_present` so Python execution does not call the
+  bound UDF at import time.
 - `DetectedFrameWindowBeforeMap` inserts `Detect`, a UDF Map that converts
   absolute `frame_idx` hits into `_mmds_candidate_views` one-frame intervals,
   then a joint `VideoMap` over those views. Window padding + lowering's
@@ -748,11 +776,11 @@ The current suite covers:
 - typed rewrite paths, structural indexing, immutable subtree replacement,
   directive parameter validation, and rewrite structural invariants
 - deterministic modality-substitution, prompt-field pruning, boolean-map code
-  filter, detect-gate-before-map, detected-frame-window-before-map, and
+  filter, detect-presence-map, detected-frame-window-before-map, and
   joint/per-view temporal-pushdown directives, including plan-shape and
   end-to-end execution tests
 - `Filter(..., Record["field"])` field-predicate parse/render/execute round trips
-- `Detect(...)` parse/render round trips, including optional `conf`
+- `Detect(...)` parse/render round trips, including optional `conf` and `stop_after_n`
 - value-free rewrite context, sequential model selection/parameter calls,
   response validation, null selection, and the Gemini adapter
 - `Detect` behavior, including `VideoView` clip slicing and absolute-frame detection indices

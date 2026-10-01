@@ -167,9 +167,10 @@ def Detect(
     frame_stride: int = 1,
     conf: float | None = None,
     imgsz: int | None = None,
+    stop_after_n: int | None = None,
     name: str | None = None,
 ) -> DatasetExpr:
-    """Run YOLOE object detection on every frame of a video field.
+    """Run YOLOE object detection on frames of a video field.
 
     Args:
         data: Source dataset expression.
@@ -183,6 +184,9 @@ def Detect(
         frame_stride: Keep every Nth frame; defaults to ``1``.
         conf: Optional YOLO confidence floor in ``[0.0, 1.0]``.
         imgsz: Optional YOLO inference image size.
+        stop_after_n: Stop once this many distinct tracks of the requested
+            classes exist. ``None`` scans the whole video. Consecutive boxes of
+            the same animal stay one track.
         name: Optional operator label.
 
     The output field contains a list of objects, one per detected class::
@@ -215,6 +219,12 @@ def Detect(
         isinstance(imgsz, bool) or not isinstance(imgsz, int) or imgsz < 1
     ):
         raise TypeError("Detect imgsz must be a positive integer or None.")
+    if stop_after_n is not None and (
+        isinstance(stop_after_n, bool)
+        or not isinstance(stop_after_n, int)
+        or stop_after_n < 1
+    ):
+        raise TypeError("Detect stop_after_n must be an integer >= 1 or None.")
     return DatasetExpr(
         kind="detect",
         source=_normalize_source(data),
@@ -226,6 +236,7 @@ def Detect(
             frame_stride=frame_stride,
             conf=conf,
             imgsz=imgsz,
+            stop_after_n=stop_after_n,
         ),
         name=name,
     )

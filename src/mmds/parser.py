@@ -289,6 +289,7 @@ def _parse_call(
                 "frame_stride",
                 "conf",
                 "imgsz",
+                "stop_after_n",
                 "name",
             },
         )
@@ -324,6 +325,10 @@ def _parse_call(
                 imgsz=_parse_int_or_none(
                     keywords.get("imgsz"),
                     label="Detect imgsz",
+                ),
+                stop_after_n=_parse_int_or_none(
+                    keywords.get("stop_after_n"),
+                    label="Detect stop_after_n",
                 ),
             ),
             name=_parse_optional_name(keywords),
@@ -443,10 +448,11 @@ def _parse_spec(
 ) -> PromptSpec | UdfSpec | FieldPredicateSpec:
     schema = _parse_schema(schema_node)
 
-    if isinstance(node, ast.Name) and node.id in udf_imports:
+    udf_spec = _parse_imported_udf(node, udf_imports)
+    if udf_spec is not None:
         if schema is not None:
             raise MMDSValidationError("schema= is only valid for prompt-backed operators.")
-        return udf_imports[node.id]
+        return udf_spec
 
     record_ref = _parse_record_ref(node, mmds_imports)
     if record_ref is not None:
@@ -673,6 +679,35 @@ def _parse_optional_name(keywords: dict[str, ast.AST]) -> str | None:
     if node is None:
         return None
     return _parse_string(node, "Operator name")
+
+
+def _parse_imported_udf(
+    node: ast.AST,
+    udf_imports: dict[str, UdfSpec],
+) -> UdfSpec | None:
+    """Parse a bare imported UDF name or a call with string literal arguments."""
+
+    if isinstance(node, ast.Name) and node.id in udf_imports:
+        return udf_imports[node.id]
+    if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id in udf_imports
+    ):
+        if node.keywords:
+            raise MMDSValidationError(
+                "UDF arguments must be positional string literals."
+            )
+        if not node.args:
+            raise MMDSValidationError(
+                "UDF calls need at least one string literal argument."
+            )
+        args = tuple(
+            _parse_string(arg, "UDF argument") for arg in node.args
+        )
+        base = udf_imports[node.func.id]
+        return UdfSpec(module=base.module, name=base.name, args=args)
+    return None
 
 
 def _parse_join_udf(

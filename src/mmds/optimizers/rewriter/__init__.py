@@ -13,8 +13,8 @@ from .engine import RewriteResult, rewrite_once
 from .directives import (
     BooleanMapCodeFilter,
     BooleanMapCodeFilterParams,
-    DetectGateBeforeMap,
-    DetectGateBeforeMapParams,
+    DetectPresenceMap,
+    DetectPresenceMapParams,
     DetectedFrameWindowBeforeMap,
     DetectedFrameWindowBeforeMapParams,
     JointTemporalPushdown,
@@ -33,8 +33,8 @@ from .selector import (
 __all__ = [
     "BooleanMapCodeFilter",
     "BooleanMapCodeFilterParams",
-    "DetectGateBeforeMap",
-    "DetectGateBeforeMapParams",
+    "DetectPresenceMap",
+    "DetectPresenceMapParams",
     "DetectedFrameWindowBeforeMap",
     "DetectedFrameWindowBeforeMapParams",
     "DirectiveMetadata",

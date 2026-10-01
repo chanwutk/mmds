@@ -543,7 +543,8 @@ class DetectParseRenderTests(unittest.TestCase):
     def test_round_trips_all_keyword_arguments(self) -> None:
         program = self._parse(
             'output = Detect(rows, "video", ["dog", "cat"], model="m.pt", '
-            'output_field="hits", frame_stride=5, conf=0.4, imgsz=640, name="det")'
+            'output_field="hits", frame_stride=5, conf=0.4, imgsz=640, '
+            'stop_after_n=2, name="det")'
         )
         spec = program.output_expr.spec
 
@@ -553,6 +554,7 @@ class DetectParseRenderTests(unittest.TestCase):
         self.assertEqual(spec.frame_stride, 5)
         self.assertEqual(spec.conf, 0.4)
         self.assertEqual(spec.imgsz, 640)
+        self.assertEqual(spec.stop_after_n, 2)
         self.assertEqual(program.output_expr.name, "det")
         rendered = render_query(program)
         self.assertEqual(parse_query(rendered).output_expr, program.output_expr)
@@ -562,7 +564,10 @@ class DetectParseRenderTests(unittest.TestCase):
         program = self._parse('output = Detect(rows, "video", ["dog"])')
         spec = program.output_expr.spec
 
-        self.assertEqual((spec.frame_stride, spec.conf, spec.imgsz), (1, None, None))
+        self.assertEqual(
+            (spec.frame_stride, spec.conf, spec.imgsz, spec.stop_after_n),
+            (1, None, None, None),
+        )
         self.assertIn('output = Detect(rows, "video", ["dog"])', render_query(program))
 
     def test_explicit_none_conf_and_imgsz_are_accepted(self) -> None:
@@ -583,6 +588,9 @@ class DetectParseRenderTests(unittest.TestCase):
             "conf string": 'Detect(rows, "video", ["dog"], conf="0.5")',
             "imgsz zero": 'Detect(rows, "video", ["dog"], imgsz=0)',
             "imgsz float": 'Detect(rows, "video", ["dog"], imgsz=640.0)',
+            "stop_after_n zero": 'Detect(rows, "video", ["dog"], stop_after_n=0)',
+            "stop_after_n float": 'Detect(rows, "video", ["dog"], stop_after_n=1.5)',
+            "stop_after_n bool": 'Detect(rows, "video", ["dog"], stop_after_n=True)',
             "empty classes": 'Detect(rows, "video", [])',
             "non-literal classes": 'Detect(rows, "video", classes)',
             "unknown keyword": 'Detect(rows, "video", ["dog"], fps=3)',
@@ -608,6 +616,9 @@ class DetectParamValidationTests(unittest.TestCase):
             "conf bool": {"conf": False},
             "imgsz zero": {"imgsz": 0},
             "imgsz float": {"imgsz": 32.0},
+            "stop_after_n zero": {"stop_after_n": 0},
+            "stop_after_n bool": {"stop_after_n": True},
+            "stop_after_n float": {"stop_after_n": 1.0},
         }
         for label, kwargs in cases.items():
             with self.subTest(case=label):
@@ -632,6 +643,22 @@ class DetectParamExecutionTests(unittest.TestCase):
         mock_model.get_text_pe.return_value = MagicMock()
         mock_model.predict.side_effect = lambda frame, **_: [
             _make_yoloe_result(0, "dog", [0, 0, 10, 10], 0.9)
+        ]
+        with patch("mmds.execution.ops.detect._get_model", return_value=mock_model):
+            detections = _detect_in_video(video, ["dog"], "yoloe-11s-seg.pt", **kwargs)
+        return detections, mock_model
+
+    def _run_results(self, results_per_frame, **kwargs):
+        frames = [
+            np.zeros((48, 64, 3), dtype=np.uint8) for _ in range(len(results_per_frame))
+        ]
+        video = _make_video(num_frames=len(frames))
+        video.__iter__ = MagicMock(return_value=iter(frames))
+        mock_model = MagicMock()
+        mock_model.get_text_pe.return_value = MagicMock()
+        mock_model.predict.side_effect = [
+            result if isinstance(result, list) else [result]
+            for result in results_per_frame
         ]
         with patch("mmds.execution.ops.detect._get_model", return_value=mock_model):
             detections = _detect_in_video(video, ["dog"], "yoloe-11s-seg.pt", **kwargs)
@@ -670,6 +697,75 @@ class DetectParamExecutionTests(unittest.TestCase):
         with self.assertRaises(MMDSValidationError):
             self._run(1, frame_stride=0)
 
+    def test_stop_after_one_track_does_not_read_later_frames(self) -> None:
+        detections, model = self._run(5, stop_after_n=1)
+
+        self.assertEqual(model.predict.call_count, 1)
+        self.assertEqual(
+            [bbox["frame_idx"] for bbox in detections[0]["bboxes"]],
+            [0],
+        )
+
+    def test_repeated_overlapping_boxes_stay_one_track(self) -> None:
+        detections, model = self._run(4, stop_after_n=2)
+
+        self.assertEqual(model.predict.call_count, 4)
+        self.assertEqual(len(detections[0]["bboxes"]), 4)
+
+    def test_second_non_overlapping_box_stops_the_scan(self) -> None:
+        near = _make_yoloe_result(0, "dog", [0.0, 0.0, 10.0, 10.0], 0.9)
+        far = _make_yoloe_result(0, "dog", [40.0, 40.0, 50.0, 50.0], 0.8)
+        detections, model = self._run_results(
+            [[near], [near], [far], [near]],
+            stop_after_n=2,
+        )
+
+        self.assertEqual(model.predict.call_count, 3)
+        self.assertEqual(
+            [bbox["frame_idx"] for bbox in detections[0]["bboxes"]],
+            [0, 1, 2],
+        )
+
+    def test_two_boxes_in_one_frame_count_as_two_tracks(self) -> None:
+        left = _make_yoloe_result(0, "dog", [0.0, 0.0, 10.0, 10.0], 0.9)
+        right = _make_yoloe_result(0, "dog", [40.0, 40.0, 50.0, 50.0], 0.7)
+        detections, model = self._run_results(
+            [[left, right], [left]],
+            stop_after_n=2,
+        )
+
+        self.assertEqual(model.predict.call_count, 1)
+        self.assertEqual(len(detections[0]["bboxes"]), 2)
+
+    def test_overlapping_boxes_in_one_frame_stay_one_track(self) -> None:
+        strong = _make_yoloe_result(0, "dog", [0.0, 0.0, 10.0, 10.0], 0.9)
+        duplicate = _make_yoloe_result(0, "dog", [1.0, 1.0, 11.0, 11.0], 0.6)
+        later = _make_yoloe_result(0, "dog", [80.0, 80.0, 90.0, 90.0], 0.8)
+        detections, model = self._run_results(
+            [[strong, duplicate], [later], [later]],
+            stop_after_n=2,
+        )
+
+        self.assertEqual(model.predict.call_count, 2)
+        self.assertEqual(
+            [bbox["frame_idx"] for bbox in detections[0]["bboxes"]],
+            [0, 0, 1],
+        )
+
+    def test_frame_gap_over_thirty_opens_a_new_track(self) -> None:
+        box = _make_yoloe_result(0, "dog", [0.0, 0.0, 10.0, 10.0], 0.9)
+        detections, model = self._run_results(
+            [box] * 63,
+            frame_stride=31,
+            stop_after_n=2,
+        )
+
+        self.assertEqual(model.predict.call_count, 2)
+        self.assertEqual(
+            [bbox["frame_idx"] for bbox in detections[0]["bboxes"]],
+            [0, 31],
+        )
+
     def test_apply_detect_forwards_spec_params(self) -> None:
         source = DatasetExpr(kind="input", input_path="dummy.jsonl")
         node = DatasetExpr(
@@ -692,8 +788,28 @@ class DetectParamExecutionTests(unittest.TestCase):
 
         self.assertEqual(
             detect.call_args.kwargs,
-            {"frame_stride": 4, "conf": 0.5, "imgsz": 480},
+            {"frame_stride": 4, "conf": 0.5, "imgsz": 480, "stop_after_n": None},
         )
+
+    def test_apply_detect_forwards_stop_after_n(self) -> None:
+        source = DatasetExpr(kind="input", input_path="dummy.jsonl")
+        node = DatasetExpr(
+            kind="detect",
+            source=source,
+            spec=DetectSpec(
+                video_field="video",
+                classes=("bear",),
+                stop_after_n=1,
+            ),
+        )
+
+        with patch("mmds.execution.ops.detect.open_video", return_value=_make_video()):
+            with patch(
+                "mmds.execution.ops.detect._detect_in_video", return_value=[]
+            ) as detect:
+                _apply_detect(node, {"video": "clip.mp4"})
+
+        self.assertEqual(detect.call_args.kwargs["stop_after_n"], 1)
 
 
 if __name__ == "__main__":

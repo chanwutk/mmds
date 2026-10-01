@@ -89,12 +89,13 @@ class ResolvedPrompt:
 class UdfSpec:
     module: str
     name: str
+    args: tuple[str, ...] = ()
 
     def load(self) -> Callable[..., Any]:
         module = import_module(self.module)
         value = getattr(module, self.name)
         spec = udf_spec_from_callable(value)
-        if spec != self:
+        if (spec.module, spec.name) != (self.module, self.name):
             raise MMDSValidationError(
                 f"Resolved callable {self.module}.{self.name} no longer matches its UDF spec."
             )
@@ -193,6 +194,7 @@ class DetectSpec:
     frame_stride: int = 1
     conf: float | None = None
     imgsz: int | None = None
+    stop_after_n: int | None = None
 
     def __post_init__(self) -> None:
         if not self.video_field:
@@ -230,6 +232,14 @@ class DetectSpec:
             )
         if self.conf is not None:
             object.__setattr__(self, "conf", float(self.conf))
+        if self.stop_after_n is not None and (
+            isinstance(self.stop_after_n, bool)
+            or not isinstance(self.stop_after_n, int)
+            or self.stop_after_n < 1
+        ):
+            raise MMDSValidationError(
+                "DetectSpec stop_after_n must be an integer >= 1 or None."
+            )
         if self.imgsz is not None and (
             isinstance(self.imgsz, bool)
             or not isinstance(self.imgsz, int)

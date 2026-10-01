@@ -3,7 +3,7 @@ from .detect_frame_window import (
     DetectedFrameWindowBeforeMap,
     DetectedFrameWindowBeforeMapParams,
 )
-from .detect_gate import DetectGateBeforeMap, DetectGateBeforeMapParams
+from .detect_presence import DetectPresenceMap, DetectPresenceMapParams
 from .modality import ModalitySubstitution, ModalitySubstitutionParams
 from .pruning import PromptFieldPruning, PromptFieldPruningParams
 from .temporal import (
@@ -15,8 +15,8 @@ from .temporal import (
 __all__ = [
     "BooleanMapCodeFilter",
     "BooleanMapCodeFilterParams",
-    "DetectGateBeforeMap",
-    "DetectGateBeforeMapParams",
+    "DetectPresenceMap",
+    "DetectPresenceMapParams",
     "DetectedFrameWindowBeforeMap",
     "DetectedFrameWindowBeforeMapParams",
     "JointTemporalPushdown",

@@ -24,7 +24,6 @@ from ._prompt import (
     prompt_map_entries,
     record_paths,
 )
-from .detect_gate import _source_has_detect_gate
 from .temporal import derive_view_group_by, fields_dropped_downstream
 
 
@@ -119,8 +118,8 @@ class DetectedFrameWindowBeforeMap:
         when_to_use=(
             "Use for object-centric questions on long video where the object "
             "appears in few frames and empty spans dominate VLM cost. Prefer "
-            "detect_gate_before_map when whole empty clips should be dropped but "
-            "survivors can still watch the full clip."
+            "detect_presence_map when the Map's only output is a boolean that "
+            "the first detection can answer."
         ),
     )
     params_type = DetectedFrameWindowBeforeMapParams
@@ -225,9 +224,9 @@ class DetectedFrameWindowBeforeMap:
                 "DetectedFrameWindowBeforeMap currently supports only top-level "
                 f"prompt fields; found {format_record_paths(nested)}."
             )
-        if _source_has_detect_gate(node.source, params.video_field):
+        if _source_is_detect_keep(node.source, params.video_field):
             raise MMDSRewriteError(
-                "Matched Map already sits behind a Detect gate on "
+                "Matched Map already sits behind Detect plus a keep Filter on "
                 f"{params.video_field!r}."
             )
 
@@ -295,3 +294,14 @@ class DetectedFrameWindowBeforeMap:
             video_field=video_field,
             reserved=_RESERVED_FIELDS,
         )
+
+
+def _source_is_detect_keep(source: DatasetExpr, video_field: str) -> bool:
+    """Return True when source is Filter(Detect(...)) for the same video field."""
+
+    if source.kind != "filter" or source.source is None:
+        return False
+    detect = source.source
+    if detect.kind != "detect" or not isinstance(detect.spec, DetectSpec):
+        return False
+    return detect.spec.video_field == video_field

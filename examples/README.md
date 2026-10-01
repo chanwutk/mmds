@@ -8,6 +8,8 @@ top-level [GET_START.md](../GET_START.md) for setup and [README.md](../README.md
 | File | Operators | Needs |
 |------|-----------|-------|
 | [`wildlife_species.py`](wildlife_species.py) | `Map` (video prompt) → `Unnest` | Gemini API key |
+| [`animals_bear_map.py`](animals_bear_map.py) | `Map` (video prompt: is a bear visible?) | Gemini API key; full Swan Valley video in `data/swan_valley_full.jsonl` |
+| [`animals_bear_detect_presence.py`](animals_bear_detect_presence.py) | `Detect` (`stop_after_n=1`) → `Filter` → code `Map` (`bear_present`) | YOLOE weights; `data/swan_valley_full.jsonl` |
 | [`wildlife_species_count.py`](wildlife_species_count.py) | `Map` → `Unnest` → `Reduce` + `ForEach` | Gemini API key |
 | [`video_map_then_filter.py`](video_map_then_filter.py) | `Map` (video prompt) → `Filter` | Gemini API key |
 | [`twelvelabs_search_and_discover.py`](twelvelabs_search_and_discover.py) | `Map` (video prompt) → `Filter` | Gemini API key; `data/clips.jsonl` |
@@ -37,6 +39,15 @@ top-level [GET_START.md](../GET_START.md) for setup and [README.md](../README.md
 - [`run_detect.py`](run_detect.py) — same as `run_expr.py` but calls `execute(...)`
   without constructing `GeminiPromptExecutor`. Optional; `run_expr.py` is enough
   for local `Detect` pipelines.
+- [`eval_animals_bear.py`](eval_animals_bear.py) — scores
+  [`animals_bear_detect_presence.py`](animals_bear_detect_presence.py), the
+  `detect_presence_map` rewrite, against
+  [`data/animals_bear_ground_truth.json`](../data/animals_bear_ground_truth.json).
+  YOLOE stops at the first bear track and a code Map sets `bear_present`;
+  there is no prompt call. Pass `--compare-semantic` to also score
+  [`animals_bear_map.py`](animals_bear_map.py) and print precision, recall, F1,
+  and token cost side by side. A clip with no detection is dropped and counted
+  as `bear_present=false`.
 
 ## Lecture event localization data
 
