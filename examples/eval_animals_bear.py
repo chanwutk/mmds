@@ -51,6 +51,9 @@ from mmds.model import (  # noqa: E402
 DEFAULT_PRESENCE_QUERY = ROOT / "examples" / "animals_bear_detect_presence.py"
 DEFAULT_SEMANTIC_QUERY = ROOT / "examples" / "animals_bear_map.py"
 DEFAULT_GROUND_TRUTH = ROOT / "data" / "animals_bear_ground_truth.json"
+FLAG_FIELD = "bear_present"
+PRESENCE_LABEL = "Detect presence"
+DESCRIPTION = __doc__
 
 
 @dataclass(frozen=True)
@@ -180,7 +183,7 @@ def load_ground_truth(path: Path) -> list[dict[str, Any]]:
         labels.append(
             {
                 "key": key,
-                "bear_present": _as_bool(clip.get("bear_present"), field="bear_present"),
+                FLAG_FIELD: _as_bool(clip.get(FLAG_FIELD), field=FLAG_FIELD),
             }
         )
     return labels
@@ -198,14 +201,14 @@ def evaluate_bear_presence(
         key = row_key(row)
         if key in predicted:
             raise ValueError(f"Duplicate prediction for clip {key}.")
-        predicted[key] = _as_bool(row.get("bear_present"), field="bear_present")
+        predicted[key] = _as_bool(row.get(FLAG_FIELD), field=FLAG_FIELD)
 
     details: list[dict[str, Any]] = []
     counts = {"tp": 0, "fp": 0, "fn": 0, "tn": 0}
     labeled = {_ground_truth_key(clip) for clip in ground_truth}
     for clip in ground_truth:
         key = _ground_truth_key(clip)
-        truth = _as_bool(clip["bear_present"], field="bear_present")
+        truth = _as_bool(clip[FLAG_FIELD], field=FLAG_FIELD)
         present = key in predicted
         pred = predicted[key] if present else False
         if truth and pred:
@@ -423,7 +426,7 @@ def _print_comparison(results: list[tuple[str, dict[str, Any], CostReport]]) -> 
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=DESCRIPTION)
     parser.add_argument("--pred-json", type=Path, help="Load detect-presence rows instead of running it.")
     parser.add_argument(
         "--query",
@@ -465,7 +468,7 @@ def main() -> None:
         pred_rows = _load_json_array(args.pred_json)
         presence_cost = _loaded_cost(f"{args.pred_json.stem} (loaded)", pred_rows)
     else:
-        pred_rows, presence_cost = _run_pipeline(args.query, label="Detect presence")
+        pred_rows, presence_cost = _run_pipeline(args.query, label=PRESENCE_LABEL)
 
     if args.save_pred is not None:
         args.save_pred.write_text(
@@ -494,10 +497,10 @@ def main() -> None:
     presence_report = _print_report(
         pred_rows,
         ground_truth,
-        label="Detect presence",
+        label=PRESENCE_LABEL,
         cost=presence_cost,
     )
-    results.append(("Detect presence", presence_report, presence_cost))
+    results.append((PRESENCE_LABEL, presence_report, presence_cost))
     if semantic_rows is not None and semantic_cost is not None:
         print()
         semantic_report = _print_report(

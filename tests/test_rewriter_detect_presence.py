@@ -156,6 +156,18 @@ output = Map(
             },
             {"video_field": "  ", "classes": ["bear"], "flag_field": "bear_present"},
             {"video_field": "video", "classes": ["bear"], "flag_field": "  "},
+            {
+                "video_field": "video",
+                "classes": ["bear"],
+                "flag_field": "bear_present",
+                "min_tracks": 0,
+            },
+            {
+                "video_field": "video",
+                "classes": ["bear"],
+                "flag_field": "bear_present",
+                "min_tracks": True,
+            },
         )
         for params in invalid:
             with self.subTest(params=params):
@@ -166,6 +178,95 @@ output = Map(
                         match=match,
                         params=params,
                     )
+
+    def test_min_tracks_counts_tracks_and_stops_at_that_count(self) -> None:
+        original = _presence_program()
+        rewritten = apply_rewrite(
+            original,
+            directive=DetectPresenceMap(),
+            match=DetectPresenceMap().find_matches(
+                PlanIndex.build(original.output_expr)
+            )[0],
+            params={
+                "video_field": "video",
+                "classes": ["bear"],
+                "flag_field": "bear_present",
+                "min_tracks": 5,
+            },
+        )
+        mapped = rewritten.output_expr
+        gated = mapped.source
+        detected = gated.source
+        self.assertEqual(detected.spec.stop_after_n, 5)
+        self.assertEqual(
+            gated.spec,
+            UdfSpec(
+                module="udfs.detection_ops",
+                name="keep_rows_with_at_least_n_tracks",
+                args=("5",),
+            ),
+        )
+        self.assertEqual(
+            mapped.spec,
+            UdfSpec(
+                module="udfs.detection_ops",
+                name="map_at_least_n_tracks",
+                args=("bear_present", "5"),
+            ),
+        )
+
+    def test_track_threshold_ignores_repeated_boxes_of_one_track(self) -> None:
+        from udfs.detection_ops import (  # noqa: E402
+            keep_rows_with_at_least_n_tracks,
+            map_at_least_n_tracks,
+        )
+
+        one_track = {
+            "detections": [
+                {
+                    "type": "bear",
+                    "bboxes": [
+                        {"frame_idx": index, "track_id": 1, "bbox": [0, 0, 1, 1], "confidence": 0.9}
+                        for index in range(8)
+                    ],
+                }
+            ]
+        }
+        five_tracks = {
+            "detections": [
+                {
+                    "type": "bear",
+                    "bboxes": [
+                        {
+                            "frame_idx": index,
+                            "track_id": index + 1,
+                            "bbox": [0, 0, 1, 1],
+                            "confidence": 0.9,
+                        }
+                        for index in range(5)
+                    ],
+                }
+            ]
+        }
+        self.assertFalse(keep_rows_with_at_least_n_tracks(one_track, "5"))
+        self.assertEqual(
+            map_at_least_n_tracks(one_track, "at_least_five_bears", "5"),
+            {"at_least_five_bears": False},
+        )
+        self.assertTrue(keep_rows_with_at_least_n_tracks(five_tracks, "5"))
+        self.assertEqual(
+            map_at_least_n_tracks(five_tracks, "at_least_five_bears", "5"),
+            {"at_least_five_bears": True},
+        )
+
+    def test_five_bears_example_imports_as_python(self) -> None:
+        path = ROOT / "examples" / "animals_five_bears_detect_presence.py"
+        spec = importlib.util.spec_from_file_location(path.stem, path)
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        self.assertEqual(module.detected.spec.stop_after_n, 5)
+        self.assertEqual(module.output.spec.name, "map_at_least_five_bears")
 
     def test_bound_udf_sets_the_named_boolean(self) -> None:
         node = DatasetExpr(

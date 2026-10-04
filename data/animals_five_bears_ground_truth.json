@@ -1,0 +1,11 @@
+{
+  "video": "https://www.youtube.com/watch?v=s5iU3nLOvi8",
+  "task": "at_least_five_bears",
+  "notes": "The full 19:35 Swan Valley compilation. A published description of this video includes a swimming bear pair, a bear scratching a tree, a bear at a carcass, and two cubs at a tree, which is at least five bear appearances. This is not a frame-by-frame identity count.",
+  "clips": [
+    {
+      "source": "https://www.youtube.com/watch?v=s5iU3nLOvi8",
+      "at_least_five_bears": true
+    }
+  ]
+}

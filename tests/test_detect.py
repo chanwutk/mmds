@@ -711,6 +711,23 @@ class DetectParamExecutionTests(unittest.TestCase):
 
         self.assertEqual(model.predict.call_count, 4)
         self.assertEqual(len(detections[0]["bboxes"]), 4)
+        self.assertEqual(
+            {bbox["track_id"] for bbox in detections[0]["bboxes"]},
+            {1},
+        )
+
+    def test_five_separate_tracks_stop_the_scan(self) -> None:
+        results = [
+            [_make_yoloe_result(0, "dog", [index * 20.0, 0.0, index * 20.0 + 10.0, 10.0], 0.9)]
+            for index in range(6)
+        ]
+        detections, model = self._run_results(results, stop_after_n=5)
+
+        self.assertEqual(model.predict.call_count, 5)
+        self.assertEqual(
+            [bbox["track_id"] for bbox in detections[0]["bboxes"]],
+            [1, 2, 3, 4, 5],
+        )
 
     def test_second_non_overlapping_box_stops_the_scan(self) -> None:
         near = _make_yoloe_result(0, "dog", [0.0, 0.0, 10.0, 10.0], 0.9)

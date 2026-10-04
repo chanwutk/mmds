@@ -168,6 +168,71 @@ def map_dog_present(row: dict[str, Any]) -> dict[str, Any]:
     return map_detection_presence(row, "dog_present")
 
 
+def _parse_min_tracks(value: str) -> int:
+    if not isinstance(value, str) or not value.isdecimal():
+        raise ValueError("min_tracks must be a decimal integer string >= 1.")
+    number = int(value)
+    if number < 1 or str(number) != value:
+        raise ValueError("min_tracks must be a decimal integer string >= 1.")
+    return number
+
+
+def count_detection_tracks(row: dict[str, Any]) -> int:
+    """Count distinct ``track_id`` values written by ``Detect``.
+
+    Boxes without an integer ``track_id`` are ignored. One animal across many
+    frames shares one id, so this is not a raw box count.
+    """
+    detections = row.get("detections")
+    if not isinstance(detections, list):
+        return 0
+    track_ids: set[int] = set()
+    for item in detections:
+        if not isinstance(item, dict):
+            continue
+        bboxes = item.get("bboxes")
+        if not isinstance(bboxes, list):
+            continue
+        for bbox in bboxes:
+            if not isinstance(bbox, dict):
+                continue
+            track_id = bbox.get("track_id")
+            if isinstance(track_id, bool) or not isinstance(track_id, int):
+                continue
+            track_ids.add(track_id)
+    return len(track_ids)
+
+
+def keep_rows_with_at_least_n_tracks(row: dict[str, Any], min_tracks: str) -> bool:
+    """Keep rows whose detections contain at least ``min_tracks`` tracks."""
+    return count_detection_tracks(row) >= _parse_min_tracks(min_tracks)
+
+
+def map_at_least_n_tracks(
+    row: dict[str, Any],
+    flag_field: str,
+    min_tracks: str,
+) -> dict[str, Any]:
+    """Set ``flag_field`` from whether the track count reaches ``min_tracks``.
+
+    Rewrite plans pass both arguments as string literals. An example imported
+    as Python should pass a bare wrapper such as :func:`map_at_least_five_bears`.
+    """
+    if not isinstance(flag_field, str) or not flag_field:
+        raise ValueError("flag_field must be a non-empty string.")
+    return {flag_field: keep_rows_with_at_least_n_tracks(row, min_tracks)}
+
+
+def keep_at_least_five_bear_tracks(row: dict[str, Any]) -> bool:
+    """Keep rows with at least five detection tracks."""
+    return keep_rows_with_at_least_n_tracks(row, "5")
+
+
+def map_at_least_five_bears(row: dict[str, Any]) -> dict[str, Any]:
+    """Set ``at_least_five_bears`` from whether five detection tracks exist."""
+    return map_at_least_n_tracks(row, "at_least_five_bears", "5")
+
+
 _VIEWS_FIELD = "_mmds_candidate_views"
 _DEFAULT_FPS = 30.0
 

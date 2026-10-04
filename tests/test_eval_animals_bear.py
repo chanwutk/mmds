@@ -167,6 +167,21 @@ class ReportFormattingTests(unittest.TestCase):
         json.dumps(presence_cost.to_dict())
 
 
+class FiveBearsGroundTruthTests(unittest.TestCase):
+    def test_shipped_label_is_one_full_video_positive(self) -> None:
+        saved = EVAL.FLAG_FIELD
+        EVAL.FLAG_FIELD = "at_least_five_bears"
+        try:
+            clips = EVAL.load_ground_truth(
+                ROOT / "data" / "animals_five_bears_ground_truth.json"
+            )
+        finally:
+            EVAL.FLAG_FIELD = saved
+        self.assertEqual(len(clips), 1)
+        self.assertTrue(clips[0]["at_least_five_bears"])
+        self.assertEqual(clips[0]["key"][0], "video")
+
+
 class PromptKeyTests(unittest.TestCase):
     def test_presence_plan_does_not_need_a_prompt_key(self) -> None:
         output = EVAL._load_query_output(EVAL.DEFAULT_PRESENCE_QUERY)

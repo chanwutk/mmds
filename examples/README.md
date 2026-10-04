@@ -10,6 +10,8 @@ top-level [GET_START.md](../GET_START.md) for setup and [README.md](../README.md
 | [`wildlife_species.py`](wildlife_species.py) | `Map` (video prompt) → `Unnest` | Gemini API key |
 | [`animals_bear_map.py`](animals_bear_map.py) | `Map` (video prompt: is a bear visible?) | Gemini API key; full Swan Valley video in `data/swan_valley_full.jsonl` |
 | [`animals_bear_detect_presence.py`](animals_bear_detect_presence.py) | `Detect` (`stop_after_n=1`) → `Filter` → code `Map` (`bear_present`) | YOLOE weights; `data/swan_valley_full.jsonl` |
+| [`animals_five_bears_map.py`](animals_five_bears_map.py) | `Map` (video prompt: at least five bears?) | Gemini API key; `data/swan_valley_full.jsonl` |
+| [`animals_five_bears_detect_presence.py`](animals_five_bears_detect_presence.py) | `Detect` (`stop_after_n=5`, `frame_stride=10`) → `Filter` → code `Map` (`at_least_five_bears`) | YOLOE weights; `data/swan_valley_full.jsonl` |
 | [`wildlife_species_count.py`](wildlife_species_count.py) | `Map` → `Unnest` → `Reduce` + `ForEach` | Gemini API key |
 | [`video_map_then_filter.py`](video_map_then_filter.py) | `Map` (video prompt) → `Filter` | Gemini API key |
 | [`twelvelabs_search_and_discover.py`](twelvelabs_search_and_discover.py) | `Map` (video prompt) → `Filter` | Gemini API key; `data/clips.jsonl` |
@@ -48,6 +50,12 @@ top-level [GET_START.md](../GET_START.md) for setup and [README.md](../README.md
   [`animals_bear_map.py`](animals_bear_map.py) and print precision, recall, F1,
   and token cost side by side. A clip with no detection is dropped and counted
   as `bear_present=false`.
+- [`eval_animals_five_bears.py`](eval_animals_five_bears.py) — same comparison
+  for at least five bear tracks:
+  [`animals_five_bears_detect_presence.py`](animals_five_bears_detect_presence.py)
+  against
+  [`animals_five_bears_map.py`](animals_five_bears_map.py) and
+  [`data/animals_five_bears_ground_truth.json`](../data/animals_five_bears_ground_truth.json).
 
 ## Lecture event localization data
 

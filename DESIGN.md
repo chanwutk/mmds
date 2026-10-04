@@ -404,14 +404,14 @@ Design rules:
 
 ```json
 [
-  {"type": "dog", "bboxes": [{"frame_idx": 0, "bbox": [x1, y1, x2, y2], "confidence": 0.9}]},
+  {"type": "dog", "bboxes": [{"frame_idx": 0, "track_id": 1, "bbox": [x1, y1, x2, y2], "confidence": 0.9}]},
   ...
 ]
 ```
 
 - the OpenCV/NumPy stack (and, at run time, `torch`/`ultralytics`) is imported **lazily**: `mmds.execution` imports `.ops.detect` only when a `detect` node actually executes, and `mmds.VideoView` is a lazy export via module `__getattr__`. This keeps `import mmds` and the prompt/UDF execution paths usable without the heavy CV/ML dependencies installed.
 - `Detect` is parsed from and rendered back to DSL text (including `frame_stride`, `conf`, `imgsz`, and `stop_after_n`) so rewrite directives can insert it while preserving render/parse round trips
-- `stop_after_n` counts tracks, not raw boxes. A box joins the same-class track with the highest intersection-over-union of at least 0.3 whose last box is at most 30 source frames earlier and has not already been matched in this frame. Boxes that match none of those tracks open a new track, and overlapping unmatched boxes in the same frame share that new track. The scan returns the boxes seen so far and does not read later frames. Fewer than `n` tracks still reads the video to the end
+- `stop_after_n` counts tracks, not raw boxes. A box joins the same-class track with the highest intersection-over-union of at least 0.3 whose last box is at most 30 source frames earlier and has not already been matched in this frame. Boxes that match none of those tracks open a new track, and overlapping unmatched boxes in the same frame share that new track. Each box stores that track's integer `track_id`. The scan returns the boxes seen so far and does not read later frames. Fewer than `n` tracks still reads the video to the end
 - Detect writes `_mmds_video_fps` when the opened video reports a positive fps so
   detection-window rewrites can convert `frame_idx` values to source time without
   re-opening the file in the interval UDF
@@ -425,6 +425,11 @@ Design rules:
   `map_detection_presence("bear_present")`. `map_bear_present(row)` is the
   same check with `flag_field` fixed to `"bear_present"`, so an example file
   imported as Python can pass the function itself
+- `udfs.detection_ops.keep_rows_with_at_least_n_tracks(row, min_tracks)` and
+  `map_at_least_n_tracks(row, flag_field, min_tracks)` use distinct `track_id`
+  values. `min_tracks` is a decimal integer string. `map_at_least_five_bears`
+  and `keep_at_least_five_bear_tracks` fix that threshold at five for the
+  importable example
 
 ### Vehicle Case-Study Helpers
 
@@ -633,19 +638,27 @@ parameters.
   boolean field. `find_matches` offers only those Maps. `apply` requires
   `flag_field` to be that field, `video_field` to be a direct top-level
   `Record` reference in the prompt, and `classes` to be non-empty unique
-  YOLOE names. `model` defaults to `yoloe-11s-seg.pt`. The prompt is removed.
-  The rewritten plan is `Detect` (`stop_after_n=1`, `output_field="detections"`)
-  → `Filter(keep_rows_with_detections)` →
-  `Map(map_detection_presence(flag_field))`. One track of any requested class
-  keeps the row and the code Map sets the boolean to true. A row with no boxes
-  is dropped, which scores as false for an evaluator that treats a missing row
-  as false. `stop_after_n=1` is fixed: the boolean means presence, so the scan
-  ends at the first track and does not answer an exact count. The runnable
-  form is [`examples/animals_bear_detect_presence.py`](examples/animals_bear_detect_presence.py)
+  YOLOE names. `model` defaults to `yoloe-11s-seg.pt`. `min_tracks` defaults
+  to `1`. The prompt is removed. The rewritten plan is `Detect`
+  (`stop_after_n=min_tracks`, `output_field="detections"`) then a keep Filter
+  and a code Map. `min_tracks=1` uses `Filter(keep_rows_with_detections)` and
+  `Map(map_detection_presence(flag_field))`: one track keeps the row. A larger
+  `min_tracks` uses `Filter(keep_rows_with_at_least_n_tracks(str(n)))` and
+  `Map(map_at_least_n_tracks(flag_field, str(n)))`, counting distinct
+  `track_id` values rather than boxes. The scan stops once that many tracks
+  exist. Fewer than `n` reads the video to the end and drops the row, which
+  scores as false when a missing row is false. This does not answer an exact
+  count. Presence is
+  [`examples/animals_bear_detect_presence.py`](examples/animals_bear_detect_presence.py)
   against [`examples/animals_bear_map.py`](examples/animals_bear_map.py), scored
-  by [`examples/eval_animals_bear.py`](examples/eval_animals_bear.py). That
-  example imports `map_bear_present` so Python execution does not call the
-  bound UDF at import time.
+  by [`examples/eval_animals_bear.py`](examples/eval_animals_bear.py) on
+  `data/swan_valley_full.jsonl`. At least five bears is
+  [`examples/animals_five_bears_detect_presence.py`](examples/animals_five_bears_detect_presence.py)
+  against [`examples/animals_five_bears_map.py`](examples/animals_five_bears_map.py),
+  scored by [`examples/eval_animals_five_bears.py`](examples/eval_animals_five_bears.py)
+  with [`data/animals_five_bears_ground_truth.json`](data/animals_five_bears_ground_truth.json).
+  Those examples import bare UDF wrappers so Python execution does not call
+  the bound UDF at import time.
 - `DetectedFrameWindowBeforeMap` inserts `Detect`, a UDF Map that converts
   absolute `frame_idx` hits into `_mmds_candidate_views` one-frame intervals,
   then a joint `VideoMap` over those views. Window padding + lowering's

@@ -162,7 +162,14 @@ def _bbox_iou(left: list[float], right: list[float]) -> float:
 class _Track:
     """One animal: the last box that was associated to it."""
 
-    def __init__(self, class_name: str, frame_idx: int, bbox: list[float]) -> None:
+    def __init__(
+        self,
+        track_id: int,
+        class_name: str,
+        frame_idx: int,
+        bbox: list[float],
+    ) -> None:
+        self.track_id = track_id
         self.class_name = class_name
         self.last_frame_idx = frame_idx
         self.last_bbox = bbox
@@ -240,6 +247,18 @@ def _detect_in_video(
 
     by_class: dict[str, list[dict[str, Any]]] = {}
     tracks: list[_Track] = []
+    next_track_id = 1
+
+    def record(class_name: str, bbox: list[float], confidence: float, track: _Track) -> None:
+        by_class.setdefault(class_name, []).append(
+            {
+                "frame_idx": frame_idx,
+                "bbox": bbox,
+                "confidence": confidence,
+                "track_id": track.track_id,
+            }
+        )
+
     for relative_frame_idx, frame in enumerate(video):
         if relative_frame_idx % frame_stride != 0:
             continue
@@ -280,13 +299,7 @@ def _detect_in_video(
             track.last_frame_idx = frame_idx
             track.last_bbox = bbox
             claimed.add(id(track))
-            by_class.setdefault(class_name, []).append(
-                {
-                    "frame_idx": frame_idx,
-                    "bbox": bbox,
-                    "confidence": confidence,
-                }
-            )
+            record(class_name, bbox, confidence, track)
         opened: list[_Track] = []
         for class_name, bbox, confidence in unmatched:
             track = _match_track(
@@ -297,19 +310,14 @@ def _detect_in_video(
                 claimed=set(),
             )
             if track is None:
-                track = _Track(class_name, frame_idx, bbox)
+                track = _Track(next_track_id, class_name, frame_idx, bbox)
+                next_track_id += 1
                 opened.append(track)
                 tracks.append(track)
             else:
                 track.last_frame_idx = frame_idx
                 track.last_bbox = bbox
-            by_class.setdefault(class_name, []).append(
-                {
-                    "frame_idx": frame_idx,
-                    "bbox": bbox,
-                    "confidence": confidence,
-                }
-            )
+            record(class_name, bbox, confidence, track)
         if stop_after_n is not None and len(tracks) >= stop_after_n:
             break
 

@@ -29,6 +29,8 @@ _KEEP_UDF = UdfSpec(
     name="keep_rows_with_detections",
 )
 _PRESENCE_UDF = "map_detection_presence"
+_AT_LEAST_KEEP_UDF = "keep_rows_with_at_least_n_tracks"
+_AT_LEAST_MAP_UDF = "map_at_least_n_tracks"
 
 
 class DetectPresenceMapParams(BaseModel):
@@ -41,8 +43,15 @@ class DetectPresenceMapParams(BaseModel):
     classes: list[str] = Field(
         min_length=1,
         description=(
-            "Open-vocabulary YOLOE class names. Finding one track of any of "
-            "these classes answers the boolean as true."
+            "Open-vocabulary YOLOE class names whose tracks answer the boolean."
+        ),
+    )
+    min_tracks: int = Field(
+        default=1,
+        description=(
+            "Minimum number of distinct tracks required. 1 means presence. "
+            "A larger value means at least that many instances. The scan stops "
+            "once this many tracks exist."
         ),
     )
     flag_field: str = Field(
@@ -66,6 +75,12 @@ class DetectPresenceMapParams(BaseModel):
             raise ValueError("flag_field cannot be blank.")
         if not self.model.strip():
             raise ValueError("model cannot be blank.")
+        if (
+            isinstance(self.min_tracks, bool)
+            or not isinstance(self.min_tracks, int)
+            or self.min_tracks < 1
+        ):
+            raise ValueError("min_tracks must be an integer >= 1.")
         if any(not isinstance(name, str) or not name.strip() for name in self.classes):
             raise ValueError("classes must contain non-empty strings.")
         normalized = tuple(name.strip() for name in self.classes)
@@ -85,13 +100,13 @@ class DetectPresenceMap:
         name="detect_presence_map",
         description=(
             "Replace a single-boolean prompt Map with YOLOE Detect, a filter "
-            "that drops rows with no boxes, and a code Map that sets the "
-            "boolean from those detections. The prompt Map is removed."
+            "that drops rows below the track threshold, and a code Map that "
+            "sets the boolean from that count. The prompt Map is removed."
         ),
         when_to_use=(
-            "Use when the Map's only output is a boolean meaning the named "
-            "objects are visible, so the first detection is the answer and "
-            "the VLM call can be removed."
+            "Use when the Map's only output is a boolean meaning at least n "
+            "instances of the named objects are visible. n=1 is presence. "
+            "The first n tracks are the answer and the VLM call can be removed."
         ),
     )
     params_type = DetectPresenceMapParams
@@ -146,6 +161,25 @@ class DetectPresenceMap:
                 f"{params.video_field!r}."
             )
 
+        if params.min_tracks == 1:
+            keep_spec = _KEEP_UDF
+            map_spec = UdfSpec(
+                module="udfs.detection_ops",
+                name=_PRESENCE_UDF,
+                args=(params.flag_field,),
+            )
+        else:
+            threshold = str(params.min_tracks)
+            keep_spec = UdfSpec(
+                module="udfs.detection_ops",
+                name=_AT_LEAST_KEEP_UDF,
+                args=(threshold,),
+            )
+            map_spec = UdfSpec(
+                module="udfs.detection_ops",
+                name=_AT_LEAST_MAP_UDF,
+                args=(params.flag_field, threshold),
+            )
         detected = DatasetExpr(
             kind="detect",
             source=node.source,
@@ -154,24 +188,20 @@ class DetectPresenceMap:
                 classes=tuple(params.classes),
                 model=params.model,
                 output_field=_OUTPUT_FIELD,
-                stop_after_n=1,
+                stop_after_n=params.min_tracks,
             ),
             name="rewrite_detect_presence",
         )
         gated = DatasetExpr(
             kind="filter",
             source=detected,
-            spec=_KEEP_UDF,
+            spec=keep_spec,
             name="rewrite_keep_detections",
         )
         replacement = DatasetExpr(
             kind="map",
             source=gated,
-            spec=UdfSpec(
-                module="udfs.detection_ops",
-                name=_PRESENCE_UDF,
-                args=(params.flag_field,),
-            ),
+            spec=map_spec,
             name=node.name,
             replace=node.replace,
         )
