@@ -12,6 +12,8 @@ top-level [GET_START.md](../GET_START.md) for setup and [README.md](../README.md
 | [`animals_bear_detect_presence.py`](animals_bear_detect_presence.py) | `Detect` (`stop_after_n=1`) → `Filter` → code `Map` (`bear_present`) | YOLOE weights; `data/swan_valley_full.jsonl` |
 | [`animals_five_bears_map.py`](animals_five_bears_map.py) | `Map` (video prompt: at least five bears?) | Gemini API key; `data/swan_valley_full.jsonl` |
 | [`animals_five_bears_detect_presence.py`](animals_five_bears_detect_presence.py) | `Detect` (`stop_after_n=5`, `frame_stride=10`) → `Filter` → code `Map` (`at_least_five_bears`) | YOLOE weights; `data/swan_valley_full.jsonl` |
+| [`animals_false_map.py`](animals_false_map.py) | `Map` (video prompt: is a sedan visible?) | Gemini API key; `data/swan_valley_full.jsonl` |
+| [`animals_false_detect_presence.py`](animals_false_detect_presence.py) | `Detect` (`stop_after_n=1`, `frame_stride=10`) → `Filter` → code `Map` (`sedan_present`) | YOLOE weights; `data/swan_valley_full.jsonl` |
 | [`wildlife_species_count.py`](wildlife_species_count.py) | `Map` → `Unnest` → `Reduce` + `ForEach` | Gemini API key |
 | [`video_map_then_filter.py`](video_map_then_filter.py) | `Map` (video prompt) → `Filter` | Gemini API key |
 | [`twelvelabs_search_and_discover.py`](twelvelabs_search_and_discover.py) | `Map` (video prompt) → `Filter` | Gemini API key; `data/clips.jsonl` |
@@ -56,6 +58,14 @@ top-level [GET_START.md](../GET_START.md) for setup and [README.md](../README.md
   against
   [`animals_five_bears_map.py`](animals_five_bears_map.py) and
   [`data/animals_five_bears_ground_truth.json`](../data/animals_five_bears_ground_truth.json).
+- [`eval_animals_false.py`](eval_animals_false.py) — scores a negative presence
+  question (is a sedan visible?) using
+  [`animals_false_detect_presence.py`](animals_false_detect_presence.py)
+  against
+  [`animals_false_map.py`](animals_false_map.py) and
+  [`data/animals_false_ground_truth.json`](../data/animals_false_ground_truth.json).
+  The label is false. A clip with no sedan track is dropped and counted as
+  `sedan_present=false`.
 
 ## Lecture event localization data
 

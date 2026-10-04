@@ -657,6 +657,12 @@ parameters.
   against [`examples/animals_five_bears_map.py`](examples/animals_five_bears_map.py),
   scored by [`examples/eval_animals_five_bears.py`](examples/eval_animals_five_bears.py)
   with [`data/animals_five_bears_ground_truth.json`](data/animals_five_bears_ground_truth.json).
+  A negative presence question, whether a sedan is visible, is
+  [`examples/animals_false_detect_presence.py`](examples/animals_false_detect_presence.py)
+  against [`examples/animals_false_map.py`](examples/animals_false_map.py), scored
+  by [`examples/eval_animals_false.py`](examples/eval_animals_false.py) with
+  [`data/animals_false_ground_truth.json`](data/animals_false_ground_truth.json).
+  That label is false.
   Those examples import bare UDF wrappers so Python execution does not call
   the bound UDF at import time.
 - `DetectedFrameWindowBeforeMap` inserts `Detect`, a UDF Map that converts

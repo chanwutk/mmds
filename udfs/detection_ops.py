@@ -168,6 +168,11 @@ def map_dog_present(row: dict[str, Any]) -> dict[str, Any]:
     return map_detection_presence(row, "dog_present")
 
 
+def map_sedan_present(row: dict[str, Any]) -> dict[str, Any]:
+    """Set ``sedan_present`` from whether ``Detect`` found any boxes."""
+    return map_detection_presence(row, "sedan_present")
+
+
 def _parse_min_tracks(value: str) -> int:
     if not isinstance(value, str) or not value.isdecimal():
         raise ValueError("min_tracks must be a decimal integer string >= 1.")

@@ -182,6 +182,21 @@ class FiveBearsGroundTruthTests(unittest.TestCase):
         self.assertEqual(clips[0]["key"][0], "video")
 
 
+class SedanAbsenceGroundTruthTests(unittest.TestCase):
+    def test_shipped_label_is_one_full_video_negative(self) -> None:
+        saved = EVAL.FLAG_FIELD
+        EVAL.FLAG_FIELD = "sedan_present"
+        try:
+            clips = EVAL.load_ground_truth(
+                ROOT / "data" / "animals_false_ground_truth.json"
+            )
+        finally:
+            EVAL.FLAG_FIELD = saved
+        self.assertEqual(len(clips), 1)
+        self.assertFalse(clips[0]["sedan_present"])
+        self.assertEqual(clips[0]["key"][0], "video")
+
+
 class PromptKeyTests(unittest.TestCase):
     def test_presence_plan_does_not_need_a_prompt_key(self) -> None:
         output = EVAL._load_query_output(EVAL.DEFAULT_PRESENCE_QUERY)

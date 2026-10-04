@@ -259,6 +259,16 @@ output = Map(
             {"at_least_five_bears": True},
         )
 
+    def test_sedan_absence_example_imports_as_python(self) -> None:
+        path = ROOT / "examples" / "animals_false_detect_presence.py"
+        spec = importlib.util.spec_from_file_location(path.stem, path)
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        self.assertEqual(module.detected.spec.classes, ("sedan",))
+        self.assertEqual(module.detected.spec.stop_after_n, 1)
+        self.assertEqual(module.output.spec.name, "map_sedan_present")
+
     def test_five_bears_example_imports_as_python(self) -> None:
         path = ROOT / "examples" / "animals_five_bears_detect_presence.py"
         spec = importlib.util.spec_from_file_location(path.stem, path)

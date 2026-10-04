@@ -1,0 +1,11 @@
+{
+  "video": "https://www.youtube.com/watch?v=s5iU3nLOvi8",
+  "task": "sedan_present",
+  "notes": "The full 19:35 Swan Valley wildlife trail-camera compilation. It shows bears, lions, wolves, deer, and similar animals. A sedan is not part of that footage, so sedan_present is false.",
+  "clips": [
+    {
+      "source": "https://www.youtube.com/watch?v=s5iU3nLOvi8",
+      "sedan_present": false
+    }
+  ]
+}
