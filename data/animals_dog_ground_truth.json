@@ -1,0 +1,12 @@
+{
+    "video": "https://www.youtube.com/watch?v=s5iU3nLOvi8",
+    "task": "dog_present",
+    "notes": "The full 19:35 Swan Valley compilation (https://www.youtube.com/watch?v=s5iU3nLOvi8). A dog is visible, including around 249s and 995s.",
+    "clips": [
+      {
+        "source": "https://www.youtube.com/watch?v=s5iU3nLOvi8",
+        "dog_present": true
+      }
+    ]
+  }
+  

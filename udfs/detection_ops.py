@@ -163,6 +163,10 @@ def map_bear_present(row: dict[str, Any]) -> dict[str, Any]:
     """Set ``bear_present`` from whether ``Detect`` found any boxes."""
     return map_detection_presence(row, "bear_present")
 
+def map_dog_present(row: dict[str, Any]) -> dict[str, Any]:
+    """Set ``dog_present`` from whether ``Detect`` found any boxes."""
+    return map_detection_presence(row, "dog_present")
+
 
 _VIEWS_FIELD = "_mmds_candidate_views"
 _DEFAULT_FPS = 30.0
