@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from numbers import Real
 from pathlib import Path
 from typing import Any
@@ -28,6 +29,7 @@ class GeminiPromptExecutor:
         types_module: Any | None = None,
         poll_interval_seconds: float = 5.0,
         file_ready_timeout_seconds: float = 300.0,
+        usage_sink: Callable[[dict[str, Any]], None] | None = None,
     ) -> None:
         self.model = model
         self.api_key = api_key
@@ -35,7 +37,14 @@ class GeminiPromptExecutor:
         self._types = types_module
         self.poll_interval_seconds = poll_interval_seconds
         self.file_ready_timeout_seconds = file_ready_timeout_seconds
+        # Called once per generate_content response, before the response is
+        # validated, so billed calls that return bad JSON are still recorded.
+        # Map/Filter rows run on a thread pool: the sink must be thread-safe.
+        self.usage_sink = usage_sink
         self._uploaded_files: dict[str, tuple[str, str | None]] = {}
+        # Serialises uploads so concurrent rows reading the same local video
+        # upload it once instead of once per row.
+        self._upload_lock = threading.Lock()
 
     def execute(
         self,
@@ -56,6 +65,14 @@ class GeminiPromptExecutor:
             _format_debug_parts(parts),
         )
         response = client.models.generate_content(model=self.model, contents=contents, config=config)
+        if self.usage_sink is not None:
+            self.usage_sink(
+                {
+                    "model": self.model,
+                    "op_type": op_type,
+                    "usage": _usage_to_dict(getattr(response, "usage_metadata", None)),
+                }
+            )
         text = getattr(response, "text", None)
         if not text:
             raise MMDSValidationError("Gemini returned an empty response.")
@@ -132,10 +149,13 @@ class GeminiPromptExecutor:
 
     def _upload_video_file(self, path_value: Any, client: Any) -> tuple[str, str | None]:
         path = str(Path(path_value))
-        cached = self._uploaded_files.get(path)
-        if cached is not None:
-            return cached
+        with self._upload_lock:
+            cached = self._uploaded_files.get(path)
+            if cached is not None:
+                return cached
+            return self._upload_and_wait(path, client)
 
+    def _upload_and_wait(self, path: str, client: Any) -> tuple[str, str | None]:
         uploaded = client.files.upload(file=path)
         deadline = time.monotonic() + self.file_ready_timeout_seconds
         while True:
@@ -195,6 +215,19 @@ class GeminiPromptExecutor:
             ) from exc
         self._types = types
         return self._types
+
+
+def _usage_to_dict(usage: Any) -> dict[str, Any] | None:
+    """Return Gemini usage metadata as plain JSON-serialisable data, or None."""
+    if usage is None:
+        return None
+    if hasattr(usage, "model_dump"):
+        return usage.model_dump(mode="json", exclude_none=True)
+    if isinstance(usage, Mapping):
+        return dict(usage)
+    raise MMDSValidationError(
+        f"Unsupported Gemini usage metadata type {type(usage).__name__!r}."
+    )
 
 
 def _is_video_payload(value: Any) -> bool:

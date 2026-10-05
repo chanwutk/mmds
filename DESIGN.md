@@ -370,7 +370,18 @@ Optional metadata keys:
 Gemini executor behavior:
 
 - uploads local files through Gemini’s Files API when needed
+- serialises uploads behind one lock and caches them by path, so concurrent
+  rows that read the same local video upload it once
 - waits for uploaded files to become active
+- optionally reports token usage: when constructed with
+  `usage_sink=callable`, it calls the sink once per `generate_content`
+  response with `{"model", "op_type", "usage"}`, where `usage` is the
+  response's `usage_metadata` as plain JSON data (or `None` if absent). The
+  sink runs before the response is validated, so billed calls that return
+  empty or invalid JSON are still reported. Map and Filter rows run on a
+  thread pool, so the sink must be thread-safe. An unrecognised
+  `usage_metadata` type raises `MMDSValidationError` instead of being
+  silently dropped
 - converts structured prompts into Gemini content parts
 - preserves `Video` and `VideoView` fields as video parts instead of stringifying them
 - expands concise MMDS output schemas into object-shaped JSON Schema and requests JSON output using Gemini structured output config

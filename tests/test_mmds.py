@@ -6,7 +6,9 @@ import json
 import os
 import sys
 import tempfile
+import time
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -370,6 +372,127 @@ class GeminiExecutorTests(unittest.TestCase):
         content = fake_client.models.calls[0]["contents"]
         self.assertEqual(content.parts[1].file_data.file_uri, "uploaded://video")
 
+    def test_gemini_executor_uploads_shared_local_video_once_under_concurrency(self) -> None:
+        # The upload is slow, so without the upload lock every thread would
+        # miss the cache and upload the same file.
+        fake_client = _FakeClient('{"summary": "done"}', upload_delay_seconds=0.05)
+        executor = GeminiPromptExecutor(client=fake_client, types_module=_FakeTypes, poll_interval_seconds=0.0)
+        prompt = PromptSpec(parts=("Watch ", Record["video"]), output_schema={"summary": "string"})
+        resolved = ResolvedPrompt(
+            parts=("Watch ", {"type": "VideoView", "path": "/tmp/half.mkv", "start": 0, "end": 300}),
+            output_schema=prompt.output_schema,
+        )
+
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            results = list(
+                pool.map(
+                    lambda _: executor.execute("map", prompt, resolved, payload={}, context={}),
+                    range(8),
+                )
+            )
+
+        self.assertEqual(results, [{"summary": "done"}] * 8)
+        self.assertEqual(fake_client.files.upload_calls, ["/tmp/half.mkv"])
+        self.assertEqual(len(fake_client.models.calls), 8)
+
+    def test_gemini_executor_reports_usage_to_sink(self) -> None:
+        usage = _FakeUsageMetadata(
+            prompt_token_count=1200,
+            candidates_token_count=7,
+            thoughts_token_count=30,
+            cached_content_token_count=None,
+        )
+        fake_client = _FakeClient('{"summary": "done"}', usage=usage)
+        records = []
+        executor = GeminiPromptExecutor(
+            model="test-model",
+            client=fake_client,
+            types_module=_FakeTypes,
+            poll_interval_seconds=0.0,
+            usage_sink=records.append,
+        )
+        prompt = PromptSpec(parts=("Summarize this",), output_schema={"summary": "string"})
+        resolved = ResolvedPrompt(parts=("Summarize this",), output_schema=prompt.output_schema)
+
+        executor.execute("map", prompt, resolved, payload={}, context={})
+
+        self.assertEqual(
+            records,
+            [
+                {
+                    "model": "test-model",
+                    "op_type": "map",
+                    "usage": {
+                        "prompt_token_count": 1200,
+                        "candidates_token_count": 7,
+                        "thoughts_token_count": 30,
+                    },
+                }
+            ],
+        )
+
+    def test_gemini_executor_reports_usage_before_rejecting_invalid_json(self) -> None:
+        # The call is billed even though its output is unusable.
+        fake_client = _FakeClient("not json", usage={"prompt_token_count": 50})
+        records = []
+        executor = GeminiPromptExecutor(
+            client=fake_client, types_module=_FakeTypes, poll_interval_seconds=0.0, usage_sink=records.append
+        )
+        prompt = PromptSpec(parts=("Is it?",), output_schema=None)
+        resolved = ResolvedPrompt(parts=("Is it?",), output_schema=None)
+
+        with self.assertRaisesRegex(MMDSValidationError, "invalid JSON"):
+            executor.execute("filter", prompt, resolved, payload={}, context={})
+
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["op_type"], "filter")
+        self.assertEqual(records[0]["usage"], {"prompt_token_count": 50})
+
+    def test_gemini_executor_reports_usage_before_rejecting_empty_response(self) -> None:
+        fake_client = _FakeClient("", usage={"prompt_token_count": 50})
+        records = []
+        executor = GeminiPromptExecutor(
+            client=fake_client, types_module=_FakeTypes, poll_interval_seconds=0.0, usage_sink=records.append
+        )
+        prompt = PromptSpec(parts=("Is it?",), output_schema=None)
+        resolved = ResolvedPrompt(parts=("Is it?",), output_schema=None)
+
+        with self.assertRaisesRegex(MMDSValidationError, "empty response"):
+            executor.execute("filter", prompt, resolved, payload={}, context={})
+
+        self.assertEqual(len(records), 1)
+
+    def test_gemini_executor_reports_missing_usage_as_none(self) -> None:
+        fake_client = _FakeClient("true")
+        records = []
+        executor = GeminiPromptExecutor(
+            client=fake_client, types_module=_FakeTypes, poll_interval_seconds=0.0, usage_sink=records.append
+        )
+        prompt = PromptSpec(parts=("Is it?",), output_schema=None)
+        resolved = ResolvedPrompt(parts=("Is it?",), output_schema=None)
+
+        self.assertIs(executor.execute("filter", prompt, resolved, payload={}, context={}), True)
+        self.assertIsNone(records[0]["usage"])
+
+    def test_gemini_executor_rejects_unknown_usage_type(self) -> None:
+        fake_client = _FakeClient("true", usage=12)
+        executor = GeminiPromptExecutor(
+            client=fake_client, types_module=_FakeTypes, poll_interval_seconds=0.0, usage_sink=lambda record: None
+        )
+        prompt = PromptSpec(parts=("Is it?",), output_schema=None)
+        resolved = ResolvedPrompt(parts=("Is it?",), output_schema=None)
+
+        with self.assertRaisesRegex(MMDSValidationError, "usage metadata type"):
+            executor.execute("filter", prompt, resolved, payload={}, context={})
+
+    def test_gemini_executor_without_sink_ignores_usage(self) -> None:
+        fake_client = _FakeClient("true", usage=12)
+        executor = GeminiPromptExecutor(client=fake_client, types_module=_FakeTypes, poll_interval_seconds=0.0)
+        prompt = PromptSpec(parts=("Is it?",), output_schema=None)
+        resolved = ResolvedPrompt(parts=("Is it?",), output_schema=None)
+
+        self.assertIs(executor.execute("filter", prompt, resolved, payload={}, context={}), True)
+
     def test_gemini_executor_accepts_source_video_uri(self) -> None:
         fake_client = _FakeClient('{"summary": "done"}')
         executor = GeminiPromptExecutor(client=fake_client, types_module=_FakeTypes, poll_interval_seconds=0.0)
@@ -566,31 +689,45 @@ class _FakeUploadedFile:
 
 
 class _FakeFiles:
-    def __init__(self):
+    def __init__(self, upload_delay_seconds=0.0):
         self.upload_calls = []
+        self.upload_delay_seconds = upload_delay_seconds
 
     def upload(self, file):
         self.upload_calls.append(file)
+        time.sleep(self.upload_delay_seconds)
         return _FakeUploadedFile()
 
     def get(self, name):
         return _FakeUploadedFile()
 
 
+class _FakeUsageMetadata:
+    """Mimics the pydantic usage object returned by google-genai."""
+
+    def __init__(self, **fields):
+        self.fields = fields
+
+    def model_dump(self, *, mode, exclude_none):
+        assert mode == "json" and exclude_none
+        return {key: value for key, value in self.fields.items() if value is not None}
+
+
 class _FakeModels:
-    def __init__(self, text):
+    def __init__(self, text, usage=None):
         self.text = text
+        self.usage = usage
         self.calls = []
 
     def generate_content(self, **kwargs):
         self.calls.append(kwargs)
-        return type("Response", (), {"text": self.text})()
+        return type("Response", (), {"text": self.text, "usage_metadata": self.usage})()
 
 
 class _FakeClient:
-    def __init__(self, text):
-        self.models = _FakeModels(text)
-        self.files = _FakeFiles()
+    def __init__(self, text, usage=None, upload_delay_seconds=0.0):
+        self.models = _FakeModels(text, usage)
+        self.files = _FakeFiles(upload_delay_seconds)
 
 
 def _remove_temp_file(path: str) -> None:

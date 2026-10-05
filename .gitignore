@@ -10,6 +10,9 @@ __pycache__/
 mobileclip_blt.ts
 yoloe-11s-seg.pt
 
+# Query-type experiment inputs and results (chunk files hold machine-specific paths)
+data/query_types/
+
 # Licensed/local case-study media
 data/i24v_traffic/videos/*.mp4
 data/uca/videos/*.mp4

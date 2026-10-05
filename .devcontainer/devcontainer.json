@@ -27,7 +27,10 @@
   "containerEnv": {
     // Keep the uv download cache (PyTorch wheels are several GB) on the
     // persistent data mount so rebuilding the container does not re-download.
-    "UV_CACHE_DIR": "/data/sultan.muratbek/.uv-cache"
+    "UV_CACHE_DIR": "/data/sultan.muratbek/.uv-cache",
+    // The cache and the workspace are on different filesystems, so uv cannot
+    // hardlink; copy explicitly instead of warning on every sync.
+    "UV_LINK_MODE": "copy"
   },
 
   "remoteEnv": {
