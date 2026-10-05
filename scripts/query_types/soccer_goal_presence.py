@@ -7,6 +7,9 @@ Every mode answers the same question for the same 5-minute chunks:
   Gemini reads the chunk's commentary transcript instead of the video.
 - ``detector``: detector substitution; YOLOE looks for a soccer ball inside
   a goal net, and the chunk counts as a goal if any frame has one.
+- ``gated``: cheap filter, then verify. A transcript Filter asks the
+  transcript-mode question; only chunks it keeps reach the naive video Map,
+  and every chunk it drops counts as "no goal".
 
 The expected outcome is that the transcript keeps the evidence (commentators
 announce goals) while the detector loses it (a goal is an event, not an
@@ -19,6 +22,7 @@ Steps (run from the repo root with ``PYTHONPATH=src:.``)::
     python -m scripts.query_types.soccer_goal_presence run --mode naive
     python -m scripts.query_types.soccer_goal_presence run --mode transcript
     python -m scripts.query_types.soccer_goal_presence run --mode detector   # on the GPU server
+    python -m scripts.query_types.soccer_goal_presence run --mode gated
     python -m scripts.query_types.soccer_goal_presence score
 
 ``prepare`` writes one chunk file per half. ``run`` writes one result file
@@ -39,7 +43,7 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from mmds import Detect, Input, Map, Record, execute
+from mmds import Detect, Filter, Input, Map, Record, execute
 from mmds.model import DatasetExpr
 from mmds.optimizers.rewriter import ModalitySubstitution, PlanIndex, apply_rewrite
 from mmds.render import program_from_plan
@@ -73,7 +77,7 @@ NET_CLASS = "goal net"
 DETECTOR_CLASSES = (BALL_CLASS, NET_CLASS)
 DETECTOR_FPS = 5.0
 
-MODES = ("naive", "transcript", "detector")
+MODES = ("naive", "transcript", "detector", "gated")
 
 
 # ---------------------------------------------------------------------------
@@ -268,6 +272,12 @@ def transcript_plan(input_path: str) -> DatasetExpr:
     return rewritten.output_expr
 
 
+def gated_plan(input_path: str) -> DatasetExpr:
+    """Transcript Filter (the transcript-mode question), then the naive video Map."""
+    gate = Filter(Input(input_path), [TRANSCRIPT_PROMPT, "\ntranscript:\n", Record["transcript"]])
+    return Map(gate, [NAIVE_PROMPT, Record["video"]], schema=SCHEMA)
+
+
 def detector_plan(input_path: str, frame_stride: int) -> DatasetExpr:
     return Detect(
         Input(input_path),
@@ -354,14 +364,20 @@ def summarize_usage(records: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
         "output_tokens": 0,
         "thinking_tokens": 0,
         "input_tokens_by_modality": {},
+        "calls_by_op": {},
+        "input_tokens_by_op": {},
     }
     for record in records:
         summary["calls"] += 1
+        op = str(record.get("op_type", "unknown"))
+        summary["calls_by_op"][op] = summary["calls_by_op"].get(op, 0) + 1
         usage = record.get("usage")
         if usage is None:
             summary["calls_without_usage"] += 1
             continue
-        summary["input_tokens"] += int(usage.get("prompt_token_count") or 0)
+        prompt_tokens = int(usage.get("prompt_token_count") or 0)
+        summary["input_tokens_by_op"][op] = summary["input_tokens_by_op"].get(op, 0) + prompt_tokens
+        summary["input_tokens"] += prompt_tokens
         summary["output_tokens"] += int(usage.get("candidates_token_count") or 0)
         summary["thinking_tokens"] += int(usage.get("thoughts_token_count") or 0)
         for detail in usage.get("prompt_tokens_details") or []:
@@ -383,18 +399,46 @@ def run_prompt_half(
     usage_records: list[dict[str, Any]],
     model: str,
 ) -> dict[str, Any]:
-    """Run a Gemini mode on one half; ``usage_records`` is filled by the executor's sink."""
-    plans: dict[str, Callable[[str], DatasetExpr]] = {"naive": naive_plan, "transcript": transcript_plan}
+    """Run a Gemini mode on one half; ``usage_records`` is filled by the executor's sink.
+
+    Every chunk in the file gets a prediction. In ``gated`` mode, chunks the
+    transcript Filter drops never reach the video Map and are predicted
+    "no goal"; every other mode must return every chunk.
+    """
+    plans: dict[str, Callable[[str], DatasetExpr]] = {
+        "naive": naive_plan,
+        "transcript": transcript_plan,
+        "gated": gated_plan,
+    }
     if mode not in plans:
         raise ValueError(f"Not a prompt mode: {mode!r}")
     usage_records.clear()
     rows = execute(plans[mode](str(chunk_file)), executor)
-    outputs = []
+
+    answers: dict[str, bool] = {}
     for row in rows:
         answer = row.get("goal_scored")
         if not isinstance(answer, bool):
             raise ValueError(f"{row['chunk_id']}: expected a boolean goal_scored, got {answer!r}")
-        outputs.append({"chunk_id": row["chunk_id"], "gt_goal_count": row["gt_goal_count"], "prediction": answer})
+        answers[row["chunk_id"]] = answer
+
+    chunks = [json.loads(line) for line in chunk_file.read_text(encoding="utf-8").splitlines() if line.strip()]
+    unknown = set(answers) - {chunk["chunk_id"] for chunk in chunks}
+    if unknown:
+        raise ValueError(f"{chunk_file.name}: answers for unknown chunks {sorted(unknown)}")
+    if mode != "gated" and len(answers) != len(chunks):
+        raise ValueError(f"{chunk_file.name}: {mode} answered {len(answers)} of {len(chunks)} chunks")
+
+    outputs = []
+    for chunk in chunks:
+        output = {
+            "chunk_id": chunk["chunk_id"],
+            "gt_goal_count": chunk["gt_goal_count"],
+            "prediction": answers.get(chunk["chunk_id"], False),
+        }
+        if mode == "gated":
+            output["gate_passed"] = chunk["chunk_id"] in answers
+        outputs.append(output)
     return {
         "mode": mode,
         "model": model,
@@ -538,6 +582,8 @@ def score_results(out_dir: Path) -> list[dict[str, Any]]:
             "halves": len(payloads),
             **score((row["prediction"], row["gt_goal_count"]) for row in rows),
         }
+        if mode == "gated":
+            summary["gate_passed"] = sum(1 for row in rows if row["gate_passed"])
         if mode == "detector":
             summary["detector_seconds"] = sum(p["detector_seconds"] for p in payloads)
             summary["gpu"] = sorted({str(p.get("gpu")) for p in payloads})

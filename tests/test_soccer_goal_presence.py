@@ -194,6 +194,18 @@ class PlanTests(unittest.TestCase):
         self.assertEqual(plan.spec.parts[0], sgp.TRANSCRIPT_PROMPT)
         self.assertEqual(plan.source.input_path, "chunks.jsonl")
 
+    def test_gated_plan_filters_on_transcript_then_maps_on_video(self) -> None:
+        plan = sgp.gated_plan("chunks.jsonl")
+        self.assertEqual(plan.kind, "map")
+        self.assertIn(Record["video"], plan.spec.parts)
+        self.assertEqual(plan.spec.output_schema, sgp.naive_plan("chunks.jsonl").spec.output_schema)
+        gate = plan.source
+        self.assertEqual(gate.kind, "filter")
+        self.assertIn(Record["transcript"], gate.spec.parts)
+        self.assertNotIn(Record["video"], gate.spec.parts)
+        self.assertEqual(gate.spec.parts[0], sgp.TRANSCRIPT_PROMPT)
+        self.assertEqual(parse_query(render_query(program_from_plan(plan))).output_expr, plan)
+
     def test_detector_plan(self) -> None:
         plan = sgp.detector_plan("chunks.jsonl", 5)
         self.assertEqual(plan.kind, "detect")
@@ -271,6 +283,8 @@ class UsageTests(unittest.TestCase):
             {"usage": {"prompt_token_count": 50, "candidates_token_count": 3}},
             {"usage": None},
         ]
+        records[0]["op_type"] = "map"
+        records[1]["op_type"] = "filter"
         summary = sgp.summarize_usage(records)
         self.assertEqual(summary["calls"], 3)
         self.assertEqual(summary["calls_without_usage"], 1)
@@ -278,6 +292,8 @@ class UsageTests(unittest.TestCase):
         self.assertEqual(summary["output_tokens"], 8)
         self.assertEqual(summary["thinking_tokens"], 20)
         self.assertEqual(summary["input_tokens_by_modality"], {"VIDEO": 900, "TEXT": 100})
+        self.assertEqual(summary["calls_by_op"], {"map": 1, "filter": 1, "unknown": 1})
+        self.assertEqual(summary["input_tokens_by_op"], {"map": 1000, "filter": 50})
 
 
 class _FakeGoalExecutor:
@@ -289,8 +305,10 @@ class _FakeGoalExecutor:
         self.prompts = []
 
     def execute(self, op_type, prompt, resolved_prompt, payload, context):
-        self.prompts.append(resolved_prompt.parts)
+        self.prompts.append((op_type, resolved_prompt.parts))
         self.records.append({"model": "fake", "op_type": op_type, "usage": {"prompt_token_count": 10}})
+        if op_type == "filter":
+            return any("GOAL" in str(part) for part in resolved_prompt.parts)
         if self.answer is not None:
             return {"goal_scored": self.answer}
         videos = [part for part in resolved_prompt.parts if isinstance(part, dict)]
@@ -324,14 +342,44 @@ class RunHalfTests(unittest.TestCase):
         payload = sgp.run_prompt_half("naive", self.chunk_file, executor, records, "fake")
         self.assertEqual([row["prediction"] for row in payload["rows"]], [False, True, False])
         self.assertEqual(len(payload["usage"]), 3)
-        self.assertTrue(all(any(isinstance(p, dict) for p in parts) for parts in executor.prompts))
+        self.assertTrue(all(any(isinstance(p, dict) for p in parts) for _, parts in executor.prompts))
 
     def test_transcript_half_sends_text_only(self) -> None:
         records: list = []
         executor = _FakeGoalExecutor(records)
         payload = sgp.run_prompt_half("transcript", self.chunk_file, executor, records, "fake")
         self.assertEqual([row["prediction"] for row in payload["rows"]], [False, True, False])
-        self.assertFalse(any(isinstance(p, dict) for parts in executor.prompts for p in parts))
+        self.assertFalse(any(isinstance(p, dict) for _, parts in executor.prompts for p in parts))
+
+    def test_gated_half_verifies_only_gate_survivors_with_video(self) -> None:
+        records: list = []
+        executor = _FakeGoalExecutor(records)
+        payload = sgp.run_prompt_half("gated", self.chunk_file, executor, records, "fake")
+        self.assertEqual([row["prediction"] for row in payload["rows"]], [False, True, False])
+        self.assertEqual([row["gate_passed"] for row in payload["rows"]], [False, True, False])
+        ops = [op for op, _ in executor.prompts]
+        self.assertEqual(ops.count("filter"), 3)
+        self.assertEqual(ops.count("map"), 1)
+        map_parts = next(parts for op, parts in executor.prompts if op == "map")
+        self.assertEqual([p for p in map_parts if isinstance(p, dict)][0]["start"], 300.0)
+        self.assertEqual(len(payload["usage"]), 4)
+
+    def test_gated_half_keeps_video_veto_of_a_gate_survivor(self) -> None:
+        records: list = []
+        payload = sgp.run_prompt_half("gated", self.chunk_file, _FakeGoalExecutor(records, answer=False), records, "fake")
+        self.assertEqual([row["prediction"] for row in payload["rows"]], [False, False, False])
+        self.assertEqual([row["gate_passed"] for row in payload["rows"]], [False, True, False])
+
+    def test_ungated_mode_missing_a_chunk_is_rejected(self) -> None:
+        rows = [json.loads(line) for line in self.chunk_file.read_text().splitlines()]
+        partial = [{**rows[0], "goal_scored": False}]
+        with mock.patch.object(sgp, "execute", return_value=partial), self.assertRaisesRegex(ValueError, "answered 1 of 3"):
+            sgp.run_prompt_half("naive", self.chunk_file, _FakeGoalExecutor([]), [], "fake")
+
+    def test_answer_for_unknown_chunk_is_rejected(self) -> None:
+        stray = [{"chunk_id": "other|1|00", "gt_goal_count": 0, "goal_scored": True}]
+        with mock.patch.object(sgp, "execute", return_value=stray), self.assertRaisesRegex(ValueError, "unknown chunks"):
+            sgp.run_prompt_half("gated", self.chunk_file, _FakeGoalExecutor([]), [], "fake")
 
     def test_usage_records_are_reset_per_half(self) -> None:
         records: list = [{"usage": {"prompt_token_count": 999}}]
@@ -421,6 +469,17 @@ class ScoreResultsTests(unittest.TestCase):
         self.assertIn("| naive | 2 | 1 | 1 | 1 | 0 | 0 | 0.50 | 1.00 | 0.50 | 1 | 100 | 2 | 0 |", table)
         self.assertIn("| detector |", table)
         self.assertIn("12.5 |", table)
+
+    def test_gated_mode_reports_gate_survivors(self) -> None:
+        rows = [
+            {"chunk_id": "a", "gt_goal_count": 1, "prediction": True, "gate_passed": True},
+            {"chunk_id": "b", "gt_goal_count": 0, "prediction": False, "gate_passed": True},
+            {"chunk_id": "c", "gt_goal_count": 0, "prediction": False, "gate_passed": False},
+        ]
+        self._write("gated", {"model": "m", "rows": rows, "usage": []})
+        summary = sgp.score_results(self.out)[0]
+        self.assertEqual(summary["gate_passed"], 2)
+        self.assertEqual((summary["tp"], summary["fp"], summary["tn"]), (1, 0, 2))
 
     def test_ignores_bookkeeping_files(self) -> None:
         rows = [{"chunk_id": "a", "gt_goal_count": 0, "prediction": False}]
