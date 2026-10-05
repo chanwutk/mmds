@@ -13,7 +13,22 @@ dependencies = [
     "ultralytics",
     "yt-dlp>=2026.3.3",
     "clip @ git+https://github.com/ultralytics/CLIP.git",
+    # Listed directly (not only via ultralytics) so tool.uv.sources applies.
+    "torch",
+    "torchvision",
 ]
+
+# On Linux, install CUDA 12.6 PyTorch builds: they still ship sm_61 kernels for
+# the Pascal GPUs (TITAN Xp) on the shared GPU server, which newer CUDA builds
+# dropped. Other platforms keep the default PyPI wheels.
+[tool.uv.sources]
+torch = { index = "pytorch-cu126", marker = "sys_platform == 'linux'" }
+torchvision = { index = "pytorch-cu126", marker = "sys_platform == 'linux'" }
+
+[[tool.uv.index]]
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true
 
 [project.scripts]
 mmds = "mmds:main"

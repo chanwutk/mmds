@@ -1,0 +1,47 @@
+{
+  // Dev container for the shared GPU server (freddie, 6x TITAN Xp).
+  // Clone the repo to /work/sultan.muratbek/mmds and "Reopen in Container".
+  // No API keys are configured here: the host account is shared, so Gemini
+  // calls run from a personal machine, not from this container.
+  "name": "sultan.muratbek",
+  "image": "nvidia/cuda:12.4.1-devel-ubuntu22.04",
+
+  "runArgs": [
+    "--gpus=all",
+    "--shm-size=16g"
+  ],
+
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind",
+  "workspaceFolder": "/workspace",
+
+  // Persistent storage that survives container rebuilds.
+  "mounts": [
+    "source=/data/sultan.muratbek,target=/data/sultan.muratbek,type=bind",
+    "source=/work/sultan.muratbek,target=/work/sultan.muratbek,type=bind"
+  ],
+
+  "updateContentCommand": "apt-get update && apt-get install -y ffmpeg git libgl1-mesa-glx libglib2.0-0 curl python3-pip python3-venv",
+
+  "postCreateCommand": "curl -LsSf https://astral.sh/uv/install.sh | sh && export PATH=\"$HOME/.local/bin:$PATH\" && uv sync",
+
+  "containerEnv": {
+    // Keep the uv download cache (PyTorch wheels are several GB) on the
+    // persistent data mount so rebuilding the container does not re-download.
+    "UV_CACHE_DIR": "/data/sultan.muratbek/.uv-cache"
+  },
+
+  "remoteEnv": {
+    "PATH": "/root/.local/bin:${containerEnv:PATH}"
+  },
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance"
+      ]
+    }
+  },
+
+  "remoteUser": "root"
+}
