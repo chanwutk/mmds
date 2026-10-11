@@ -160,6 +160,22 @@ def _ground_truth_key(clip: Mapping[str, Any]) -> tuple[Any, ...]:
     return row_key(clip)
 
 
+def check_prediction_coverage(
+    predicted: set[tuple[Any, ...]], labeled: set[tuple[Any, ...]]
+) -> None:
+    """Reject predictions that match none of the labeled clips.
+
+    Without this, windowed predictions scored against full-video labels (or the
+    reverse) would silently score every label as absent.
+    """
+    if predicted and labeled and not predicted & labeled:
+        sample = ", ".join(sorted(_format_key(key) for key in predicted)[:3])
+        raise ValueError(
+            f"No prediction row matches the labels; got {sample}. Check that "
+            "the query input and the ground truth use the same clips."
+        )
+
+
 def _as_bool(value: Any, *, field: str) -> bool:
     if not isinstance(value, bool):
         raise ValueError(f"{field} must be a boolean, got {value!r}.")
@@ -206,6 +222,7 @@ def evaluate_bear_presence(
     details: list[dict[str, Any]] = []
     counts = {"tp": 0, "fp": 0, "fn": 0, "tn": 0}
     labeled = {_ground_truth_key(clip) for clip in ground_truth}
+    check_prediction_coverage(set(predicted), labeled)
     for clip in ground_truth:
         key = _ground_truth_key(clip)
         truth = _as_bool(clip[FLAG_FIELD], field=FLAG_FIELD)
@@ -298,6 +315,10 @@ def _plan_uses_prompt(plan: DatasetExpr) -> bool:
     return False
 
 
+def _plan_uses_detect(plan: DatasetExpr) -> bool:
+    return any(node.kind == "detect" for node in plan.walk_postorder())
+
+
 def _require_prompt_key(plan: DatasetExpr) -> None:
     if not _plan_uses_prompt(plan):
         return
@@ -307,9 +328,9 @@ def _require_prompt_key(plan: DatasetExpr) -> None:
 
 
 def _run_pipeline(query_path: Path, *, label: str) -> tuple[list[Any], CostReport]:
-    if query_path.name == DEFAULT_PRESENCE_QUERY.name:
-        _require_detect_runtime()
     output = _load_query_output(query_path)
+    if _plan_uses_detect(output):
+        _require_detect_runtime()
     _require_prompt_key(output)
     executor = _CountingExecutor()
     started = time.perf_counter()
@@ -475,7 +496,7 @@ def main() -> None:
             json.dumps(pred_rows, indent=2, ensure_ascii=False) + "\n",
             encoding="utf-8",
         )
-        print(f"Saved detect-presence predictions -> {args.save_pred}")
+        print(f"Saved {PRESENCE_LABEL} predictions -> {args.save_pred}")
 
     semantic_rows: list[Any] | None = None
     semantic_cost: CostReport | None = None

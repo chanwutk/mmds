@@ -14,6 +14,10 @@ top-level [GET_START.md](../GET_START.md) for setup and [README.md](../README.md
 | [`animals_five_bears_detect_presence.py`](animals_five_bears_detect_presence.py) | `Detect` (`stop_after_n=5`, `frame_stride=10`) → `Filter` → code `Map` (`at_least_five_bears`) | YOLOE weights; `data/swan_valley_full.jsonl` |
 | [`animals_false_map.py`](animals_false_map.py) | `Map` (video prompt: is a sedan visible?) | Gemini API key; `data/swan_valley_full.jsonl` |
 | [`animals_false_detect_presence.py`](animals_false_detect_presence.py) | `Detect` (`stop_after_n=1`, `frame_stride=10`) → `Filter` → code `Map` (`sedan_present`) | YOLOE weights; `data/swan_valley_full.jsonl` |
+| [`animals_bear_count_map.py`](animals_bear_count_map.py) | `Map` (video prompt: how many bears?) | Gemini API key; `data/swan_valley_full.jsonl` |
+| [`animals_bear_count.py`](animals_bear_count.py) | `Detect` (full scan, `frame_stride=10`) → code `Map` (`bear_count` = distinct tracks) | YOLOE weights; `data/swan_valley_full.jsonl` |
+| [`vehicle_count_map.py`](vehicle_count_map.py) | `Map` (video prompt: how many vehicles?) | Gemini API key; `data/i24v_highway2_5s.jsonl` + local highway2 MP4 |
+| [`vehicle_count.py`](vehicle_count.py) | `Detect` (`vehicle`, every frame) → code `Map` (`vehicle_count` = tracks with ≥3 boxes) | YOLOE weights; `data/i24v_highway2_5s.jsonl` + local highway2 MP4 |
 | [`wildlife_species_count.py`](wildlife_species_count.py) | `Map` → `Unnest` → `Reduce` + `ForEach` | Gemini API key |
 | [`video_map_then_filter.py`](video_map_then_filter.py) | `Map` (video prompt) → `Filter` | Gemini API key |
 | [`twelvelabs_search_and_discover.py`](twelvelabs_search_and_discover.py) | `Map` (video prompt) → `Filter` | Gemini API key; `data/clips.jsonl` |
@@ -66,6 +70,20 @@ top-level [GET_START.md](../GET_START.md) for setup and [README.md](../README.md
   [`data/animals_false_ground_truth.json`](../data/animals_false_ground_truth.json).
   The label is false. A clip with no sedan track is dropped and counted as
   `sedan_present=false`.
+- [`eval_animals_bear_count.py`](eval_animals_bear_count.py) — scores the
+  exact bear count from [`animals_bear_count.py`](animals_bear_count.py), the
+  `detect_count_map` rewrite, against
+  [`data/animals_bear_count_ground_truth.json`](../data/animals_bear_count_ground_truth.json)
+  (21 bears in the full video). Pass `--compare-semantic` to also score
+  [`animals_bear_count_map.py`](animals_bear_count_map.py) and print the
+  predicted count, signed error, MAE, relative error, and token cost side by
+  side.
+- [`eval_vehicle_count.py`](eval_vehicle_count.py) — the same count scoring
+  for [`vehicle_count.py`](vehicle_count.py) against
+  [`vehicle_count_map.py`](vehicle_count_map.py) and
+  [`data/vehicle_count_ground_truth.json`](../data/vehicle_count_ground_truth.json)
+  (20 vehicles in the first 5 s of I24V highway2). It is a wrapper around
+  `eval_animals_bear_count.py`.
 
 ## Lecture event localization data
 

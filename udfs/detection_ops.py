@@ -173,25 +173,31 @@ def map_sedan_present(row: dict[str, Any]) -> dict[str, Any]:
     return map_detection_presence(row, "sedan_present")
 
 
-def _parse_min_tracks(value: str) -> int:
+def _parse_positive_int(value: str, name: str) -> int:
+    """Parse a bound UDF argument, which the DSL passes as a decimal string."""
+    message = f"{name} must be a decimal integer string >= 1."
     if not isinstance(value, str) or not value.isdecimal():
-        raise ValueError("min_tracks must be a decimal integer string >= 1.")
+        raise ValueError(message)
     number = int(value)
     if number < 1 or str(number) != value:
-        raise ValueError("min_tracks must be a decimal integer string >= 1.")
+        raise ValueError(message)
     return number
 
 
-def count_detection_tracks(row: dict[str, Any]) -> int:
+def count_detection_tracks(row: dict[str, Any], min_boxes: int = 1) -> int:
     """Count distinct ``track_id`` values written by ``Detect``.
 
     Boxes without an integer ``track_id`` are ignored. One animal across many
-    frames shares one id, so this is not a raw box count.
+    frames shares one id, so this is not a raw box count. A track counts only
+    when it has at least ``min_boxes`` boxes, which drops short fragments left
+    by false positives or by fast objects the tracker failed to follow.
     """
+    if isinstance(min_boxes, bool) or not isinstance(min_boxes, int) or min_boxes < 1:
+        raise ValueError("min_boxes must be an integer >= 1.")
     detections = row.get("detections")
     if not isinstance(detections, list):
         return 0
-    track_ids: set[int] = set()
+    boxes_per_track: dict[int, int] = {}
     for item in detections:
         if not isinstance(item, dict):
             continue
@@ -204,13 +210,41 @@ def count_detection_tracks(row: dict[str, Any]) -> int:
             track_id = bbox.get("track_id")
             if isinstance(track_id, bool) or not isinstance(track_id, int):
                 continue
-            track_ids.add(track_id)
-    return len(track_ids)
+            boxes_per_track[track_id] = boxes_per_track.get(track_id, 0) + 1
+    return sum(1 for count in boxes_per_track.values() if count >= min_boxes)
+
+
+def map_detection_track_count(
+    row: dict[str, Any], count_field: str, min_track_boxes: str = "1"
+) -> dict[str, Any]:
+    """Set ``count_field`` to the number of distinct tracks ``Detect`` wrote.
+
+    This is the code Map for an exact-count question. Rewrite plans pass
+    ``count_field`` and, when above one, ``min_track_boxes`` as bound UDF
+    arguments; ``min_track_boxes`` is a decimal string because bound arguments
+    are string literals. Executable examples that import this file as Python
+    should pass a wrapper such as :func:`map_bear_count` instead, because a
+    call here runs immediately.
+    """
+    if not isinstance(count_field, str) or not count_field:
+        raise ValueError("count_field must be a non-empty string.")
+    min_boxes = _parse_positive_int(min_track_boxes, "min_track_boxes")
+    return {count_field: count_detection_tracks(row, min_boxes)}
+
+
+def map_bear_count(row: dict[str, Any]) -> dict[str, Any]:
+    """Set ``bear_count`` to the number of distinct detection tracks."""
+    return map_detection_track_count(row, "bear_count")
+
+
+def map_vehicle_count(row: dict[str, Any]) -> dict[str, Any]:
+    """Set ``vehicle_count`` to the number of tracks with at least 3 boxes."""
+    return map_detection_track_count(row, "vehicle_count", "3")
 
 
 def keep_rows_with_at_least_n_tracks(row: dict[str, Any], min_tracks: str) -> bool:
     """Keep rows whose detections contain at least ``min_tracks`` tracks."""
-    return count_detection_tracks(row) >= _parse_min_tracks(min_tracks)
+    return count_detection_tracks(row) >= _parse_positive_int(min_tracks, "min_tracks")
 
 
 def map_at_least_n_tracks(

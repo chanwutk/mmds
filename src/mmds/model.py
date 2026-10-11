@@ -183,6 +183,12 @@ class JoinSpec:
         return None if self.score is None else self.score.load()
 
 
+# Detect's tracker keeps a box on an existing track only when it arrives within
+# this many source frames of that track's last box. A frame_stride above this
+# splits one object into a new track at every sample.
+MAX_TRACK_FRAME_GAP = 30
+
+
 @dataclass(frozen=True)
 class DetectSpec:
     """Spec for the Detect operator: runs YOLOE on every frame of a video field."""

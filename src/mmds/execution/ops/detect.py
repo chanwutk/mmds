@@ -3,7 +3,13 @@ from __future__ import annotations
 import threading
 from typing import Any
 
-from ...model import DatasetExpr, DetectSpec, MMDSValidationError, Row
+from ...model import (
+    MAX_TRACK_FRAME_GAP,
+    DatasetExpr,
+    DetectSpec,
+    MMDSValidationError,
+    Row,
+)
 from ...utilities.video import Video, VideoView, open_video
 
 # ---------------------------------------------------------------------------
@@ -15,11 +21,9 @@ _model_cache: dict[str, Any] = {}
 _model_lock = threading.Lock()
 
 # A new box joins an existing track of the same class when it overlaps the
-# track's last box and arrives within this many source frames. Otherwise it
-# starts another instance. The gap is in source-frame units, so a large
-# frame_stride can split one animal into two tracks.
+# track's last box and arrives within MAX_TRACK_FRAME_GAP source frames.
+# Otherwise it starts another instance.
 _TRACK_IOU_THRESHOLD = 0.3
-_MAX_TRACK_FRAME_GAP = 30
 
 
 def _select_device() -> str:
@@ -189,7 +193,7 @@ def _match_track(
     for track in tracks:
         if track.class_name != class_name or id(track) in claimed:
             continue
-        if frame_idx - track.last_frame_idx > _MAX_TRACK_FRAME_GAP:
+        if frame_idx - track.last_frame_idx > MAX_TRACK_FRAME_GAP:
             continue
         overlap = _bbox_iou(track.last_bbox, bbox)
         if overlap >= best_iou:

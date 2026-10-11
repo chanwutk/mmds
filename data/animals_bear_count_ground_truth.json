@@ -1,0 +1,11 @@
+{
+  "video": "https://www.youtube.com/watch?v=s5iU3nLOvi8",
+  "task": "bear_count",
+  "notes": "Distinct bears in the full video data/swan_valley_full.jsonl",
+  "clips": [
+    {
+      "source": "https://www.youtube.com/watch?v=s5iU3nLOvi8",
+      "bear_count": 21
+    }
+  ]
+}

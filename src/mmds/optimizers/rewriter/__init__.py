@@ -13,6 +13,8 @@ from .engine import RewriteResult, rewrite_once
 from .directives import (
     BooleanMapCodeFilter,
     BooleanMapCodeFilterParams,
+    DetectCountMap,
+    DetectCountMapParams,
     DetectPresenceMap,
     DetectPresenceMapParams,
     DetectedFrameWindowBeforeMap,
@@ -33,6 +35,8 @@ from .selector import (
 __all__ = [
     "BooleanMapCodeFilter",
     "BooleanMapCodeFilterParams",
+    "DetectCountMap",
+    "DetectCountMapParams",
     "DetectPresenceMap",
     "DetectPresenceMapParams",
     "DetectedFrameWindowBeforeMap",

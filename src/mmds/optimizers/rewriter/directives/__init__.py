@@ -1,4 +1,5 @@
 from .boolean_filter import BooleanMapCodeFilter, BooleanMapCodeFilterParams
+from .detect_count import DetectCountMap, DetectCountMapParams
 from .detect_frame_window import (
     DetectedFrameWindowBeforeMap,
     DetectedFrameWindowBeforeMapParams,
@@ -15,6 +16,8 @@ from .temporal import (
 __all__ = [
     "BooleanMapCodeFilter",
     "BooleanMapCodeFilterParams",
+    "DetectCountMap",
+    "DetectCountMapParams",
     "DetectPresenceMap",
     "DetectPresenceMapParams",
     "DetectedFrameWindowBeforeMap",

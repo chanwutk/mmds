@@ -1,0 +1,13 @@
+{
+  "video": "data/i24v_traffic/videos/highway2.mp4",
+  "task": "vehicle_count",
+  "notes": "Distinct vehicles in the first 5 seconds of I24V highway2 (data/i24v_highway2_5s.jsonl; frames 0-148 at 29.97 fps, since the window end is exclusive). Hand-counted from frames every 0.5s plus frames 8, 140, 144 and 148: 16 vehicles in the right-hand lanes moving away from the camera (a car carrier, a semi, a flatbed, two pickups and 11 cars) and 4 in the left-hand lanes. A second red car whose front only edges into the bottom-left corner in the final frames is not counted, so the label could be 21 under a looser rule.",
+  "clips": [
+    {
+      "path": "data/i24v_traffic/videos/highway2.mp4",
+      "start": 0,
+      "end": 5,
+      "vehicle_count": 20
+    }
+  ]
+}

@@ -411,7 +411,7 @@ Design rules:
 
 - the OpenCV/NumPy stack (and, at run time, `torch`/`ultralytics`) is imported **lazily**: `mmds.execution` imports `.ops.detect` only when a `detect` node actually executes, and `mmds.VideoView` is a lazy export via module `__getattr__`. This keeps `import mmds` and the prompt/UDF execution paths usable without the heavy CV/ML dependencies installed.
 - `Detect` is parsed from and rendered back to DSL text (including `frame_stride`, `conf`, `imgsz`, and `stop_after_n`) so rewrite directives can insert it while preserving render/parse round trips
-- `stop_after_n` counts tracks, not raw boxes. A box joins the same-class track with the highest intersection-over-union of at least 0.3 whose last box is at most 30 source frames earlier and has not already been matched in this frame. Boxes that match none of those tracks open a new track, and overlapping unmatched boxes in the same frame share that new track. Each box stores that track's integer `track_id`. The scan returns the boxes seen so far and does not read later frames. Fewer than `n` tracks still reads the video to the end
+- `stop_after_n` counts tracks, not raw boxes. A box joins the same-class track with the highest intersection-over-union of at least 0.3 whose last box is at most `MAX_TRACK_FRAME_GAP` (30, in `mmds.model`) source frames earlier and has not already been matched in this frame. Boxes that match none of those tracks open a new track, and overlapping unmatched boxes in the same frame share that new track. Each box stores that track's integer `track_id`. The scan returns the boxes seen so far and does not read later frames. Fewer than `n` tracks still reads the video to the end
 - Detect writes `_mmds_video_fps` when the opened video reports a positive fps so
   detection-window rewrites can convert `frame_idx` values to source time without
   re-opening the file in the interval UDF
@@ -430,6 +430,15 @@ Design rules:
   values. `min_tracks` is a decimal integer string. `map_at_least_five_bears`
   and `keep_at_least_five_bear_tracks` fix that threshold at five for the
   importable example
+- `udfs.detection_ops.map_detection_track_count(row, count_field,
+  min_track_boxes="1")` returns `{count_field: n}` where `n` is the number of
+  distinct integer `track_id` values with at least `min_track_boxes` boxes
+  (`count_detection_tracks(row, min_boxes)`). `min_track_boxes` is a decimal
+  string because bound UDF arguments are string literals. Boxes without an
+  integer id are ignored, and a row with no detections counts 0.
+  `map_bear_count(row)` fixes `count_field="bear_count"`, and
+  `map_vehicle_count(row)` fixes `count_field="vehicle_count"` with
+  `min_track_boxes="3"`, for the importable examples
 
 ### Vehicle Case-Study Helpers
 
@@ -665,6 +674,47 @@ parameters.
   That label is false.
   Those examples import bare UDF wrappers so Python execution does not call
   the bound UDF at import time.
+- `DetectCountMap` (`detect_count_map`) replaces a prompt `Map` whose schema
+  is exactly one integer field (`"integer"` or `{"type": "integer"}`).
+  It shares `video_field`, `classes`, and `model` validation with
+  `DetectPresenceMap` (`_detect.DetectClassesParams`). `apply` requires
+  `count_field` to be that field and `video_field` to be a direct `Record`
+  reference. `frame_stride` defaults to `1` and must be an integer in
+  `[1, MAX_TRACK_FRAME_GAP]`, because a wider stride would open a new track at
+  every sample. `min_track_boxes` defaults to `1` and must be an integer
+  `>= 1`. The prompt is removed. The rewritten plan is `Detect`
+  (`output_field="detections"`, no `stop_after_n`, so the whole clip is
+  scanned) then `Map(map_detection_track_count(count_field))`, or
+  `Map(map_detection_track_count(count_field, str(min_track_boxes)))` when
+  `min_track_boxes > 1`. No Filter is inserted: a row with no detections keeps
+  `count_field=0`. One track is one count, so an object that leaves the frame
+  for longer than the track gap, or moves far enough between samples that its
+  boxes stop overlapping, is counted again, and a false-positive box counts as
+  an object unless `min_track_boxes` drops its short track. There is no
+  appearance-based deduplication across tracks yet.
+  The directive fits a single continuous shot where each object crosses the
+  view once. The vehicle example is that case:
+  [`examples/vehicle_count.py`](examples/vehicle_count.py) (class `vehicle`,
+  `frame_stride=1`, `min_track_boxes=3`) against
+  [`examples/vehicle_count_map.py`](examples/vehicle_count_map.py), both on
+  `data/i24v_highway2_5s.jsonl` (the first 5 s of I24V highway2), scored by
+  [`examples/eval_vehicle_count.py`](examples/eval_vehicle_count.py) with
+  [`data/vehicle_count_ground_truth.json`](data/vehicle_count_ground_truth.json)
+  (20 vehicles, hand-counted). A wider stride fails here, because a highway car
+  moves more than its own length in a few frames, and separate `car`/`truck`
+  classes split a vehicle whenever its label flickers. The bear example is the
+  counter-case:
+  [`examples/animals_bear_count.py`](examples/animals_bear_count.py)
+  (`frame_stride=10`) against
+  [`examples/animals_bear_count_map.py`](examples/animals_bear_count_map.py),
+  both on the edited `data/swan_valley_full.jsonl` compilation, scored by
+  [`examples/eval_animals_bear_count.py`](examples/eval_animals_bear_count.py)
+  with [`data/animals_bear_count_ground_truth.json`](data/animals_bear_count_ground_truth.json)
+  (21 bears). That evaluator reports exact match, signed error, mean absolute
+  error, and relative error, and scores a missing row as 0. Its `COUNT_FIELD`
+  and default query/ground-truth paths are module globals, so
+  `eval_vehicle_count.py` is a wrapper that overrides them. The presence and
+  count evaluators reject prediction sets that match none of the labeled clips.
 - `DetectedFrameWindowBeforeMap` inserts `Detect`, a UDF Map that converts
   absolute `frame_idx` hits into `_mmds_candidate_views` one-frame intervals,
   then a joint `VideoMap` over those views. Window padding + lowering's
@@ -791,7 +841,7 @@ The current suite covers:
 - typed rewrite paths, structural indexing, immutable subtree replacement,
   directive parameter validation, and rewrite structural invariants
 - deterministic modality-substitution, prompt-field pruning, boolean-map code
-  filter, detect-presence-map, detected-frame-window-before-map, and
+  filter, detect-presence-map, detect-count-map, detected-frame-window-before-map, and
   joint/per-view temporal-pushdown directives, including plan-shape and
   end-to-end execution tests
 - `Filter(..., Record["field"])` field-predicate parse/render/execute round trips

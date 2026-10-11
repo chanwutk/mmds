@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, Field, model_validator
 
 from ....model import (
     DatasetExpr,
     DetectSpec,
     PromptSpec,
-    RecordPath,
     UdfSpec,
 )
 from ..core import (
@@ -15,6 +14,12 @@ from ..core import (
     RewriteMatch,
 )
 from ..errors import MMDSRewriteError
+from ._detect import (
+    DETECTIONS_FIELD,
+    DetectClassesParams,
+    require_video_reference,
+    single_schema_field,
+)
 from ._prompt import (
     format_record_paths,
     prompt_map_entries,
@@ -22,8 +27,6 @@ from ._prompt import (
 )
 
 
-_DEFAULT_MODEL = "yoloe-11s-seg.pt"
-_OUTPUT_FIELD = "detections"
 _KEEP_UDF = UdfSpec(
     module="udfs.detection_ops",
     name="keep_rows_with_detections",
@@ -33,19 +36,7 @@ _AT_LEAST_KEEP_UDF = "keep_rows_with_at_least_n_tracks"
 _AT_LEAST_MAP_UDF = "map_at_least_n_tracks"
 
 
-class DetectPresenceMapParams(BaseModel):
-    model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
-
-    video_field: str = Field(
-        min_length=1,
-        description="Input field containing the video whose objects answer the Map.",
-    )
-    classes: list[str] = Field(
-        min_length=1,
-        description=(
-            "Open-vocabulary YOLOE class names whose tracks answer the boolean."
-        ),
-    )
+class DetectPresenceMapParams(DetectClassesParams):
     min_tracks: int = Field(
         default=1,
         description=(
@@ -61,35 +52,18 @@ class DetectPresenceMapParams(BaseModel):
             "be the Map's only schema field."
         ),
     )
-    model: str = Field(
-        default=_DEFAULT_MODEL,
-        min_length=1,
-        description="YOLOE weights file for the Detect stage.",
-    )
 
     @model_validator(mode="after")
-    def validate_fields(self) -> DetectPresenceMapParams:
-        if not self.video_field.strip():
-            raise ValueError("video_field cannot be blank.")
+    def validate_presence_fields(self) -> DetectPresenceMapParams:
         if not self.flag_field.strip():
             raise ValueError("flag_field cannot be blank.")
-        if not self.model.strip():
-            raise ValueError("model cannot be blank.")
         if (
             isinstance(self.min_tracks, bool)
             or not isinstance(self.min_tracks, int)
             or self.min_tracks < 1
         ):
             raise ValueError("min_tracks must be an integer >= 1.")
-        if any(not isinstance(name, str) or not name.strip() for name in self.classes):
-            raise ValueError("classes must contain non-empty strings.")
-        normalized = tuple(name.strip() for name in self.classes)
-        if len(set(normalized)) != len(normalized):
-            raise ValueError("classes must be unique.")
-        object.__setattr__(self, "video_field", self.video_field.strip())
         object.__setattr__(self, "flag_field", self.flag_field.strip())
-        object.__setattr__(self, "model", self.model.strip())
-        object.__setattr__(self, "classes", list(normalized))
         return self
 
 
@@ -117,7 +91,7 @@ class DetectPresenceMap:
             spec = entry.node.spec
             if not isinstance(spec, PromptSpec):
                 continue
-            if _single_boolean_field(spec) is None:
+            if single_schema_field(spec, "boolean") is None:
                 continue
             paths = record_paths(spec.parts)
             summary = (
@@ -148,18 +122,12 @@ class DetectPresenceMap:
             raise MMDSRewriteError(
                 "DetectPresenceMap requires a Map source."
             )
-        if _single_boolean_field(node.spec) != params.flag_field:
+        if single_schema_field(node.spec, "boolean") != params.flag_field:
             raise MMDSRewriteError(
                 "DetectPresenceMap requires a Map whose schema is exactly "
                 f"{{{params.flag_field!r}: 'boolean'}}."
             )
-
-        video_reference = RecordPath((params.video_field,))
-        if video_reference not in record_paths(node.spec.parts):
-            raise MMDSRewriteError(
-                "Matched Map does not directly reference video field "
-                f"{params.video_field!r}."
-            )
+        require_video_reference(node.spec, params.video_field)
 
         if params.min_tracks == 1:
             keep_spec = _KEEP_UDF
@@ -187,7 +155,7 @@ class DetectPresenceMap:
                 video_field=params.video_field,
                 classes=tuple(params.classes),
                 model=params.model,
-                output_field=_OUTPUT_FIELD,
+                output_field=DETECTIONS_FIELD,
                 stop_after_n=params.min_tracks,
             ),
             name="rewrite_detect_presence",
@@ -206,13 +174,3 @@ class DetectPresenceMap:
             replace=node.replace,
         )
         return index.replace(match.path, replacement)
-
-
-def _single_boolean_field(spec: PromptSpec) -> str | None:
-    schema = spec.output_schema or {}
-    if len(schema) != 1:
-        return None
-    field, value = next(iter(schema.items()))
-    if value != "boolean":
-        return None
-    return field
