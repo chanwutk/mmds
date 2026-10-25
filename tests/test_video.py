@@ -24,8 +24,10 @@ from mmds.utilities.video import (  # noqa: E402
     _is_direct_video_url,
     _resolve,
     _yt_download,
+    FRAME_READ_STRATEGIES,
     open_video,
     read_frames_at_indices,
+    read_frames_sequentially,
 )
 
 
@@ -354,7 +356,7 @@ class MultiFrameReaderTests(unittest.TestCase):
             "mmds.utilities.video.cv2.VideoCapture", return_value=cap
         ) as capture:
             result = read_frames_at_indices(
-                "/tmp/test.mp4", [5, 2, 5, -1, True, 2]
+                "/tmp/test.mp4", [5, 2, 5, -1, True, 2], strategy="seek"
             )
 
         self.assertEqual(list(result), [2, 5])
@@ -375,6 +377,173 @@ class MultiFrameReaderTests(unittest.TestCase):
         with patch("mmds.utilities.video.cv2.VideoCapture", return_value=cap):
             result = read_frames_at_indices("/tmp/test.mp4", [1, 3])
         self.assertEqual(list(result), [3])
+
+
+def _frame(value: int) -> np.ndarray:
+    return np.full((2, 2, 3), value, dtype=np.int32)
+
+
+def _sequential_cap(num_frames: int) -> MagicMock:
+    """A capture over frames 0..num_frames-1 whose pixel value is the index."""
+    cap = MagicMock()
+    state = {"pos": 0}
+
+    def set_(prop, value):
+        state["pos"] = int(value)
+        return True
+
+    def grab():
+        if state["pos"] >= num_frames:
+            return False
+        state["pos"] += 1
+        return True
+
+    def read():
+        if state["pos"] >= num_frames:
+            return False, None
+        frame = _frame(state["pos"])
+        state["pos"] += 1
+        return True, frame
+
+    cap.set.side_effect = set_
+    cap.grab.side_effect = grab
+    cap.read.side_effect = read
+    return cap
+
+
+def _seeks(cap: MagicMock) -> list[int]:
+    return [args[1] for args, _ in cap.set.call_args_list]
+
+
+class FrameReadStrategyTests(unittest.TestCase):
+    def read(self, cap, indices, **kwargs):
+        with patch("mmds.utilities.video.cv2.VideoCapture", return_value=cap):
+            return read_frames_at_indices("/tmp/test.mp4", indices, **kwargs)
+
+    def assertFrames(self, result, indices) -> None:
+        self.assertEqual(list(result), indices)
+        for index in indices:
+            self.assertEqual(int(result[index][0, 0, 0]), index)
+
+    def test_seek_strategy_seeks_every_index(self) -> None:
+        cap = _sequential_cap(50)
+        result = self.read(cap, [2, 3, 40], strategy="seek")
+        self.assertFrames(result, [2, 3, 40])
+        self.assertEqual(_seeks(cap), [2, 3, 40])
+        cap.grab.assert_not_called()
+
+    def test_sequential_seeks_once_to_first_index_then_grabs(self) -> None:
+        cap = _sequential_cap(50)
+        result = self.read(cap, [40, 2, 5, 6], strategy="sequential")
+        self.assertFrames(result, [2, 5, 6, 40])
+        self.assertEqual(_seeks(cap), [2])
+        # 3, 4 skipped before 5; 7..39 skipped before 40.
+        self.assertEqual(cap.grab.call_count, 2 + 33)
+        self.assertEqual(cap.read.call_count, 4)
+        cap.release.assert_called_once()
+
+    def test_auto_reads_forward_within_max_gap_and_seeks_beyond(self) -> None:
+        cap = _sequential_cap(50)
+        result = self.read(cap, [2, 5, 20, 21], strategy="auto", max_gap=3)
+        self.assertFrames(result, [2, 5, 20, 21])
+        # 5 is 2 frames past position 3 (<= 3): grab; 20 is 14 past 6: seek.
+        self.assertEqual(_seeks(cap), [2, 20])
+        self.assertEqual(cap.grab.call_count, 2)
+
+    def test_auto_gap_boundary_is_inclusive(self) -> None:
+        cap = _sequential_cap(50)
+        self.read(cap, [0, 4], strategy="auto", max_gap=3)  # gap exactly 3
+        self.assertEqual(_seeks(cap), [0])
+        cap = _sequential_cap(50)
+        self.read(cap, [0, 5], strategy="auto", max_gap=3)  # gap 4
+        self.assertEqual(_seeks(cap), [0, 5])
+
+    def test_auto_with_zero_gap_reads_consecutive_frames_without_seeking(self) -> None:
+        cap = _sequential_cap(50)
+        result = self.read(cap, [7, 8, 9, 11], strategy="auto", max_gap=0)
+        self.assertFrames(result, [7, 8, 9, 11])
+        self.assertEqual(_seeks(cap), [7, 11])
+        cap.grab.assert_not_called()
+
+    def test_default_strategy_is_auto_with_default_gap(self) -> None:
+        cap = _sequential_cap(500)
+        self.read(cap, [0, 101, 300])  # gap 100 reads forward; gap 198 seeks
+        self.assertEqual(_seeks(cap), [0, 300])
+
+    def test_indices_past_end_are_omitted_for_every_strategy(self) -> None:
+        for strategy in FRAME_READ_STRATEGIES:
+            with self.subTest(strategy=strategy):
+                cap = _sequential_cap(10)
+                result = self.read(cap, [3, 9, 10, 15], strategy=strategy)
+                self.assertFrames(result, [3, 9])
+
+    def test_grab_failure_recovers_by_seeking_next_index(self) -> None:
+        cap = _sequential_cap(50)
+        real_grab = cap.grab.side_effect
+        calls = {"n": 0}
+
+        def flaky_grab():
+            calls["n"] += 1
+            return False if calls["n"] == 1 else real_grab()
+
+        cap.grab.side_effect = flaky_grab
+        result = self.read(cap, [2, 5, 9], strategy="sequential")
+        self.assertFrames(result, [2, 9])
+        self.assertEqual(_seeks(cap), [2, 9])
+
+    def test_read_failure_recovers_by_seeking_next_index(self) -> None:
+        cap = _sequential_cap(50)
+        real_read = cap.read.side_effect
+        calls = {"n": 0}
+
+        def flaky_read():
+            calls["n"] += 1
+            return (False, None) if calls["n"] == 2 else real_read()
+
+        cap.read.side_effect = flaky_read
+        result = self.read(cap, [2, 3, 4], strategy="sequential")
+        self.assertFrames(result, [2, 4])
+        self.assertEqual(_seeks(cap), [2, 4])
+
+    def test_empty_or_invalid_indices_do_not_open_capture(self) -> None:
+        for strategy in FRAME_READ_STRATEGIES:
+            with self.subTest(strategy=strategy):
+                with patch("mmds.utilities.video.cv2.VideoCapture") as capture:
+                    result = read_frames_at_indices(
+                        "/tmp/test.mp4", [-1, True, 2.0], strategy=strategy
+                    )
+                self.assertEqual(result, {})
+                capture.assert_not_called()
+
+    def test_unopenable_video_returns_empty_for_every_strategy(self) -> None:
+        for strategy in FRAME_READ_STRATEGIES:
+            with self.subTest(strategy=strategy):
+                cap = MagicMock()
+                cap.read.return_value = (False, None)
+                cap.grab.return_value = False
+                self.assertEqual(self.read(cap, [0, 1, 2], strategy=strategy), {})
+
+    def test_invalid_arguments_rejected_before_opening(self) -> None:
+        cases = [
+            ({"strategy": "fast"}, ValueError),
+            ({"strategy": None}, ValueError),
+            ({"max_gap": -1}, ValueError),
+            ({"max_gap": True}, TypeError),
+            ({"max_gap": 2.5}, TypeError),
+        ]
+        for kwargs, error in cases:
+            with self.subTest(kwargs=kwargs):
+                with patch("mmds.utilities.video.cv2.VideoCapture") as capture:
+                    with self.assertRaises(error):
+                        read_frames_at_indices("/tmp/test.mp4", [], **kwargs)
+                capture.assert_not_called()
+
+    def test_read_frames_sequentially_uses_sequential_strategy(self) -> None:
+        cap = _sequential_cap(50)
+        with patch("mmds.utilities.video.cv2.VideoCapture", return_value=cap):
+            result = read_frames_sequentially("/tmp/test.mp4", [30, 1, 1])
+        self.assertFrames(result, [1, 30])
+        self.assertEqual(_seeks(cap), [1])
 
 
 class VideoViewTests(unittest.TestCase):

@@ -43,6 +43,9 @@ The current implementation supports:
 - operators: `Input`, `Map`, `Filter`, `Reduce`, `Unnest`, `Join`, `Detect`,
   `Window`, `Coalesce`, `VideoMap`, and `VideoMapEach`
 - public video utility: `VideoView(video, start, end)` for seek-based clip-range iteration
+- experimental pixel-change frame selection in `mmds.utilities.video`
+  (`select_frames_by_pixel_change`, `iter_sampled_frames`); not wired into any
+  operator or optimizer
 - file-backed `Input(...)` roots over `.json` and `.jsonl`
 - prompt-backed semantics as either:
   - a plain string
@@ -385,6 +388,77 @@ This design follows Gemini’s official support for video inputs and structured 
 - [Gemini video understanding](https://ai.google.dev/gemini-api/docs/video-understanding)
 - [Gemini structured output](https://ai.google.dev/gemini-api/docs/structured-output)
 - [Gemini SDK downloads](https://ai.google.dev/gemini-api/docs/downloads)
+
+### Pixel-Change Frame Selection (experimental)
+
+`mmds.utilities.video` provides an optional, operator-independent way to skip
+redundant frames before sending them to expensive downstream models. It is not
+used by `Detect`, `VideoMap`, or any optimizer yet.
+
+- `iter_sampled_frames(video, sample_every=1)` yields `(original_frame_index, frame)`
+  for every `sample_every`-th frame of a `Video` or `VideoView`. Indices are
+  always relative to the source video (`start_frame + local_position` for a
+  view). Arguments are validated before any frame is decoded.
+- `select_frames_by_pixel_change(video, threshold=15.0, sample_every=5, reference="previous_sample", metric="mean", pixel_cutoff=25.0)`
+  returns sorted, unique original frame indices. Each sampled frame is
+  grayscaled, resized to 320x180, and Gaussian-blurred (5x5), then scored
+  against a reference frame and selected when `score >= threshold`. The first
+  sampled frame is always selected, and `threshold=0` keeps every sampled frame.
+- `metric="mean"` scores the mean absolute difference (0-255).
+  `metric="changed_fraction"` scores the fraction (0-1) of pixels whose
+  absolute difference is strictly greater than `pixel_cutoff` gray levels, so
+  a small but sharp change (an animal) can outscore a faint change everywhere
+  (sensor noise, wind); its `threshold` must be `<= 1`. Metrics are listed in
+  `PIXEL_DIFF_METRICS`.
+- `reference="previous_sample"` compares with the previous sampled frame (the
+  simplest baseline; misses slow changes whose per-step difference stays below
+  the threshold). `reference="last_selected"` compares with the most recently
+  selected frame so small changes accumulate.
+- validation: `sample_every` must be an `int >= 1` (not `bool`), `threshold` a
+  finite real `>= 0` (and `<= 1` for `changed_fraction`), `pixel_cutoff` a
+  finite real in `[0, 255)`, `metric` one of `PIXEL_DIFF_METRICS`, `reference`
+  one of `PIXEL_DIFF_REFERENCES`, and `video` a
+  `Video` or `VideoView`; frames may be BGR, BGRA, or single-channel.
+- selection returns indices, not frames: callers retrieve full-resolution
+  frames with `read_frames_at_indices(path, indices)` and derive timestamps as
+  `index / fps`. Selected indices must never be renumbered.
+- `read_frames_at_indices(path, indices, *, strategy="auto", max_gap=100)`
+  returns `dict[int, ndarray]` keyed by original index for every strategy:
+  `"seek"` seeks to each index (each seek decodes from the nearest keyframe);
+  `"sequential"` seeks once to the smallest index and advances with `grab()`,
+  decoding only requested frames; `"auto"` (default) advances with `grab()`
+  when at most `max_gap` frames lie before the next requested index and seeks
+  otherwise. After a failed `grab()`/`read()` the next index is reached by
+  seeking. All strategies share the same lenient index cleanup (duplicates
+  merged; negative, `bool`, and non-int indices dropped; undecodable or
+  out-of-range frames omitted; empty input returns `{}` without opening the
+  file). `read_frames_sequentially(path, indices)` is shorthand for
+  `strategy="sequential"`. The default gap reflects a measured break-even on
+  720p H.264: one seek costs about as much as grabbing 100-120 frames.
+- `VideoView.__iter__` is unchanged and still yields every frame in range;
+  filtering is opt-in. Every frame is still decoded, so this reduces downstream
+  model work, not decoding cost.
+- [examples/eval_pixel_change_wildlife.py](examples/eval_pixel_change_wildlife.py)
+  compares the selector with MOG2 background subtraction and YOLOE on
+  stationary trail-camera footage against hand labels in
+  `data/wildlife_pixel_change_ground_truth.json`, timing decoding, selection,
+  and frame re-reading separately.
+- [examples/motion_guided_pruning.py](examples/motion_guided_pruning.py)
+  demonstrates the proposed rewrite for "How many cats are visible at the same
+  time, and when does the second cat appear?" as three plain-Python plans over
+  the same sampled frames: original (uniform samples, per-frame MLLM count,
+  reduce to max count and first frame with >= 2 cats), optimized (a
+  `PixelChangeFilter` step using `changed_fraction` with `last_selected` before
+  the per-frame MLLM count), and optimized + refinement (re-count only the
+  sampled frames between the previous kept frame and the first kept two-cat
+  frame). `PixelChangeFilter` is a physical step, not a logical operator; none
+  of this is wired into the DSL or optimizers. Frames are read in bounded
+  batches and sent to Gemini as inline JPEG through the executor's
+  inline-bytes path, with answers cached per (video, model, frame).
+  [examples/eval_motion_guided_pruning.py](examples/eval_motion_guided_pruning.py)
+  scores each plan against `query_answers` in the wildlife labels file
+  (count correctness, signed timestamp error, frames sent, agreement with the
+  original plan).
 
 ### Detect Operator
 

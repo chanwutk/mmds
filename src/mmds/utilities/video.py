@@ -17,11 +17,17 @@ Usage::
 
     # Directory — returns a list of Video objects, sorted by filename
     videos = open_video("/data/clips/")
+
+    # Optional pixel-change filtering — returns original-video frame indices
+    indices = select_frames_by_pixel_change(view, threshold=15.0, sample_every=5)
+    frames = read_frames_at_indices(view.path, indices)
 """
 
 from __future__ import annotations
 
 import hashlib
+import math
+import numbers
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -34,6 +40,20 @@ import numpy as np
 
 _CACHE_DIR = Path.home() / ".cache" / "mmds" / "videos"
 _VIDEO_EXTENSIONS = {".mp4", ".avi", ".mov", ".mkv", ".wmv", ".flv", ".webm", ".m4v"}
+
+# Pixel-change frame selection compares frames at this (width, height) after a
+# Gaussian blur, so scores are comparable across source resolutions.
+_PIXEL_DIFF_SIZE = (320, 180)
+_PIXEL_DIFF_BLUR = (5, 5)
+PIXEL_DIFF_REFERENCES = ("previous_sample", "last_selected")
+PIXEL_DIFF_METRICS = ("mean", "changed_fraction")
+DEFAULT_PIXEL_CUTOFF = 25.0
+
+# A seek decodes forward from the nearest keyframe and cost ~60-95 ms per frame
+# on 720p H.264, about the same as grab()-ing ~100-120 frames, so "auto"
+# retrieval reads forward across gaps up to this many frames.
+FRAME_READ_STRATEGIES = ("auto", "seek", "sequential")
+DEFAULT_MAX_SEQUENTIAL_GAP = 100
 
 
 # ---------------------------------------------------------------------------
@@ -291,16 +311,25 @@ class VideoView:
         )
 
 
-def read_frames_at_indices(
-    video_path: str | Path,
-    frame_indices: Iterable[int],
-) -> dict[int, np.ndarray]:
-    """Read requested frames with one capture, in ascending index order.
+def _validate_read_strategy(strategy: object) -> str:
+    if strategy not in FRAME_READ_STRATEGIES:
+        raise ValueError(
+            f"strategy must be one of {FRAME_READ_STRATEGIES}, got {strategy!r}"
+        )
+    return strategy  # type: ignore[return-value]
 
-    Duplicate indices are decoded once. Negative and non-integer indices are
-    ignored, and frames that cannot be decoded are omitted from the result.
-    """
-    ordered_indices = sorted(
+
+def _validate_max_gap(max_gap: object) -> int:
+    if not isinstance(max_gap, int) or isinstance(max_gap, bool):
+        raise TypeError(f"max_gap must be an int, got {type(max_gap).__name__}")
+    if max_gap < 0:
+        raise ValueError("max_gap must be >= 0")
+    return max_gap
+
+
+def _clean_frame_indices(frame_indices: Iterable[int]) -> list[int]:
+    """Sorted unique non-negative ints; anything else is dropped."""
+    return sorted(
         {
             frame_index
             for frame_index in frame_indices
@@ -309,20 +338,267 @@ def read_frames_at_indices(
             and frame_index >= 0
         }
     )
+
+
+def read_frames_at_indices(
+    video_path: str | Path,
+    frame_indices: Iterable[int],
+    *,
+    strategy: str = "auto",
+    max_gap: int = DEFAULT_MAX_SEQUENTIAL_GAP,
+) -> dict[int, np.ndarray]:
+    """Read requested frames with one capture, in ascending index order.
+
+    Duplicate indices are decoded once. Negative and non-integer indices are
+    ignored, and frames that cannot be decoded (including indices past the end
+    of the video) are omitted from the result.
+
+    ``strategy`` controls how the capture moves between requested frames:
+
+    - ``"seek"``: seek to every requested frame. Each seek decodes forward from
+      the nearest keyframe, so it costs roughly the same however far it jumps.
+    - ``"sequential"``: seek once to the smallest index, then advance with
+      ``grab()`` (no BGR conversion) and decode only requested frames.
+    - ``"auto"``: advance with ``grab()`` when at most ``max_gap`` frames lie
+      between the current position and the next requested frame; otherwise
+      seek. Suits clustered selections (dense bursts separated by long gaps).
+
+    After a failed ``grab()`` or ``read()``, the next requested frame is
+    reached by seeking. All strategies return the same frames.
+    """
+    strategy = _validate_read_strategy(strategy)
+    max_gap = _validate_max_gap(max_gap)
+    ordered_indices = _clean_frame_indices(frame_indices)
     if not ordered_indices:
         return {}
 
     cap = cv2.VideoCapture(str(video_path))
     try:
         frames: dict[int, np.ndarray] = {}
+        # Index of the frame the next cap.read() returns; None forces a seek.
+        position: int | None = None
         for frame_index in ordered_indices:
-            cap.set(cv2.CAP_PROP_POS_FRAMES, frame_index)
+            gap = None if position is None else frame_index - position
+            read_forward = gap is not None and (
+                strategy == "sequential"
+                or (strategy == "auto" and gap <= max_gap)
+            )
+            if not read_forward:
+                cap.set(cv2.CAP_PROP_POS_FRAMES, frame_index)
+                position = frame_index
+            while position < frame_index and cap.grab():
+                position += 1
+            if position < frame_index:
+                position = None
+                continue
             ok, frame = cap.read()
             if ok:
                 frames[frame_index] = frame
+                position = frame_index + 1
+            else:
+                position = None
         return frames
     finally:
         cap.release()
+
+
+def read_frames_sequentially(
+    video_path: str | Path,
+    frame_indices: Iterable[int],
+) -> dict[int, np.ndarray]:
+    """Shorthand for ``read_frames_at_indices(..., strategy="sequential")``."""
+    return read_frames_at_indices(video_path, frame_indices, strategy="sequential")
+
+
+# ---------------------------------------------------------------------------
+# Frame sampling and pixel-change selection
+# ---------------------------------------------------------------------------
+
+
+def _validate_sample_every(sample_every: object) -> int:
+    if not isinstance(sample_every, int) or isinstance(sample_every, bool):
+        raise TypeError(
+            f"sample_every must be an int, got {type(sample_every).__name__}"
+        )
+    if sample_every < 1:
+        raise ValueError("sample_every must be >= 1")
+    return sample_every
+
+
+def iter_sampled_frames(
+    video: Video | VideoView,
+    sample_every: int = 1,
+) -> Iterator[tuple[int, np.ndarray]]:
+    """Yield ``(original_frame_index, frame)`` for every ``sample_every``-th frame.
+
+    Sampling starts at the first frame of *video* (``start_frame`` for a
+    :class:`VideoView`). Indices always refer to the underlying source video,
+    never to positions within the view. Arguments are validated eagerly, before
+    any frame is decoded.
+    """
+    if not isinstance(video, (Video, VideoView)):
+        raise TypeError(
+            f"video must be a Video or VideoView, got {type(video).__name__}"
+        )
+    _validate_sample_every(sample_every)
+    start_index = video.start_frame if isinstance(video, VideoView) else 0
+    return _iter_sampled_frames(video, sample_every, start_index)
+
+
+def _iter_sampled_frames(
+    video: Video | VideoView,
+    sample_every: int,
+    start_index: int,
+) -> Iterator[tuple[int, np.ndarray]]:
+    for local_index, frame in enumerate(video):
+        if local_index % sample_every == 0:
+            yield start_index + local_index, frame
+
+
+def _pixel_diff_gray(frame: np.ndarray) -> np.ndarray:
+    """Downscale, grayscale, and blur *frame* for pixel-difference scoring."""
+    if frame.ndim == 2:
+        gray = frame
+    elif frame.ndim == 3 and frame.shape[2] == 1:
+        gray = frame[:, :, 0]
+    elif frame.ndim == 3 and frame.shape[2] == 3:
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    elif frame.ndim == 3 and frame.shape[2] == 4:
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGRA2GRAY)
+    else:
+        raise ValueError(f"Unsupported frame shape for pixel diff: {frame.shape}")
+    gray = cv2.resize(gray, _PIXEL_DIFF_SIZE, interpolation=cv2.INTER_AREA)
+    return cv2.GaussianBlur(gray, _PIXEL_DIFF_BLUR, 0)
+
+
+def _validate_threshold(threshold: object) -> float:
+    if not isinstance(threshold, numbers.Real) or isinstance(threshold, bool):
+        raise TypeError(
+            f"threshold must be a real number, got {type(threshold).__name__}"
+        )
+    value = float(threshold)
+    if not math.isfinite(value) or value < 0:
+        raise ValueError("threshold must be a finite number >= 0")
+    return value
+
+
+def _validate_reference(reference: object) -> str:
+    if reference not in PIXEL_DIFF_REFERENCES:
+        raise ValueError(
+            f"reference must be one of {PIXEL_DIFF_REFERENCES}, got {reference!r}"
+        )
+    return reference  # type: ignore[return-value]
+
+
+def _validate_metric(metric: object) -> str:
+    if metric not in PIXEL_DIFF_METRICS:
+        raise ValueError(
+            f"metric must be one of {PIXEL_DIFF_METRICS}, got {metric!r}"
+        )
+    return metric  # type: ignore[return-value]
+
+
+def _validate_pixel_cutoff(pixel_cutoff: object) -> float:
+    if not isinstance(pixel_cutoff, numbers.Real) or isinstance(pixel_cutoff, bool):
+        raise TypeError(
+            f"pixel_cutoff must be a real number, got {type(pixel_cutoff).__name__}"
+        )
+    value = float(pixel_cutoff)
+    if not math.isfinite(value) or not 0 <= value < 255:
+        raise ValueError("pixel_cutoff must be a finite number in [0, 255)")
+    return value
+
+
+def _pixel_diff_score(
+    gray: np.ndarray,
+    reference_gray: np.ndarray,
+    metric: str,
+    pixel_cutoff: float,
+) -> float:
+    difference = cv2.absdiff(gray, reference_gray)
+    if metric == "mean":
+        return float(np.mean(difference))
+    return np.count_nonzero(difference > pixel_cutoff) / difference.size
+
+
+def _select_by_pixel_change(
+    indexed_grays: Iterable[tuple[int, np.ndarray]],
+    threshold: float,
+    reference: str,
+    metric: str = "mean",
+    pixel_cutoff: float = DEFAULT_PIXEL_CUTOFF,
+) -> list[int]:
+    """Select indices whose preprocessed frame differs enough from the reference.
+
+    The first frame is always selected. A frame is selected when its score
+    against the reference frame is ``>= threshold``. With ``metric="mean"`` the
+    score is the mean absolute pixel difference (0-255). With
+    ``"changed_fraction"`` it is the fraction of pixels whose absolute
+    difference is ``> pixel_cutoff`` (0-1), so ``threshold`` must be ``<= 1``.
+
+    With ``reference="previous_sample"`` the reference is the previous sampled
+    frame; with ``"last_selected"`` it is the most recently selected frame, so
+    slow changes accumulate until they cross the threshold.
+
+    Arguments are validated before *indexed_grays* is consumed, so a lazy
+    iterator decodes nothing when validation fails.
+    """
+    threshold = _validate_threshold(threshold)
+    reference = _validate_reference(reference)
+    metric = _validate_metric(metric)
+    pixel_cutoff = _validate_pixel_cutoff(pixel_cutoff)
+    if metric == "changed_fraction" and threshold > 1:
+        raise ValueError("threshold must be <= 1 for metric='changed_fraction'")
+
+    selected: list[int] = []
+    reference_gray: np.ndarray | None = None
+    for frame_index, gray in indexed_grays:
+        if reference_gray is None:
+            selected.append(frame_index)
+            reference_gray = gray
+            continue
+        score = _pixel_diff_score(gray, reference_gray, metric, pixel_cutoff)
+        is_selected = score >= threshold
+        if is_selected:
+            selected.append(frame_index)
+        if reference == "previous_sample" or is_selected:
+            reference_gray = gray
+    return selected
+
+
+def select_frames_by_pixel_change(
+    video: Video | VideoView,
+    threshold: float = 15.0,
+    sample_every: int = 5,
+    reference: str = "previous_sample",
+    metric: str = "mean",
+    pixel_cutoff: float = DEFAULT_PIXEL_CUTOFF,
+) -> list[int]:
+    """Select original frame indices where the picture changes noticeably.
+
+    Every ``sample_every``-th frame is downscaled to 320x180, converted to
+    grayscale, blurred, and compared with a reference frame (see
+    :func:`_select_by_pixel_change` for ``reference`` and ``metric``
+    semantics). The first sampled frame is always included, and
+    ``threshold=0`` keeps every sampled frame.
+
+    - ``metric="mean"``: ``threshold`` is a mean absolute difference (0-255).
+    - ``metric="changed_fraction"``: ``threshold`` is the fraction (0-1) of
+      pixels whose difference exceeds ``pixel_cutoff``; e.g. ``0.02`` selects a
+      frame once 2% of pixels change by more than ``pixel_cutoff`` gray levels.
+
+    Returned indices are sorted, unique, and relative to the original video,
+    even when *video* is a :class:`VideoView`. Pass them to
+    :func:`read_frames_at_indices` to retrieve full-resolution frames.
+
+    This is an experimental baseline: every frame is still decoded, and
+    successive-frame comparison (the default) can miss slow changes.
+    """
+    sampled = iter_sampled_frames(video, sample_every)
+    grays = (
+        (frame_index, _pixel_diff_gray(frame)) for frame_index, frame in sampled
+    )
+    return _select_by_pixel_change(grays, threshold, reference, metric, pixel_cutoff)
 
 
 # ---------------------------------------------------------------------------

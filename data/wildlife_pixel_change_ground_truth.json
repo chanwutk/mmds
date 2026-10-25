@@ -1,0 +1,24 @@
+{
+  "video": "https://www.youtube.com/watch?v=VMNReumMHeE",
+  "clip_start": 829.0,
+  "clip_end": null,
+  "notes": "Absolute source-video seconds, half-open [start, end). Trail-camera night footage at 25 fps; clips 0040, 0041 and 0042 are concatenated. Events are windows in which a selector should keep at least one frame. Static intervals contain no new animal and no scene cut, so selections there are counted as redundant. Unlabeled gaps are not scored: 979.2-984.0 (the animal on the rock turns and it is unclear whether it is the same animal) and 1008.2-1008.8 (the video's closing fade to black). Drafted from 1 fps and 0.4-1.6 s contact sheets; needs human confirmation.",
+  "query_answers": {
+    "question": "How many cats are visible at the same time, and when does the second cat appear?",
+    "max_simultaneous_cats": 2,
+    "second_cat_first_visible": 949.6
+  },
+  "events": [
+    {"start": 888.8, "end": 890.0, "description": "scene cut to clip 0041: cat on rock"},
+    {"start": 948.8, "end": 950.0, "description": "scene cut to clip 0042: cat still sitting on rock"},
+    {"start": 950.4, "end": 952.8, "description": "second cat appears at left edge"},
+    {"start": 956.0, "end": 958.4, "description": "first cat stands up and turns side-on"},
+    {"start": 976.0, "end": 979.2, "description": "second cat runs behind rock, across ground, and exits right"}
+  ],
+  "static": [
+    {"start": 829.0, "end": 888.6, "description": "no animal; vegetation by the tree sways (pixel-change distractor)"},
+    {"start": 890.4, "end": 948.6, "description": "possum on rock, small posture changes only"},
+    {"start": 959.2, "end": 972.0, "description": "cat standing on rock; brief insect flash near 962 s (distractor)"},
+    {"start": 984.0, "end": 1008.2, "description": "animal on rock, small posture changes only"}
+  ]
+}
