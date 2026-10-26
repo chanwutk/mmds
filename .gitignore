@@ -9,6 +9,12 @@ __pycache__/
 # YOLOE / Ultralytics artifacts (downloaded when running Detect examples)
 mobileclip_blt.ts
 yoloe-11s-seg.pt
+yoloe-11l-seg.pt
+
+# Query-type experiment inputs and results (chunk files hold machine-specific paths)
+data/query_types/
+# WLD documentaries, annotations and subtitles (third-party data, fetched locally)
+data/wld/
 
 # Licensed/local case-study media
 data/i24v_traffic/videos/*.mp4
