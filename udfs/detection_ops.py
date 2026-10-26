@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from typing import Any
 
+from mmds.model import MMDSValidationError
 from udfs.vehicle_color_model import predict_color_from_crop, predict_colors_from_crops
+from udfs.vehicle_geometry import VEHICLE_CLASSES, bbox_iou
 
 
 # YOLOE conf scores are model-internal (0–1); Ultralytics defaults drop boxes below ~0.25.
@@ -212,7 +214,6 @@ def _resolve_detection_fps(row: dict[str, Any]) -> float:
 # Vehicle detection (I24V / cross-camera join)
 # ---------------------------------------------------------------------------
 
-_VEHICLE_CLASSES = frozenset({"sedan", "suv", "truck"})
 _VEHICLE_NMS_IOU = 0.65 # Two boxes are considered the same if their Intersection Over Union (IoU) ≥ threshold
 # Transient key used to carry a box's class through class-agnostic NMS; popped
 # before the box is emitted, so it never leaks into output records.
@@ -244,25 +245,6 @@ _NEUTRAL_SAT_MAX = 0.18
 _BLACK_VALUE_MAX = 0.25
 _GRAY_VALUE_MAX = 0.55
 _SILVER_VALUE_MAX = 0.80
-
-
-def _bbox_iou(left: list[float], right: list[float]) -> float:
-    """Intersection Over Union (IoU) between two bounding boxes. Returns a value between 0 and 1."""
-    x1 = max(left[0], right[0])
-    y1 = max(left[1], right[1])
-    x2 = min(left[2], right[2])
-    y2 = min(left[3], right[3])
-    inter_w = max(0.0, x2 - x1)
-    inter_h = max(0.0, y2 - y1)
-    intersection = inter_w * inter_h
-    if intersection <= 0:
-        return 0.0
-    left_area = max(0.0, left[2] - left[0]) * max(0.0, left[3] - left[1])
-    right_area = max(0.0, right[2] - right[0]) * max(0.0, right[3] - right[1])
-    union = left_area + right_area - intersection
-    if union <= 0:
-        return 0.0
-    return intersection / union
 
 
 def _nms_boxes(
@@ -314,7 +296,7 @@ def _nms_boxes(
             kept_bbox = kept_box.get("bbox")
             if not isinstance(kept_bbox, list) or len(kept_bbox) != 4:
                 continue
-            if _bbox_iou(cand_bbox, [float(value) for value in kept_bbox]) >= iou_threshold:
+            if bbox_iou(cand_bbox, [float(value) for value in kept_bbox]) >= iou_threshold:
                 suppress = True
                 break
         if not suppress:
@@ -361,7 +343,7 @@ def nms_vehicle_detections(
             continue
         vehicle_class = item.get("type")
         bboxes = item.get("bboxes")
-        if vehicle_class not in _VEHICLE_CLASSES or not isinstance(bboxes, list):
+        if vehicle_class not in VEHICLE_CLASSES or not isinstance(bboxes, list):
             continue
         if vehicle_class not in class_order:
             class_order.append(vehicle_class)
@@ -487,6 +469,22 @@ def _dominant_rgb_from_crop(crop: Any) -> tuple[float, float, float] | None:
     return (red, green, blue)
 
 
+def _heuristic_color_from_crop(crop: Any) -> str:
+    """HSV body-region color, or ``gray`` when the crop has no usable pixels."""
+    dominant_rgb = _dominant_rgb_from_crop(crop)
+    return (
+        classify_vehicle_color(dominant_rgb)
+        if dominant_rgb is not None
+        else "gray"
+    )
+
+
+def _vehicle_color_from_crop(crop: Any) -> str:
+    """Learned color when available, otherwise the HSV heuristic / ``gray``."""
+    color = predict_color_from_crop(crop)
+    return color if color is not None else _heuristic_color_from_crop(crop)
+
+
 def predict_vehicle_attributes(
     vehicle_class: str,
     bbox: list[float],
@@ -499,14 +497,9 @@ def predict_vehicle_attributes(
     are absent or inference is unavailable it returns ``None`` and we fall back
     to the HSV body-region heuristic (:func:`classify_vehicle_color`).
     """
-    color = predict_color_from_crop(crop)
-    if color is None:
-        dominant_rgb = _dominant_rgb_from_crop(crop)
-        color = classify_vehicle_color(dominant_rgb) if dominant_rgb is not None else "gray"
-    sub_type = vehicle_sub_type_from_geometry(vehicle_class, bbox)
     return {
-        "vehicle_color": color,
-        "vehicle_sub_type": sub_type,
+        "vehicle_color": _vehicle_color_from_crop(crop),
+        "vehicle_sub_type": vehicle_sub_type_from_geometry(vehicle_class, bbox),
     }
 
 
@@ -525,14 +518,11 @@ def predict_vehicle_attributes_batch(
     for vehicle_class, bbox, crop, learned_color in zip(
         vehicle_classes, bboxes, crops, learned_colors
     ):
-        color = learned_color
-        if color is None:
-            dominant_rgb = _dominant_rgb_from_crop(crop)
-            color = (
-                classify_vehicle_color(dominant_rgb)
-                if dominant_rgb is not None
-                else "gray"
-            )
+        color = (
+            learned_color
+            if learned_color is not None
+            else _heuristic_color_from_crop(crop)
+        )
         attributes.append(
             {
                 "vehicle_color": color,
@@ -566,21 +556,33 @@ def _read_frame_at_index(video_path: str, frame_id: int) -> Any | None:
     return read_frames_at_indices(video_path, [frame_id]).get(frame_id)
 
 
-def _video_path_from_row(row: dict[str, Any], *, video_field: str = "video") -> str | None:
-    """Resolve the absolute path to the source video file referenced by this row."""
+def _video_path_from_row(row: dict[str, Any], *, video_field: str = "video") -> str:
+    """Resolve the absolute path to the source video file referenced by this row.
+
+    Raises:
+        MMDSValidationError: if the field is missing, unresolvable, or cannot be
+            opened as a single video file.
+    """
     from mmds.utilities.media import resolve_video_source
     from mmds.utilities.video import open_video
 
     raw = row.get(video_field)
     if raw is None:
-        return None
+        raise MMDSValidationError(f"Row is missing video field {video_field!r}.")
     try:
         source = resolve_video_source(raw)
         video = open_video(source)
-    except Exception:
-        return None
+    except MMDSValidationError:
+        raise
+    except Exception as exc:
+        raise MMDSValidationError(
+            f"Unable to open video for field {video_field!r}: {exc}"
+        ) from exc
     if isinstance(video, list):
-        return None
+        raise MMDSValidationError(
+            f"Video field {video_field!r} resolved to a directory; "
+            "expected a single video file."
+        )
     return str(video.path)
 
 
@@ -598,8 +600,6 @@ def crop_from_track_row(row: dict[str, Any], *, video_field: str = "video") -> A
     if not isinstance(rep_bbox, list) or len(rep_bbox) != 4:
         return None
     video_path = _video_path_from_row(row, video_field=video_field)
-    if not video_path:
-        return None
     frame = _read_frame_at_index(video_path, rep_frame_id)
     if frame is None:
         return None
@@ -648,7 +648,7 @@ def build_vehicle_frame_detections(
         if not isinstance(item, dict):
             continue
         vehicle_class = item.get("type")
-        if vehicle_class not in _VEHICLE_CLASSES:
+        if vehicle_class not in VEHICLE_CLASSES:
             continue
         bboxes = item.get("bboxes")
         if not isinstance(bboxes, list):
@@ -664,12 +664,10 @@ def build_vehicle_frame_detections(
     if not boxes_by_frame:
         return {output_field: []}
 
-    video_path = _video_path_from_row(row, video_field=video_field)
-    frame_cache: dict[int, Any] = {}
-    if video_path:
-        from mmds.utilities.video import read_frames_at_indices
+    from mmds.utilities.video import read_frames_at_indices
 
-        frame_cache = read_frames_at_indices(video_path, boxes_by_frame)
+    video_path = _video_path_from_row(row, video_field=video_field)
+    frame_cache = read_frames_at_indices(video_path, boxes_by_frame)
 
     pending: list[tuple[int, str, list[float], float, Any | None]] = []
     for frame_id in sorted(boxes_by_frame):

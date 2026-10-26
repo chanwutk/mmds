@@ -261,10 +261,15 @@ class DetectionOpsTests(unittest.TestCase):
         self.assertIsNone(_dominant_rgb_from_crop(np.zeros((0, 0, 3), dtype=np.uint8)))
 
     def test_build_vehicle_frame_detections_shape(self) -> None:
+        from unittest.mock import patch
+
+        import numpy as np
+
         from udfs.detection_ops import build_vehicle_frame_detections
 
         row = {
             "camera_id": "cam-i24v-highway2",
+            "video": "/tmp/clip.mp4",
             "detections": [
                 {
                     "type": "sedan",
@@ -278,7 +283,18 @@ class DetectionOpsTests(unittest.TestCase):
                 }
             ],
         }
-        result = build_vehicle_frame_detections(row)
+        frame = np.zeros((120, 160, 3), dtype=np.uint8)
+        with (
+            patch(
+                "udfs.detection_ops._video_path_from_row",
+                return_value="/tmp/clip.mp4",
+            ),
+            patch(
+                "mmds.utilities.video.read_frames_at_indices",
+                return_value={3: frame},
+            ),
+        ):
+            result = build_vehicle_frame_detections(row)
         self.assertEqual(len(result["frame_detections"]), 1)
         detection = result["frame_detections"][0]
         self.assertEqual(detection["frame_id"], 3)
@@ -305,6 +321,27 @@ class DetectionOpsTests(unittest.TestCase):
             detection["subtype"],
             {"hatchback", "pickup", "sedan", "coupe", "suv"},
         )
+
+    def test_build_vehicle_frame_detections_requires_openable_video(self) -> None:
+        from udfs.detection_ops import build_vehicle_frame_detections
+
+        row = {
+            "camera_id": "cam",
+            "detections": [
+                {
+                    "type": "sedan",
+                    "bboxes": [
+                        {
+                            "frame_idx": 0,
+                            "bbox": [0.0, 0.0, 10.0, 10.0],
+                            "confidence": 0.9,
+                        }
+                    ],
+                }
+            ],
+        }
+        with self.assertRaises(MMDSValidationError):
+            build_vehicle_frame_detections(row)
 
 
 class DetectionFpsFallbackTests(unittest.TestCase):

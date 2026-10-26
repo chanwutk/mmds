@@ -74,10 +74,10 @@ def attach_track_summary_embeddings(
     ]
 
     frames: dict[int, Any] = {}
-    video_path = _video_path_from_row(row, video_field=video_field)
-    if video_path and frame_ids:
+    if frame_ids:
         from mmds.utilities.video import read_frames_at_indices
 
+        video_path = _video_path_from_row(row, video_field=video_field)
         frames = read_frames_at_indices(video_path, frame_ids)
 
     crops: list[Any | None] = []
