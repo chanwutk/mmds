@@ -231,6 +231,8 @@ def _render_detect_call(
         flags.append(f"conf={spec.conf!r}")
     if spec.imgsz is not None:
         flags.append(f"imgsz={spec.imgsz!r}")
+    if spec.stop_after_n is not None:
+        flags.append(f"stop_after_n={spec.stop_after_n!r}")
     if name is not None:
         flags.append(f"name={_quote(name)}")
     return f"Detect({', '.join(arguments + flags)})"

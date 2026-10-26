@@ -16,25 +16,33 @@ _model_lock = threading.Lock()
 
 
 def _select_device() -> str:
-    """Return ``"cuda"`` only if CUDA is genuinely usable, else ``"cpu"``.
+    """Return ``"cuda"`` or ``"mps"`` only if genuinely usable, else ``"cpu"``.
 
     ``torch.cuda.is_available()`` may return ``True`` even when the installed
     PyTorch build lacks kernels for the current GPU (e.g. compute capability
     6.1 on a build that requires ≥ 7.0).  We try a small convolution—the same
-    op type that YOLOE uses—and fall back to CPU if it fails.
+    op type that YOLOE uses—on each accelerator, CUDA first, then Apple's
+    MPS, and fall back to CPU if neither runs it.
     """
     try:
         import torch
-
-        if not torch.cuda.is_available():
-            return "cpu"
-        # A minimal Conv2d forward pass exercises the same CUDA kernels that
-        # YOLOE will need.  If this fails, CUDA isn't really usable.
-        _probe = torch.nn.Conv2d(1, 1, 1).cuda()
-        _probe(torch.zeros(1, 1, 1, 1, device="cuda"))
-        return "cuda"
     except Exception:
         return "cpu"
+    for device, available in (
+        ("cuda", lambda: torch.cuda.is_available()),
+        ("mps", lambda: torch.backends.mps.is_available()),
+    ):
+        try:
+            if not available():
+                continue
+            # A minimal Conv2d forward pass exercises the same kernels that
+            # YOLOE will need.  If this fails, the device isn't really usable.
+            _probe = torch.nn.Conv2d(1, 1, 1).to(device)
+            _probe(torch.zeros(1, 1, 1, 1, device=device))
+            return device
+        except Exception:
+            continue
+    return "cpu"
 
 
 _device: str | None = None
@@ -124,6 +132,7 @@ def _apply_detect(node: DatasetExpr, row: Row) -> Row:
         frame_stride=spec.frame_stride,
         conf=spec.conf,
         imgsz=spec.imgsz,
+        stop_after_n=spec.stop_after_n,
     )
 
     result = dict(row)
@@ -142,6 +151,7 @@ def _detect_in_video(
     frame_stride: int = 1,
     conf: float | None = None,
     imgsz: int | None = None,
+    stop_after_n: int | None = None,
 ) -> list[dict[str, Any]]:
     """Run detection on every frame and group bboxes by detected class.
 
@@ -150,12 +160,18 @@ def _detect_in_video(
     records always use absolute frame indices from the underlying source
     video, even when iterating a :class:`VideoView`.
 
+    When ``stop_after_n`` is ``1``, scanning ends after the first sampled
+    frame that has any box, and every box in that frame is kept. The result
+    is empty exactly when a full scan's result would be empty.
+
     Returns a list of::
 
         {"type": <class_name>, "bboxes": [{"frame_idx": int, "bbox": [x1,y1,x2,y2], "confidence": float}, ...]}
     """
     if frame_stride < 1:
         raise MMDSValidationError("_detect_in_video frame_stride must be >= 1.")
+    if stop_after_n is not None and stop_after_n != 1:
+        raise MMDSValidationError("_detect_in_video stop_after_n must be 1 or None.")
 
     predict_kwargs: dict[str, Any] = {}
     if conf is not None:
@@ -166,20 +182,30 @@ def _detect_in_video(
     model = _get_model(model_name)
 
     with _model_lock:
-        text_pe = model.get_text_pe(classes)
-        model.set_classes(classes, text_pe)
+        device = _get_device()
+        if device == "mps":
+            # YOLOE builds its text encoder on the model's device, and that
+            # encoder needs float64, which MPS lacks. Encode the class names
+            # on the CPU, then move the model back for detection.
+            model.to("cpu")
+            text_pe = model.get_text_pe(classes)
+            model.set_classes(classes, text_pe)
+            model.to(device)
+        else:
+            text_pe = model.get_text_pe(classes)
+            model.set_classes(classes, text_pe)
 
     base_frame_idx = video.start_frame if isinstance(video, VideoView) else 0
 
     by_class: dict[str, list[dict[str, Any]]] = {}
-    for relative_frame_idx, frame in enumerate(video):
-        if relative_frame_idx % frame_stride != 0:
-            continue
+    # Frames between samples are skipped without being converted to images.
+    for relative_frame_idx, frame in video.sampled(frame_stride):
         frame_idx = base_frame_idx + relative_frame_idx
         with _model_lock:
             results = model.predict(
                 frame, verbose=False, device=_get_device(), **predict_kwargs
             )
+        frame_has_box = False
         for result in results:
             boxes = result.boxes
             if boxes is None:
@@ -193,5 +219,8 @@ def _detect_in_video(
                         "confidence": float(boxes.conf[i]),
                     }
                 )
+                frame_has_box = True
+        if stop_after_n is not None and frame_has_box:
+            break
 
     return [{"type": cls, "bboxes": bboxes} for cls, bboxes in by_class.items()]

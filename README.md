@@ -239,6 +239,11 @@ clean text ↔ plan round-tripping and pluggable rewriters: those are the levers
 engine or LLM agent needs to rewrite queries safely. The data model extends
 [DocETL](https://github.com/ucbepic/docetl) with multi-modal types (`Video`, `VideoView`).
 
+Rewrite experiments on narrated wildlife films measure what these rewrites save and cost, and which
+condition each one needs. They compare plans with Gemini on the whole film against a detector, the
+narration, and chains of both. The run order, results and the directive behind each plan are in
+[`scripts/query_types/WLD_README.md`](scripts/query_types/WLD_README.md).
+
 ---
 
 ## Repository layout
@@ -247,7 +252,10 @@ engine or LLM agent needs to rewrite queries safely. The data model extends
 src/mmds/        core DSL, plan model, parser, renderer, execution, optimizers
 udfs/            user-defined functions (.py = implemented, .pyi = declared-only)
 examples/        runnable query examples + run_expr.py / run_text.py drivers
-data/            small JSON/JSONL fixtures used by the examples
+scripts/         data preparation and training helpers
+  query_types/   rewrite experiments (WLD presence and localization; see WLD_README.md)
+data/            small JSON/JSONL fixtures used by the examples, and the experiments'
+                 scored summaries (data/query_types/wld/*/summary.json)
 tests/           unit tests (hermetic — mock cv2/yt-dlp/YOLOE)
 DESIGN.md        authoritative architecture document
 AGENTS.md        contribution rules and invariants

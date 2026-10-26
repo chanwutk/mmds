@@ -9,6 +9,17 @@ __pycache__/
 # YOLOE / Ultralytics artifacts (downloaded when running Detect examples)
 mobileclip_blt.ts
 yoloe-11s-seg.pt
+yoloe-11l-seg.pt
+
+# Query-type experiment inputs and results (chunk files hold machine-specific paths),
+# except the WLD summaries, which hold only scores, times and token counts.
+# Git cannot re-include a file inside an ignored folder, so folders are re-included first.
+data/query_types/**
+!data/query_types/**/
+!data/query_types/wld/presence/summary.json
+!data/query_types/wld/localization/summary.json
+# WLD documentaries, annotations and subtitles (third-party data, fetched locally)
+data/wld/
 
 # Licensed/local case-study media
 data/i24v_traffic/videos/*.mp4

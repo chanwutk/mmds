@@ -289,6 +289,7 @@ def _parse_call(
                 "frame_stride",
                 "conf",
                 "imgsz",
+                "stop_after_n",
                 "name",
             },
         )
@@ -324,6 +325,10 @@ def _parse_call(
                 imgsz=_parse_int_or_none(
                     keywords.get("imgsz"),
                     label="Detect imgsz",
+                ),
+                stop_after_n=_parse_int_or_none(
+                    keywords.get("stop_after_n"),
+                    label="Detect stop_after_n",
                 ),
             ),
             name=_parse_optional_name(keywords),

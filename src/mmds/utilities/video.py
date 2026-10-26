@@ -26,7 +26,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 from collections.abc import Iterable
-from typing import Iterator
+from typing import Any, Iterator
 
 import cv2
 import numpy as np
@@ -194,13 +194,14 @@ class Video:
         return self._num_frames
 
     def __iter__(self) -> Iterator[np.ndarray]:
+        for _, frame in self.sampled(1):
+            yield frame
+
+    def sampled(self, stride: int) -> Iterator[tuple[int, np.ndarray]]:
+        """Yield ``(index, frame)`` for every ``stride``-th frame from the first."""
         cap = cv2.VideoCapture(str(self._path))
         try:
-            while True:
-                ok, frame = cap.read()
-                if not ok:
-                    break
-                yield frame
+            yield from _sampled_from_capture(cap, None, stride)
         finally:
             cap.release()
 
@@ -272,14 +273,16 @@ class VideoView:
         return self.num_frames
 
     def __iter__(self) -> Iterator[np.ndarray]:
+        for _, frame in self.sampled(1):
+            yield frame
+
+    def sampled(self, stride: int) -> Iterator[tuple[int, np.ndarray]]:
+        """Yield ``(index, frame)`` for every ``stride``-th frame of the view;
+        ``index`` counts from the view's first frame."""
         cap = cv2.VideoCapture(str(self._video.path))
         try:
             cap.set(cv2.CAP_PROP_POS_FRAMES, self._start_frame)
-            for _ in range(self.num_frames):
-                ok, frame = cap.read()
-                if not ok:
-                    break
-                yield frame
+            yield from _sampled_from_capture(cap, self.num_frames, stride)
         finally:
             cap.release()
 
@@ -289,6 +292,27 @@ class VideoView:
             f"frames {self._start_frame}\u2013{self._end_frame}, "
             f"{self.num_frames} frames)"
         )
+
+
+def _sampled_from_capture(cap: Any, count: int | None, stride: int) -> Iterator[tuple[int, np.ndarray]]:
+    """Yield ``(index, frame)`` for every ``stride``-th of the next ``count`` frames.
+
+    Frames in between are only grabbed (advanced past) and never converted
+    into images, which is most of the cost of reading a frame that is not
+    needed. ``count=None`` reads to the end of the video.
+    """
+    if stride < 1:
+        raise ValueError(f"stride must be >= 1, got {stride!r}")
+    index = 0
+    while count is None or index < count:
+        if index % stride == 0:
+            ok, frame = cap.read()
+            if not ok:
+                return
+            yield index, frame
+        elif not cap.grab():
+            return
+        index += 1
 
 
 def read_frames_at_indices(

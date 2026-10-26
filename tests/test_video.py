@@ -224,6 +224,81 @@ class YtDownloadTests(unittest.TestCase):
                         _yt_download(url)
 
 
+class _ScriptedCapture:
+    """A capture over ``n`` frames whose pixels are their index; logs read/grab calls."""
+
+    def __init__(self, n: int) -> None:
+        self.n, self.position, self.calls = n, 0, []
+
+    def read(self):
+        self.calls.append("read")
+        if self.position >= self.n:
+            return False, None
+        frame = np.full((2, 2, 3), self.position, dtype=np.uint8)
+        self.position += 1
+        return True, frame
+
+    def grab(self):
+        self.calls.append("grab")
+        if self.position >= self.n:
+            return False
+        self.position += 1
+        return True
+
+    def set(self, prop, value):
+        if prop == cv2.CAP_PROP_POS_FRAMES:
+            self.position = int(value)
+
+    def release(self):
+        pass
+
+
+class SampledFramesTests(unittest.TestCase):
+    def _video(self, n: int, capture: _ScriptedCapture) -> Video:
+        with patch("mmds.utilities.video.cv2.VideoCapture", return_value=_make_cap(num_frames=n, fps=10.0)):
+            video = Video(Path("/tmp/test.mp4"))
+        return video
+
+    def test_skipped_frames_are_grabbed_not_read(self) -> None:
+        capture = _ScriptedCapture(7)
+        video = self._video(7, capture)
+        with patch("mmds.utilities.video.cv2.VideoCapture", return_value=capture):
+            sampled = [(i, int(frame[0, 0, 0])) for i, frame in video.sampled(3)]
+        self.assertEqual(sampled, [(0, 0), (3, 3), (6, 6)])
+        # Frame 7 would be skipped, so the end of the video is found by a grab.
+        self.assertEqual(capture.calls, ["read", "grab", "grab", "read", "grab", "grab", "read", "grab"])
+
+    def test_stride_one_is_plain_iteration(self) -> None:
+        capture = _ScriptedCapture(4)
+        video = self._video(4, capture)
+        with patch("mmds.utilities.video.cv2.VideoCapture", return_value=capture):
+            self.assertEqual([i for i, _ in video.sampled(1)], [0, 1, 2, 3])
+        capture = _ScriptedCapture(4)
+        with patch("mmds.utilities.video.cv2.VideoCapture", return_value=capture):
+            self.assertEqual([int(f[0, 0, 0]) for f in video], [0, 1, 2, 3])
+
+    def test_video_ending_between_samples_stops_cleanly(self) -> None:
+        capture = _ScriptedCapture(5)
+        video = self._video(5, capture)
+        with patch("mmds.utilities.video.cv2.VideoCapture", return_value=capture):
+            self.assertEqual([i for i, _ in video.sampled(4)], [0, 4])
+
+    def test_view_indices_count_from_its_first_frame_and_stop_at_its_end(self) -> None:
+        capture = _ScriptedCapture(100)
+        video = self._video(100, capture)
+        view = VideoView(video, start=2.0, end=3.0)  # frames 20-29 at 10 fps
+        with patch("mmds.utilities.video.cv2.VideoCapture", return_value=capture):
+            sampled = [(i, int(frame[0, 0, 0])) for i, frame in view.sampled(4)]
+        self.assertEqual(sampled, [(0, 20), (4, 24), (8, 28)])
+        self.assertEqual(capture.position, 30)
+
+    def test_invalid_stride_raises(self) -> None:
+        video = self._video(3, _ScriptedCapture(3))
+        with patch("mmds.utilities.video.cv2.VideoCapture", return_value=_ScriptedCapture(3)):
+            with self.assertRaises(ValueError):
+                list(video.sampled(0))
+
+
 class VideoMetadataTests(unittest.TestCase):
     def test_properties_are_read_from_capture(self) -> None:
         cap = _make_cap(width=1920, height=1080, fps=24.0, num_frames=240)
