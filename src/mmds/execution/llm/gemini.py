@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from numbers import Real
 from pathlib import Path
 from typing import Any
@@ -28,6 +29,7 @@ class GeminiPromptExecutor:
         types_module: Any | None = None,
         poll_interval_seconds: float = 5.0,
         file_ready_timeout_seconds: float = 300.0,
+        usage_sink: Callable[[dict[str, Any]], None] | None = None,
     ) -> None:
         self.model = model
         self.api_key = api_key
@@ -35,7 +37,14 @@ class GeminiPromptExecutor:
         self._types = types_module
         self.poll_interval_seconds = poll_interval_seconds
         self.file_ready_timeout_seconds = file_ready_timeout_seconds
+        # Called once per generate_content response, before the response is
+        # validated, so billed calls that return bad JSON are still recorded.
+        # Map/Filter rows run on a thread pool: the sink must be thread-safe.
+        self.usage_sink = usage_sink
         self._uploaded_files: dict[str, tuple[str, str | None]] = {}
+        # Serialises uploads so concurrent rows reading the same local video
+        # upload it once instead of once per row.
+        self._upload_lock = threading.Lock()
 
     def execute(
         self,
@@ -56,6 +65,16 @@ class GeminiPromptExecutor:
             _format_debug_parts(parts),
         )
         response = client.models.generate_content(model=self.model, contents=contents, config=config)
+        if self.usage_sink is not None:
+            self.usage_sink(
+                {
+                    "model": self.model,
+                    # The exact model version that answered, as the API reports it.
+                    "model_version": getattr(response, "model_version", None),
+                    "op_type": op_type,
+                    "usage": _usage_to_dict(getattr(response, "usage_metadata", None)),
+                }
+            )
         text = getattr(response, "text", None)
         if not text:
             raise MMDSValidationError("Gemini returned an empty response.")
@@ -109,6 +128,12 @@ class GeminiPromptExecutor:
                 video_metadata=metadata,
             )
 
+        if value.get("inline") is True:
+            return types.Part(
+                inline_data=types.Blob(data=_read_inline_video(value), mime_type=value.get("mime_type", "video/mp4")),
+                video_metadata=metadata,
+            )
+
         file_uri: str | None = None
         mime_type: str | None = value.get("mime_type")
         if "path" in value:
@@ -132,10 +157,13 @@ class GeminiPromptExecutor:
 
     def _upload_video_file(self, path_value: Any, client: Any) -> tuple[str, str | None]:
         path = str(Path(path_value))
-        cached = self._uploaded_files.get(path)
-        if cached is not None:
-            return cached
+        with self._upload_lock:
+            cached = self._uploaded_files.get(path)
+            if cached is not None:
+                return cached
+            return self._upload_and_wait(path, client)
 
+    def _upload_and_wait(self, path: str, client: Any) -> tuple[str, str | None]:
         uploaded = client.files.upload(file=path)
         deadline = time.monotonic() + self.file_ready_timeout_seconds
         while True:
@@ -197,6 +225,38 @@ class GeminiPromptExecutor:
         return self._types
 
 
+def _usage_to_dict(usage: Any) -> dict[str, Any] | None:
+    """Return Gemini usage metadata as plain JSON-serialisable data, or None."""
+    if usage is None:
+        return None
+    if hasattr(usage, "model_dump"):
+        return usage.model_dump(mode="json", exclude_none=True)
+    if isinstance(usage, Mapping):
+        return dict(usage)
+    raise MMDSValidationError(
+        f"Unsupported Gemini usage metadata type {type(usage).__name__!r}."
+    )
+
+
+# Gemini caps a whole request at 20 MB, and inline data travels base64-encoded
+# (4/3 of its size), so an inline file must stay well under 15 MB.
+MAX_INLINE_VIDEO_BYTES = 14 * 1024 * 1024
+
+
+def _read_inline_video(value: Mapping[str, Any]) -> bytes:
+    """Read the local file of an ``{"inline": true, "path": ...}`` video value."""
+    path = value.get("path")
+    if not isinstance(path, str) or not path:
+        raise MMDSValidationError("An inline video value needs a local 'path'.")
+    data = Path(path).read_bytes()
+    if len(data) > MAX_INLINE_VIDEO_BYTES:
+        raise MMDSValidationError(
+            f"Inline video {path!r} is {len(data) / 1e6:.1f} MB; Gemini's 20 MB request limit allows at most "
+            f"{MAX_INLINE_VIDEO_BYTES / 1e6:.1f} MB before base64. Cut it shorter or upload it instead."
+        )
+    return data
+
+
 def _is_video_payload(value: Any) -> bool:
     if not isinstance(value, Mapping):
         return False
@@ -237,9 +297,14 @@ def _reject_duplicate_video_offset_keys(
 
 
 def _format_video_offset_seconds(value: Any, field_name: str) -> str:
+    """Seconds as a protobuf Duration string, which allows at most nanoseconds.
+
+    ``115.30000000000001`` becomes ``"115.3s"`` and ``120.0`` becomes ``"120s"``;
+    Gemini rejects a value with more than nine fractional digits.
+    """
     if not isinstance(value, Real) or isinstance(value, bool):
         raise MMDSValidationError(f"VideoView {field_name!r} values must be numeric seconds.")
-    return f"{value}s"
+    return f"{float(value):.9f}".rstrip("0").rstrip(".") + "s"
 
 
 def _validate_video_offset_string(value: Any, field_name: str) -> str:

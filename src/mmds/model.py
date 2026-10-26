@@ -193,6 +193,9 @@ class DetectSpec:
     frame_stride: int = 1
     conf: float | None = None
     imgsz: int | None = None
+    # ``1`` ends the scan after the first sampled frame with any box. Larger
+    # values would need distinct-object counting, which is not supported.
+    stop_after_n: int | None = None
 
     def __post_init__(self) -> None:
         if not self.video_field:
@@ -237,6 +240,15 @@ class DetectSpec:
         ):
             raise MMDSValidationError(
                 "DetectSpec imgsz must be a positive integer or None."
+            )
+        if self.stop_after_n is not None and (
+            isinstance(self.stop_after_n, bool)
+            or not isinstance(self.stop_after_n, int)
+            or self.stop_after_n != 1
+        ):
+            raise MMDSValidationError(
+                "DetectSpec stop_after_n must be 1 or None; stopping after more "
+                "than one object needs object counting, which is not supported."
             )
 
 

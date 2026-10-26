@@ -85,7 +85,7 @@ The main entrypoints are exported from [src/mmds/__init__.py](/Users/chanwutk/Do
 - `Reduce(data, group_by, reducer, *, schema=None, name=None)`
 - `Unnest(data, field, *, keep_empty=False, name=None)`
 - `Join(left, right, predicate=None, *, on=None, one_to_one=False, score=None, min_score=None, left_key=None, right_key=None, name=None)`
-- `Detect(data, video_field, classes, *, model="yoloe-11s-seg.pt", output_field="detections", frame_stride=1, conf=None, imgsz=None, name=None)`
+- `Detect(data, video_field, classes, *, model="yoloe-11s-seg.pt", output_field="detections", frame_stride=1, conf=None, imgsz=None, stop_after_n=None, name=None)`
 - `Window(data, video_field, candidate_field, output_field, padding_time, name=None)`
 - `Coalesce(data, group_by, field, *, name=None)`
 - `VideoMap(data, spec, *, video_field, views_field, group_by, schema, padding_time=0, clip_field="clip", name=None)`
@@ -115,7 +115,9 @@ The core model lives in [src/mmds/model.py](/Users/chanwutk/Documents/mmds/src/m
   optional score, threshold, and side-identity keys for greedy one-to-one
   matching.
 - `DetectSpec` stores the parameters for a `Detect` node: `video_field`,
-  `classes`, `model`, `output_field`, `frame_stride`, `conf`, and `imgsz`.
+  `classes`, `model`, `output_field`, `frame_stride`, `conf`, `imgsz`, and
+  `stop_after_n` (`None` or `1`; larger values are rejected because they would
+  need distinct-object counting).
 - `WindowSpec` stores the parameters for a `Window` node: `video_field`,
   `candidate_field`, `output_field`, and `padding_time`.
 - `VideoMapSpec` stores the candidate-view field, source-video field, grouping
@@ -207,8 +209,9 @@ Parser rules:
 - operators and `Record`/`ForEach` helpers must be imported from `mmds`
   before they are used; unused imports remain allowed
 - `Detect` requires literal `video_field` and class-list arguments and accepts
-  literal `model`, `output_field`, `frame_stride`, `conf`, `imgsz`, and `name`
-  keyword arguments; parsing constructs a validated `DetectSpec`
+  literal `model`, `output_field`, `frame_stride`, `conf`, `imgsz`,
+  `stop_after_n`, and `name` keyword arguments; parsing constructs a validated
+  `DetectSpec`
 - `Window` requires literal `video_field`, `candidate_field`, `output_field`,
   and `padding_time` arguments and accepts a literal `name`
 - `Coalesce` requires a literal string or string-list/tuple `group_by`, a
@@ -278,7 +281,7 @@ Operator semantics:
   greedily retain the highest-scoring pairs with unique left/right identity
   keys. A self-join whose sources are the same plan object executes and
   materializes that shared upstream subtree exactly once.
-- `Detect`: reads the video pointed to by `video_field`; if the value is a `VideoView`-shaped dict with `start`/`end`, wraps the source in a `VideoView`, runs YOLOE detection on sampled frames according to `frame_stride`, forwards optional `conf` and `imgsz` inference parameters, and merges a detection list with absolute source-video `frame_idx` values into `output_field`
+- `Detect`: reads the video pointed to by `video_field`; if the value is a `VideoView`-shaped dict with `start`/`end`, wraps the source in a `VideoView`, runs YOLOE detection on sampled frames according to `frame_stride`, forwards optional `conf` and `imgsz` inference parameters, and merges a detection list with absolute source-video `frame_idx` values into `output_field`; with `stop_after_n=1` the scan ends after the first sampled frame that has any box
 - `Window`: reads one `{start, end}` candidate interval per row, applies
   symmetric padding, clamps the start to zero, and stores a non-materialized
   `VideoView` descriptor in `output_field` while preserving the input row
@@ -363,14 +366,29 @@ Optional metadata keys:
 
 `VideoView` translation rule:
 
-- `start` and `end` are numeric seconds and are translated to Gemini `VideoMetadata.start_offset` and `VideoMetadata.end_offset` by appending `"s"`
+- `start` and `end` are numeric seconds and are translated to Gemini `VideoMetadata.start_offset` and `VideoMetadata.end_offset` as Duration strings with at most nine fractional digits (`115.30000000000001` becomes `"115.3s"`, `120.0` becomes `"120s"`), since Gemini rejects finer values
 - `fps` is passed directly to Gemini `VideoMetadata.fps`
 - a payload may use either `start`/`end` or `start_offset`/`end_offset`, but not both for the same boundary
 
 Gemini executor behavior:
 
 - uploads local files through Gemini’s Files API when needed
+- serialises uploads behind one lock and caches them by path, so concurrent
+  rows that read the same local video upload it once
 - waits for uploaded files to become active
+- a video value with `"inline": true` and a local `path` is read and sent as
+  inline bytes instead of being uploaded (no Files API, so no storage quota);
+  files over `MAX_INLINE_VIDEO_BYTES` (14 MiB, so the base64 request stays
+  under Gemini's 20 MB limit) are rejected with an error
+- optionally reports token usage: when constructed with
+  `usage_sink=callable`, it calls the sink once per `generate_content`
+  response with `{"model", "model_version", "op_type", "usage"}` (`model_version` is the version the API reports as having answered, or `None`), where `usage` is the
+  response's `usage_metadata` as plain JSON data (or `None` if absent). The
+  sink runs before the response is validated, so billed calls that return
+  empty or invalid JSON are still reported. Map and Filter rows run on a
+  thread pool, so the sink must be thread-safe. An unrecognised
+  `usage_metadata` type raises `MMDSValidationError` instead of being
+  silently dropped
 - converts structured prompts into Gemini content parts
 - preserves `Video` and `VideoView` fields as video parts instead of stringifying them
 - expands concise MMDS output schemas into object-shaped JSON Schema and requests JSON output using Gemini structured output config
@@ -393,9 +411,10 @@ Design rules:
 - the `video_field` value in a row may be a plain string (path or URL) or a `{"source"|"path"|"uri": ...}` dict — the same dict forms used by Gemini video payloads
 - when the dict contains `"start"` and `"end"` fields (seconds), the operator creates a `VideoView` that restricts processing to that clip range using `cv2` frame seeking — this avoids iterating the entire video for `VideoView` payloads
 - `VideoView` is a general-purpose class in `mmds.utilities.video` that wraps a `Video` and uses `CAP_PROP_POS_FRAMES` to seek directly to the start frame; both `Video` and `VideoView` share the same iterable interface
+- `Video.sampled(stride)` and `VideoView.sampled(stride)` yield `(index, frame)` for every `stride`-th frame; frames in between are only grabbed (`cv2.VideoCapture.grab`), never converted into images, so `Detect` with `frame_stride > 1` pays to decode skipped frames but not to convert them (about 1.6x faster reading on 720p H.264); `Detect` iterates `video.sampled(frame_stride)`
 - detection records store absolute `frame_idx` values from the underlying source video, even when the operator is iterating a `VideoView`
 - `open_video` handles local paths, `file://` URLs, and `http/https` downloads with a disk cache under `~/.cache/mmds/videos/`; platform URLs (e.g. YouTube) are downloaded via `yt-dlp`
-- the runtime probes whether CUDA is genuinely usable for YOLOE inference and falls back to CPU when the installed PyTorch/CUDA stack cannot execute the required kernels
+- the runtime probes whether CUDA, then Apple MPS, is genuinely usable for YOLOE inference (by running a small convolution on it) and falls back to CPU when neither can execute the required kernels; on MPS the class names are encoded with the model temporarily on the CPU, because YOLOE's text encoder needs float64, which MPS lacks, and detection then runs on MPS
 - YOLOE model instances are cached by name in a module-level dict; a `threading.Lock` serialises `set_classes` + `predict` calls so the operator is safe to run from a thread pool
 - the `output_field` (default `"detections"`) is merged into the row, containing a list of per-class detection records:
 
@@ -407,7 +426,14 @@ Design rules:
 ```
 
 - the OpenCV/NumPy stack (and, at run time, `torch`/`ultralytics`) is imported **lazily**: `mmds.execution` imports `.ops.detect` only when a `detect` node actually executes, and `mmds.VideoView` is a lazy export via module `__getattr__`. This keeps `import mmds` and the prompt/UDF execution paths usable without the heavy CV/ML dependencies installed.
-- `Detect` is parsed from and rendered back to DSL text (including `frame_stride`, `conf`, and `imgsz`) so rewrite directives can insert it while preserving render/parse round trips
+- `Detect` is parsed from and rendered back to DSL text (including `frame_stride`, `conf`, `imgsz`, and `stop_after_n`) so rewrite directives can insert it while preserving render/parse round trips
+- `stop_after_n=1` is an early stop for presence questions: the scan ends after
+  the first sampled frame with any box, and all boxes in that frame are kept.
+  The output is empty exactly when a full scan's output would be empty, so the
+  answer to "is any requested object visible?" is unchanged; only the boxes
+  after the stopping frame are missing. A row with no boxes is still scanned to
+  the end. Values above 1 are rejected: stopping after n objects needs
+  distinct-object counting across frames, which `Detect` does not do.
 - Detect writes `_mmds_video_fps` when the opened video reports a positive fps so
   detection-window rewrites can convert `frame_idx` values to source time without
   re-opening the file in the interval UDF
